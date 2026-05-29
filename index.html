@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Le jeu de Robin</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <h1 class="game-title">Le jeu de Robin</h1>
+
+  <div id="game-container">
+    <canvas id="game" width="256" height="192"></canvas>
+
+    <button id="mute-btn" class="mute-btn" style="display: none;" aria-label="Couper le son" title="Couper le son (M)">♪</button>
+
+    <div id="title-overlay" class="overlay">
+      <div class="title-art">✨</div>
+      <h2>Capture les animaux magiques !</h2>
+      <label for="name-input">Comment t'appelles-tu ?</label>
+      <input id="name-input" type="text" maxlength="12" placeholder="Robin" autocomplete="off">
+      <button id="start-btn">Commencer l'aventure !</button>
+    </div>
+
+    <div id="message-box" class="message-box hidden">
+      <p id="message-text"></p>
+      <p class="continue-hint">▼ Espace</p>
+    </div>
+
+    <div id="starter-overlay" class="overlay hidden">
+      <h2>Choisis ton compagnon de départ !</h2>
+      <div id="starter-grid"></div>
+      <p class="hint"><strong>← →</strong> pour choisir &nbsp;·&nbsp; <strong>Espace</strong> pour confirmer</p>
+    </div>
+
+    <div id="collection-overlay" class="overlay hidden">
+      <h2>Ma collection</h2>
+      <div id="collection-grid"></div>
+      <button id="close-collection">Fermer (C)</button>
+    </div>
+  </div>
+
+  <p class="hint">
+    <strong>Flèches</strong> : se déplacer &nbsp; · &nbsp;
+    <strong>Espace</strong> : action / parler &nbsp; · &nbsp;
+    <strong>C</strong> : collection &nbsp; · &nbsp;
+    <strong>N</strong> : carte &nbsp; · &nbsp;
+    <strong>M</strong> : son
+  </p>
+
+  <script src="js/palette.js"></script>
+  <script src="js/sprites.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/world.js"></script>
+  <script src="js/npcs.js"></script>
+  <script src="js/creatures.js"></script>
+  <script src="js/game.js"></script>
+</body>
+</html>
