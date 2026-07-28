@@ -506,17 +506,40 @@
 
   // --- MASSIFS DE MONTAGNE ---------------------------------------------------
   // Plusieurs blocs pivotés et empilés : de loin, ça fait une vraie arête.
+  /**
+   * Relief à grande échelle : bruit de valeur lissé, cohérent sur `cell` tuiles.
+   * Sans lui, chaque tuile de montagne tirait sa hauteur au hasard dans son coin
+   * et le massif ressemblait à une forêt de piliers tous pareils. Ici, les tuiles
+   * voisines partagent la même tendance : on obtient des sommets et des cols.
+   */
+  function relief(x, y, cell) {
+    const fx = x / cell, fy = y / cell;
+    const i = Math.floor(fx), j = Math.floor(fy);
+    const tx = fx - i, ty = fy - j;
+    const sx = tx * tx * (3 - 2 * tx);      // lissage de Hermite
+    const sy = ty * ty * (3 - 2 * ty);
+    const a = R3.hash(i, j), b = R3.hash(i + 1, j);
+    const c = R3.hash(i, j + 1), d = R3.hash(i + 1, j + 1);
+    const h0 = a + (b - a) * sx;
+    const h1 = c + (d - c) * sx;
+    return h0 + (h1 - h0) * sy;
+  }
+
+  // Un massif large et trapu : base débordante pour que les blocs voisins se
+  // fondent les uns dans les autres, puis un pic. Les silhouettes ne doivent
+  // jamais se lire comme des colonnes isolées.
   function protoMountain(snowy) {
     const g = R3.group();
-    g.add(R3.rot(R3.box(0.96, 1.20, 0.92, '#6a727e', 0, 0.52, 0), 0.06, 0.42, -0.08));
-    g.add(R3.rot(R3.box(0.68, 1.55, 0.60, '#767e8a', 0.16, 0.78, 0.10), -0.05, 1.05, 0.09));
-    g.add(R3.rot(R3.box(0.52, 0.98, 0.50, '#5c6470', -0.30, 0.42, 0.22), 0.10, -0.55, -0.12));
-    g.add(R3.rot(R3.box(0.44, 0.62, 0.42, '#8a9199', 0.04, 1.42, -0.10), 0.08, 0.22, 0.06));
-    g.add(R3.rot(R3.ellipsoid(0.30, 0.24, 0.28, '#5c6470', -0.36, 0.16, -0.30, { seg: 6 }), 0.12, 0.8, 0.18));
+    g.add(R3.rot(R3.box(1.42, 0.86, 1.36, '#646c78', 0, 0.34, 0), 0.04, 0.42, -0.06));
+    g.add(R3.rot(R3.box(1.14, 1.05, 1.06, '#6a727e', -0.06, 0.78, 0.05), 0.05, 1.02, 0.07));
+    g.add(R3.rot(R3.box(0.86, 1.02, 0.80, '#767e8a', 0.14, 1.24, -0.08), -0.04, 0.24, 0.06));
+    g.add(R3.rot(R3.box(0.54, 0.78, 0.50, '#828a94', 0.02, 1.72, 0.04), 0.07, 0.78, -0.05));
+    g.add(R3.rot(R3.ellipsoid(0.46, 0.30, 0.44, '#5c6470', -0.52, 0.24, 0.40, { seg: 6 }), 0.10, 0.8, 0.14));
+    g.add(R3.rot(R3.ellipsoid(0.38, 0.26, 0.36, '#5c6470', 0.56, 0.20, -0.44, { seg: 6 }), -0.08, 0.3, -0.12));
     if (snowy) {
-      g.add(R3.rot(R3.box(0.52, 0.26, 0.48, '#eef6fb', 0.05, 1.74, -0.09), 0.08, 0.22, 0.06));
-      g.add(R3.rot(R3.box(0.40, 0.20, 0.36, '#dfeef7', 0.18, 1.48, 0.10), -0.05, 1.05, 0.09));
-      g.add(R3.ellipsoid(0.26, 0.12, 0.24, '#e6f1f7', -0.22, 1.12, 0.18, { seg: 6 }));
+      g.add(R3.rot(R3.box(0.60, 0.30, 0.56, '#eef6fb', 0.02, 2.02, 0.04), 0.07, 0.78, -0.05));
+      g.add(R3.rot(R3.box(0.78, 0.22, 0.72, '#dfeef7', 0.14, 1.66, -0.08), -0.04, 0.24, 0.06));
+      g.add(R3.ellipsoid(0.34, 0.14, 0.32, '#e6f1f7', -0.16, 1.32, 0.18, { seg: 6 }));
     }
     return { geo: bake(g), mat: matRock(), cast: true };
   }
@@ -915,13 +938,22 @@
       }
 
       case 'mountain': {
-        const snowy = (h > 3.0) || (r4 < 0.10 && h > 2.2);
-        const sy = 0.80 + r3 * 1.15 + Math.max(0, h - 1.5) * 0.22;
+        // Les rochers SUIVENT le relief du terrain (mtnRidge) au lieu d'ajouter
+        // leur propre bruit : gros et enneigés sur les sommets, petits et épars
+        // sur les contreforts. C'est ce qui donne une silhouette de massif
+        // plutôt qu'un mur de blocs de hauteur aléatoire.
+        const alt = h;                                   // ≈ 0.35 en bas, ≈ 5.5 au sommet
+        const t = clamp01((alt - 0.35) / 4.6);           // 0 = pied, 1 = cime
+        const hauteur = 0.55 + t * 2.6 + r3 * 0.45 + relief(x + 91, y - 37, 5) * 0.5;
+        const snowy = t > 0.62;
+        // Base d'autant plus large qu'on est haut : les blocs se recouvrent et
+        // forment une masse continue au lieu de colonnes isolées.
+        const large = 1.05 + t * 0.55 + r2 * 0.26;
         pushInst(bucket, snowy ? 'mountain.snow' : 'mountain.rock',
-          x + (r1 - 0.5) * 0.34, h - 0.28, y + (r2 - 0.5) * 0.34,
-          (r3 - 0.5) * 0.16, r1 * Math.PI * 2, (r4 - 0.5) * 0.16,
-          0.85 + r2 * 0.55, sy, 0.85 + r4 * 0.55,
-          0.88 + r3 * 0.26, 0.90 + r3 * 0.22, 0.92 + r3 * 0.20);
+          x + (r1 - 0.5) * 0.30, h - 0.30, y + (r2 - 0.5) * 0.30,
+          (r3 - 0.5) * 0.10, r1 * Math.PI * 2, (r4 - 0.5) * 0.10,
+          large, hauteur, large * (0.92 + r4 * 0.16),
+          0.86 + r3 * 0.28, 0.88 + r3 * 0.24, 0.90 + r3 * 0.22);
         break;
       }
 
@@ -1218,6 +1250,21 @@
         for (let ex = -12; ex < 0; ex++) sea.push({ x: ex, y: ey, h: -0.7 });
         for (let ex = W; ex < W + 12; ex++) sea.push({ x: ex, y: ey, h: -0.7 });
       }
+    }
+
+    // Océan lointain : un simple quad, sans vagues ni subdivision, qui prolonge
+    // la mer jusqu'à l'horizon. Étendre la nappe détaillée aurait coûté des
+    // dizaines de milliers de sommets pour un résultat noyé dans le brouillard ;
+    // ici, on ne voyait sinon le bord de la mer s'arrêter net devant Robin.
+    if (groups.sea) {
+      const horizon = new THREE.Mesh(R3.geo.plane(1, 1), R3.mat('#1c2a63', { rough: 0.45 }));
+      horizon.rotation.x = -Math.PI / 2;
+      horizon.scale.set(900, 700, 1);
+      horizon.position.set(W / 2 - 0.5, -0.32, H - 8 + 350);
+      horizon.castShadow = false;
+      horizon.receiveShadow = false;
+      horizon.name = 'ocean-horizon';
+      parent.add(horizon);
     }
 
     let n = 0;

@@ -144,8 +144,15 @@
 
   const GLSL_FRAG_BODY = [
     '{',
+    // La distance au rivage est mesurée sur la grille de tuiles : telle quelle,
+    // la frange d'écume redessine les contours rectangulaires des tuiles. On la
+    // fait donc onduler pour obtenir un trait de côte naturel.
+    '  float wob = sin(vXZ.x * 1.15 + uTime * 0.45) * sin(vXZ.y * 1.35 - uTime * 0.38) * 0.42',
+    '            + sin(vXZ.x * 2.9 - vXZ.y * 2.3 + uTime * 0.3) * 0.22',
+    '            + sin(vXZ.x * 6.3 - vXZ.y * 5.7) * 0.09;',
+    '  float vEdgeW = max(vEdge + wob, 0.0);',
     // Du bleu clair des berges au bleu profond du large.
-    '  float deepF = smoothstep(0.10, uDeepRange, vEdge);',
+    '  float deepF = smoothstep(0.10, uDeepRange, vEdgeW);',
     '  vec3  col   = mix(uShallow, uDeep, deepF);',
     // Crêtes plus claires (les pixels #73eff7 du jeu 2D).
     // ATTENTION à la normalisation : la houle est la somme de trois trains
@@ -157,7 +164,7 @@
     // Écume qui lape le rivage : la frange respire, comme un ressac.
     '  float breath = 0.72 + 0.28 * sin(uTime * uSpeed * 1.6 + vXZ.x * 1.3 + vXZ.y * 0.9);',
     '  float fw     = uFoamW * breath;',
-    '  float foam   = 1.0 - smoothstep(fw * 0.35, fw, vEdge);',
+    '  float foam   = 1.0 - smoothstep(fw * 0.35, fw, vEdgeW);',
     // ... plus quelques moutons sur la crête des grosses vagues.
     '  foam = max(foam, smoothstep(0.92, 1.0, crest) * uCrestFoam);',
     '  foam = clamp(foam, 0.0, 1.0);',
