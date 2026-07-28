@@ -571,6 +571,9 @@ html, body {
    Combat : menu des capacités (grille 2x2)
    ============================================================================= */
 
+/* Pendant un combat, le rappel des touches d'exploration n'a plus lieu d'être. */
+.controls-hint.en-combat { display: none; }
+
 .move-menu {
   position: absolute;
   left: 50%;
@@ -677,6 +680,19 @@ html, body {
   .move-grid { grid-template-columns: 1fr; }
   .hp-card { width: min(260px, 62vw); }
   .hp-card.player { bottom: clamp(120px, 30vh, 260px); }
+}
+
+/* Écran peu haut (portable, fenêtre réduite) : on compacte le menu de combat,
+   sinon il recouvre les créatures — qui sont justement ce qu'on veut voir. */
+@media (max-height: 700px) {
+  .move-menu { padding: 7px 10px 6px; width: min(680px, 92vw); }
+  .move-menu .mm-head { margin-bottom: 4px; }
+  .move-menu .mm-foot { display: none; }
+  .move-grid { gap: 6px; }
+  .move-cell { padding: 6px 10px; }
+  .move-cell .mv-name { font-size: 14px; }
+  .move-cell .mv-info { font-size: 11px; }
+  .hp-card.foe { top: 10px; left: 12px; }
 }
 
 /* =============================================================================

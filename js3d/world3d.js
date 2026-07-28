@@ -1241,14 +1241,18 @@
 
     // La mer déborde de la carte : on la prolonge de tuiles virtuelles pour
     // qu'elle rejoigne l'horizon au lieu de s'arrêter net sous les yeux de Robin.
+    // Quelques rangées suffisent : au-delà, c'est le quad « océan lointain »
+    // (plus bas) qui prend le relais jusqu'à l'horizon. Étendre la nappe
+    // détaillée coûtait des dizaines de milliers de sommets animés à chaque
+    // frame, même quand Robin se promène en montagne.
     if (groups.sea) {
       const sea = groups.sea;
-      for (let ey = H; ey < H + 14; ey++) {
-        for (let ex = -12; ex < W + 12; ex++) sea.push({ x: ex, y: ey, h: -0.7 });
+      for (let ey = H; ey < H + 6; ey++) {
+        for (let ex = -6; ex < W + 6; ex++) sea.push({ x: ex, y: ey, h: -0.7 });
       }
       for (let ey = 58; ey < H; ey++) {
-        for (let ex = -12; ex < 0; ex++) sea.push({ x: ex, y: ey, h: -0.7 });
-        for (let ex = W; ex < W + 12; ex++) sea.push({ x: ex, y: ey, h: -0.7 });
+        for (let ex = -6; ex < 0; ex++) sea.push({ x: ex, y: ey, h: -0.7 });
+        for (let ex = W; ex < W + 6; ex++) sea.push({ x: ex, y: ey, h: -0.7 });
       }
     }
 

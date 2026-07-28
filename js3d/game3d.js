@@ -20,6 +20,10 @@
   //  Constantes de jeu (identiques au jeu 2D)
   // ---------------------------------------------------------------------------
   const MOVE_DURATION_MS = 160;   // durée d'un pas d'une tuile
+  // Distance (en tuiles) au-delà de laquelle on cesse d'afficher un PNJ : ils
+  // sont articulés (≈ 34 meshes chacun), donc coûteux, et ils sont de toute
+  // façon dispersés — on n'en voit que deux ou trois à la fois.
+  const DIST_PNJ = 24;
   const ENCOUNTER_CHANCE = 0.18;  // 18 % de rencontre en fin de pas
   const START_X = 5;
   const START_Y = 5;
@@ -589,9 +593,13 @@
         for (let i = 0; i < npcEntries.length; i++) {
           const e = npcEntries[i];
           if (!e.npc) continue;
-          // Culling simple : on n'anime que ce qui est autour du joueur.
+          // Culling simple : on n'anime — et on ne rend — que ce qui est autour
+          // du joueur. Un personnage articulé pèse une quinzaine de draw calls,
+          // et le brouillard masque de toute façon ce qui est au-delà.
           const d = Math.abs(e.npc.x - px) + Math.abs(e.npc.y - pz);
-          if (d > R3.quality.viewDistance) continue;
+          const proche = d <= Math.min(R3.quality.viewDistance, DIST_PNJ);
+          if (e.group.visible !== proche) e.group.visible = proche;
+          if (!proche) continue;
           actors.updateNPC(e.group, e.npc, t);
         }
       });
@@ -911,6 +919,8 @@
     if (battle && battle.enter) {
       safeCall('battle.enter', function () { battle.enter(state.battle, biome); });
     }
+    const hud = mod('hud');
+    if (hud && hud.setInBattle) safeCall('hud.setInBattle', function () { hud.setInBattle(true); });
   }
 
   function endBattle() {
@@ -924,6 +934,7 @@
       if (hud.hideMoveMenu) safeCall('hud.hideMoveMenu', function () { hud.hideMoveMenu(); });
       if (hud.hideBattleUI) safeCall('hud.hideBattleUI', function () { hud.hideBattleUI(); });
       else if (hud.hideHP) safeCall('hud.hideHP', function () { hud.hideHP(); });
+      if (hud.setInBattle) safeCall('hud.setInBattle', function () { hud.setInBattle(false); });
     }
     const battle = mod('battle');
     if (battle && battle.exit) safeCall('battle.exit', function () { battle.exit(); });

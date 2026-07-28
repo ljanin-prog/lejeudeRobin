@@ -400,7 +400,10 @@
     card.fill.style.width = (ratio * 100).toFixed(1) + '%';
     card.fill.className = 'hp-fill ' + hpClass(ratio);
 
-    show(card.root);
+    // Tant que le menu de capacités est ouvert, il porte déjà les PV du
+    // compagnon : on ne réaffiche pas sa carte par-dessus.
+    const menuOuvert = ui.moveMenu && !ui.moveMenu.classList.contains('hidden');
+    if (!(side !== 'foe' && menuOuvert)) show(card.root);
     // Petite secousse quand on prend des dégâts : ça se sent tout de suite.
     if (ratio < card.last - 0.001) replayAnim(card.root, 'hit');
     card.last = ratio;
@@ -433,6 +436,9 @@
 
   function showMoveMenu(battle) {
     if (!ui.moveMenu) return;
+    // Le menu affiche déjà « nom + PV » du compagnon : garder en plus sa carte
+    // de PV ferait doublon et, sur un écran peu haut, les deux se chevauchent.
+    if (ui.hp && ui.hp.player) hide(ui.hp.player.root);
     const b = battle || {};
     const st = gameState();
     const moves = movesOf(b).slice(0, 4);
@@ -479,6 +485,12 @@
   }
 
   function hideMoveMenu() { hide(ui.moveMenu); }
+
+  /** Le rappel des touches d'exploration n'a rien à faire pendant un combat. */
+  function setInBattle(v) {
+    const e = $('controls-hint');
+    if (e) e.classList.toggle('en-combat', !!v);
+  }
 
   function setMoveCursor(i, battle) {
     if (!ui.moveCells) return;
@@ -782,6 +794,7 @@
     setCollectionCount: setCollectionCount,
     showCollectionCount: showCollectionCount,
     showQualityPicker: showQualityPicker,
+    setInBattle: setInBattle,
     // combat
     showMoveMenu: showMoveMenu,
     hideMoveMenu: hideMoveMenu,
