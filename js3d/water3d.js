@@ -46,31 +46,31 @@
   const KINDS = {
     lake: {
       deep: '#23459f', shallow: '#4a9fe8', crest: '#79e8f7', foam: '#dff8fd',
-      amp: 0.030, freq: 1.50, speed: 1.00, rough: 0.12, nBoost: 1.7,
-      aDeep: 0.90, aEdge: 0.62, deepRange: 1.8, foamW: 0.38, crestFoam: 0.10,
+      amp: 0.022, freq: 3.20, speed: 1.00, rough: 0.42, nBoost: 0.55,
+      aDeep: 0.90, aEdge: 0.62, deepRange: 1.8, foamW: 0.26, crestFoam: 0.06,
       surf: -0.06,
     },
     sea: {
       deep: '#1c2a63', shallow: '#3b74d0', crest: '#73eff7', foam: '#f4f4f4',
-      amp: 0.080, freq: 0.85, speed: 0.95, rough: 0.10, nBoost: 1.4,
-      aDeep: 0.95, aEdge: 0.70, deepRange: 2.6, foamW: 0.70, crestFoam: 0.45,
+      amp: 0.055, freq: 1.60, speed: 0.95, rough: 0.36, nBoost: 0.55,
+      aDeep: 0.95, aEdge: 0.70, deepRange: 2.6, foamW: 0.40, crestFoam: 0.16,
       surf: -0.05,
     },
     waves: {
       deep: '#3fa8e8', shallow: '#79f0f7', crest: '#bff6fb', foam: '#ffffff',
-      amp: 0.034, freq: 2.10, speed: 1.70, rough: 0.18, nBoost: 1.8,
-      aDeep: 0.72, aEdge: 0.45, deepRange: 1.1, foamW: 0.55, crestFoam: 0.35,
+      amp: 0.030, freq: 3.60, speed: 1.70, rough: 0.34, nBoost: 0.65,
+      aDeep: 0.72, aEdge: 0.45, deepRange: 1.1, foamW: 0.34, crestFoam: 0.14,
       surf: -0.03,
     },
     shallow: {
       deep: '#2f7fb8', shallow: '#5fc8f0', crest: '#96f2f7', foam: '#e8fbff',
-      amp: 0.022, freq: 2.40, speed: 1.25, rough: 0.14, nBoost: 1.8,
-      aDeep: 0.74, aEdge: 0.48, deepRange: 1.2, foamW: 0.42, crestFoam: 0.18,
+      amp: 0.020, freq: 3.80, speed: 1.25, rough: 0.36, nBoost: 0.65,
+      aDeep: 0.74, aEdge: 0.48, deepRange: 1.2, foamW: 0.28, crestFoam: 0.08,
       surf: -0.05,
     },
     pond: {
       deep: '#2a4bb0', shallow: '#4fb2e6', crest: '#86e9f5', foam: '#d8f4fa',
-      amp: 0.016, freq: 2.70, speed: 0.75, rough: 0.12, nBoost: 1.9,
+      amp: 0.015, freq: 4.00, speed: 0.75, rough: 0.40, nBoost: 0.65,
       aDeep: 0.90, aEdge: 0.60, deepRange: 1.4, foamW: 0.30, crestFoam: 0.08,
       surf: -0.06,
     },
@@ -148,18 +148,26 @@
     '  float deepF = smoothstep(0.10, uDeepRange, vEdge);',
     '  vec3  col   = mix(uShallow, uDeep, deepF);',
     // Crêtes plus claires (les pixels #73eff7 du jeu 2D).
-    '  float crest = clamp(vWaveH / max(uAmp, 0.0005) * 0.6 + 0.5, 0.0, 1.0);',
-    '  col = mix(col, uCrest, smoothstep(0.55, 1.0, crest) * 0.45);',
+    // ATTENTION à la normalisation : la houle est la somme de trois trains
+    // d'amplitudes 1 + 0.55 + 0.26, donc vWaveH monte jusqu'à 1.81 * uAmp.
+    // Diviser par uAmp seul saturait le clamp sur près d'un tiers de la nappe,
+    // ce qui la couvrait de grandes plaques claires au lieu de fines crêtes.
+    '  float crest = clamp(vWaveH / max(uAmp * 1.81, 0.0005) * 0.5 + 0.5, 0.0, 1.0);',
+    '  col = mix(col, uCrest, smoothstep(0.86, 1.0, crest) * 0.22);',
     // Écume qui lape le rivage : la frange respire, comme un ressac.
     '  float breath = 0.72 + 0.28 * sin(uTime * uSpeed * 1.6 + vXZ.x * 1.3 + vXZ.y * 0.9);',
     '  float fw     = uFoamW * breath;',
     '  float foam   = 1.0 - smoothstep(fw * 0.35, fw, vEdge);',
     // ... plus quelques moutons sur la crête des grosses vagues.
-    '  foam = max(foam, smoothstep(0.80, 1.0, crest) * uCrestFoam);',
+    '  foam = max(foam, smoothstep(0.92, 1.0, crest) * uCrestFoam);',
     '  foam = clamp(foam, 0.0, 1.0);',
-    // Paillettes de soleil : petits éclats hautes fréquences sur les pentes.
-    '  float glint = sin(vXZ.x * 11.0 + uTime * 1.7) * sin(vXZ.y * 9.0 - uTime * 1.3);',
-    '  col += vec3(0.10, 0.14, 0.16) * pow(max(glint, 0.0), 8.0) * (1.0 - foam);',
+    // Paillettes de soleil. Le produit de trois sinus de frequences non
+    // commensurables casse la grille reguliere : avec deux sinus seulement, les
+    // eclats s'alignent en pois bien visibles sur toute la nappe.
+    '  float glint = sin(vXZ.x * 13.7 + uTime * 1.9)',
+    '              * sin(vXZ.y * 8.3 - uTime * 1.5)',
+    '              * sin((vXZ.x + vXZ.y) * 5.1 + uTime * 0.7);',
+    '  col += vec3(0.07, 0.09, 0.10) * pow(max(glint, 0.0), 14.0) * (1.0 - foam);',
     '  col = mix(col, uFoam, foam);',
     '  diffuseColor.rgb = col;',
     '  diffuseColor.a   = mix(uAEdge, uADeep, deepF) * (1.0 - foam) + foam * 0.96;',

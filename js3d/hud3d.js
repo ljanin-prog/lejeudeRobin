@@ -298,7 +298,11 @@
       const b = el('button', null, box, q[1]);
       b.type = 'button';
       b.addEventListener('click', function () {
-        if (typeof R3 !== 'undefined' && R3.setQuality) R3.setQuality(q[0]);
+        // On passe par game3d quand il est là : lui seul réapplique aussi le
+        // pixelRatio et les ombres au renderer. Et un choix fait à la main
+        // désactive l'auto-qualité — on ne contredit pas le joueur.
+        if (window.GAME3D && window.GAME3D.setQuality) window.GAME3D.setQuality(q[0], true);
+        else if (typeof R3 !== 'undefined' && R3.setQuality) R3.setQuality(q[0]);
         refreshQuality();
         toast('Qualité : ' + q[1]);
         b.blur();
@@ -306,6 +310,7 @@
       ui.qualityBtns[q[0]] = b;
     });
     ui.qualityPicker = box;
+    box.classList.add('hidden');   // révélé au lancement de la partie
     refreshQuality();
     // Si game3d.js baisse la qualité tout seul, le bouton actif suit.
     if (typeof R3 !== 'undefined' && R3.onQualityChange) R3.onQualityChange(refreshQuality);
@@ -357,7 +362,8 @@
 
   function setCollectionCount(n, total) {
     if (!ui.count) return;
-    show(ui.count);
+    // On met la valeur à jour sans forcer l'affichage : c'est launchWorld() qui
+    // décide quand le compteur apparaît (il n'a rien à faire sur l'écran titre).
     const t = total || (typeof CREATURES !== 'undefined' ? CREATURES.length : 26);
     ui.countNum.textContent = (n | 0) + '/' + t;
     ui.count.title = (n | 0) + ' créature(s) différente(s) sur ' + t;
@@ -757,6 +763,11 @@
     if (ui.count) ui.count.classList.toggle('hidden', !v);
   }
 
+  /** Affiche/masque le sélecteur de qualité (inutile sur l'écran titre). */
+  function showQualityPicker(v) {
+    if (ui.qualityPicker) ui.qualityPicker.classList.toggle('hidden', !v);
+  }
+
   // ===========================================================================
   //  ENREGISTREMENT
   // ===========================================================================
@@ -770,6 +781,7 @@
     setBiomeBanner: setBiomeBanner,
     setCollectionCount: setCollectionCount,
     showCollectionCount: showCollectionCount,
+    showQualityPicker: showQualityPicker,
     // combat
     showMoveMenu: showMoveMenu,
     hideMoveMenu: hideMoveMenu,

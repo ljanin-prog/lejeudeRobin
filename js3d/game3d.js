@@ -58,8 +58,8 @@
       tileY: START_Y,
       pixelX: START_X * 16,
       pixelY: START_Y * 16,
-      worldX: START_X + 0.5,   // position 3D continue (centre de tuile)
-      worldZ: START_Y + 0.5,
+      worldX: START_X,         // position 3D continue (centre de tuile)
+      worldZ: START_Y,
       worldY: 0,
       dir: 'down',
       moving: false,
@@ -177,7 +177,7 @@
     camera = new THREE.PerspectiveCamera(
       50, window.innerWidth / Math.max(1, window.innerHeight), 0.1, 500
     );
-    camera.position.set(START_X + 0.5, CAM_HEIGHT, START_Y + 0.5 + CAM_BACK);
+    camera.position.set(START_X, CAM_HEIGHT, START_Y + CAM_BACK);
   }
 
   function buildModules() {
@@ -537,7 +537,7 @@
     state.tick++;
     if (state.biomeBannerTimer > 0) state.biomeBannerTimer -= dtMs;
 
-    measureFps(rawMs);
+    const tWork0 = performance.now();
 
     // --- Logique ---
     if (state.screen === 'world') updateWorld(dtMs);
@@ -556,6 +556,11 @@
       rendered = safeCall('battle.render', function () { battle.render(renderer); return true; }) === true;
     }
     if (!rendered) renderer.render(scene, camera);
+
+    // On juge la qualité sur le TEMPS DE TRAVAIL réel de la frame, jamais sur le
+    // FPS : celui-ci est plafonné par le vsync (écran 30 ou 60 Hz) et bridé quand
+    // la fenêtre n'est pas au premier plan — s'y fier dégraderait le jeu pour rien.
+    measurePerf(rawMs, performance.now() - tWork0);
   }
 
   function updateSceneModules(t, dt) {
@@ -585,7 +590,7 @@
           const e = npcEntries[i];
           if (!e.npc) continue;
           // Culling simple : on n'anime que ce qui est autour du joueur.
-          const d = Math.abs(e.npc.x + 0.5 - px) + Math.abs(e.npc.y + 0.5 - pz);
+          const d = Math.abs(e.npc.x - px) + Math.abs(e.npc.y - pz);
           if (d > R3.quality.viewDistance) continue;
           actors.updateNPC(e.group, e.npc, t);
         }
@@ -602,7 +607,7 @@
     const front = getTileInFront();
     const npc = (typeof getNPCAt === 'function') ? getNPCAt(front.x, front.y) : null;
     if (!npc) { bangMarker.visible = false; return; }
-    const gx = npc.x + 0.5, gz = npc.y + 0.5;
+    const gx = npc.x, gz = npc.y;
     bangMarker.visible = true;
     bangMarker.position.set(gx, groundHeight(gx, gz) + 1.55 + Math.sin(t * 3.4) * 0.07, gz);
     bangMarker.rotation.y = Math.sin(t * 1.6) * 0.18;
@@ -712,8 +717,8 @@
       tx = p.tileX;
       ty = p.tileY;
     }
-    p.worldX = tx + 0.5;
-    p.worldZ = ty + 0.5;
+    p.worldX = tx;
+    p.worldZ = ty;
     p.worldY = groundHeight(p.worldX, p.worldZ);
 
     if (!playerGroup) return;
@@ -1100,6 +1105,10 @@
     }
     playBiomeMusic(state.lastBiome);
     refreshCollectionCount();
+    if (hud) {
+      if (hud.showCollectionCount) safeCall('hud.showCollectionCount', function () { hud.showCollectionCount(true); });
+      if (hud.showQualityPicker) safeCall('hud.showQualityPicker', function () { hud.showQualityPicker(true); });
+    }
 
     const muteBtn = document.getElementById('mute-btn');
     if (muteBtn) muteBtn.style.display = '';
@@ -1153,6 +1162,16 @@
     );
   }
 
+  // On prévient battle3d du coup joué. Sans ça, il devine l'animation en
+  // comparant les PV d'une frame à l'autre : si un soin et une attaque
+  // s'annulent dans le même tour, plus aucune animation ne se déclenche.
+  function notifyBattleMove(side, move) {
+    const bt = mod('battle');
+    if (bt && bt.notifyMove) {
+      safeCall('battle.notifyMove', function () { bt.notifyMove(side, move); });
+    }
+  }
+
   function useTrainerMove() {
     const b = state.battle;
     if (!b || !b.isTrainer || b.phase !== 'choose_move') return;
@@ -1179,6 +1198,7 @@
       b.pendingAttacks.push({ side: 'player', move: move, dmg: dmg });
     }
     b.attackSeq++;
+    notifyBattleMove('player', move);
 
     if (b.trainerHp <= 0) {
       b.phase = 'result'; b.result = 'win'; b.creatureVisible = false;
@@ -1214,6 +1234,7 @@
       b.pendingAttacks.push({ side: 'foe', move: aiMove, dmg: dmg });
     }
     b.attackSeq++;
+    notifyBattleMove('foe', aiMove);
 
     if (b.playerHp <= 0) {
       b.phase = 'result'; b.result = 'lose';
@@ -1389,36 +1410,45 @@
   // ===========================================================================
   //  AUTO-QUALITÉ — on descend d'un cran si ça rame, jamais on ne remonte.
   // ===========================================================================
-  let fpsAvg = 60;
-  let lowFpsTime = 0;
-  let warmup = 3;         // secondes de chauffe avant de juger
+  let fpsAvg = 60;        // uniquement pour le compteur de debug
+  let workAvg = 4;        // temps de travail moyen d'une frame, en ms
+  let slowTime = 0;
+  let warmup = 4;         // secondes de chauffe avant de juger
   let qualityCooldown = 0;
   let fpsDisplayTimer = 0;
+  let manualQuality = false;   // si Robin choisit lui-même, on ne touche plus à rien
 
   const QUALITY_DOWN = { high: 'medium', medium: 'low', low: null };
 
-  function measureFps(rawMs) {
-    // Gros à-coup (onglet passé en arrière-plan, chargement) : on ne juge pas
-    // la qualité là-dessus, sinon on dégraderait le jeu pour rien.
+  // Au-delà de ce temps de travail par frame, on ne tiendrait pas le 60 Hz.
+  const WORK_BUDGET_MS = 14;
+
+  function measurePerf(rawMs, workMs) {
+    // Gros à-coup (onglet en arrière-plan, chargement, capture d'écran) : on ne
+    // juge pas la qualité là-dessus.
     if (rawMs > 120) return;
     const s = rawMs / 1000;
-    const inst = 1 / Math.max(0.001, s);
-    // Moyenne glissante (exponentielle) : ~1 s de mémoire.
-    fpsAvg += (inst - fpsAvg) * Math.min(1, s * 1.5);
 
-    if (warmup > 0) { warmup -= s; lowFpsTime = 0; }
+    fpsAvg += (1 / Math.max(0.001, s) - fpsAvg) * Math.min(1, s * 1.5);
+    workAvg += (workMs - workAvg) * Math.min(1, s * 2);
+
+    if (warmup > 0) { warmup -= s; slowTime = 0; }
     if (qualityCooldown > 0) qualityCooldown -= s;
 
-    if (warmup <= 0) {
-      if (fpsAvg < 40) lowFpsTime += s;
-      else lowFpsTime = 0;
+    // On ne dégrade que pendant le jeu (pas sur les menus), et jamais si le
+    // joueur a réglé la qualité à la main.
+    const enJeu = (state.screen === 'world' || state.screen === 'battle');
 
-      if (lowFpsTime >= 2 && qualityCooldown <= 0) {
+    if (warmup <= 0 && enJeu && !manualQuality) {
+      if (workAvg > WORK_BUDGET_MS) slowTime += s;
+      else slowTime = 0;
+
+      if (slowTime >= 3 && qualityCooldown <= 0) {
         const next = QUALITY_DOWN[R3.quality.level];
-        lowFpsTime = 0;
-        qualityCooldown = 6;
+        slowTime = 0;
+        qualityCooldown = 8;
         if (next) {
-          console.warn('[game3d] ' + Math.round(fpsAvg) + ' fps : qualité ➜ ' + next);
+          console.warn('[game3d] ' + workAvg.toFixed(1) + ' ms/frame : qualité ➜ ' + next);
           applyQuality(next);
         }
       }
@@ -1428,11 +1458,16 @@
     if (fpsDisplayTimer > 0.25) {
       fpsDisplayTimer = 0;
       const hud = mod('hud');
-      if (hud && hud.setFps) safeCall('hud.setFps', function () { hud.setFps(Math.round(fpsAvg)); });
+      if (hud && hud.setFps) {
+        safeCall('hud.setFps', function () {
+          hud.setFps(Math.round(fpsAvg) + ' fps · ' + workAvg.toFixed(1) + ' ms');
+        });
+      }
     }
   }
 
-  function applyQuality(level) {
+  function applyQuality(level, choixManuel) {
+    if (choixManuel) manualQuality = true;   // on ne contredira plus le joueur
     R3.setQuality(level);   // prévient aussi tous les modules abonnés
     if (!renderer) return;
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, R3.quality.pixelRatio));
@@ -1499,8 +1534,8 @@
         state.player.pixelY = data.tileY * 16;
         state.player.moveFromX = state.player.moveToX = data.tileX;
         state.player.moveFromY = state.player.moveToY = data.tileY;
-        state.player.worldX = data.tileX + 0.5;
-        state.player.worldZ = data.tileY + 0.5;
+        state.player.worldX = data.tileX;
+        state.player.worldZ = data.tileY;
       }
       state.lastBiome = getBiomeAt(state.player.tileX, state.player.tileY);
     } catch (e) { /* données corrompues : on ignore */ }

@@ -40,7 +40,12 @@
   const CHUNK = 24;
   const NCX = Math.ceil(W / CHUNK);
   const NCY = Math.ceil(H / CHUNK);
-  const SKIRT = 70;            // débord du terrain au-delà de la carte (le brouillard fait le reste)
+  // Débord du terrain au-delà de la carte. Il PLONGE vers le bas : une nappe
+  // plate et étendue occuperait tout l'horizon et masquerait complètement le
+  // ciel (la caméra regarde vers le bas). En descendant, elle prolonge le
+  // paysage sans jamais dépasser la ligne d'horizon.
+  const SKIRT = 34;
+  const SKIRT_DROP = 16;       // de combien le bord extérieur descend
 
   const clamp01 = R3.clamp01;
 
@@ -1107,22 +1112,26 @@
       // nord
       tcol(i, 0);
       let ha = seaEdge ? SEA_Y : cornerH(i, 0), hb = seaEdge ? SEA_Y : cornerH(i + 1, 0);
-      quad([xa, ha, zMin - SKIRT], [xb, hb, zMin - SKIRT], [xa, ha, zMin], [xb, hb, zMin], c[0], c[1], c[2]);
+      let d = seaEdge ? 0 : SKIRT_DROP;   // la mer reste plate jusqu'à l'horizon
+      quad([xa, ha - d, zMin - SKIRT], [xb, hb - d, zMin - SKIRT], [xa, ha, zMin], [xb, hb, zMin], c[0], c[1], c[2]);
       // sud
       tcol(i, H - 1);
       ha = seaEdge ? SEA_Y : cornerH(i, H); hb = seaEdge ? SEA_Y : cornerH(i + 1, H);
-      quad([xa, ha, zMax], [xb, hb, zMax], [xa, ha, zMax + SKIRT], [xb, hb, zMax + SKIRT], c[0], c[1], c[2]);
+      d = seaEdge ? 0 : SKIRT_DROP;
+      quad([xa, ha, zMax], [xb, hb, zMax], [xa, ha - d, zMax + SKIRT], [xb, hb - d, zMax + SKIRT], c[0], c[1], c[2]);
     }
     for (let j = 0; j < H; j++) {
       const za = j - 0.5, zb = j + 0.5;
       // ouest
       tcol(0, j);
       let ha = seaEdge ? SEA_Y : cornerH(0, j), hb = seaEdge ? SEA_Y : cornerH(0, j + 1);
-      quad([xMin - SKIRT, ha, za], [xMin, ha, za], [xMin - SKIRT, hb, zb], [xMin, hb, zb], c[0], c[1], c[2]);
+      let d = seaEdge ? 0 : SKIRT_DROP;
+      quad([xMin - SKIRT, ha - d, za], [xMin, ha, za], [xMin - SKIRT, hb - d, zb], [xMin, hb, zb], c[0], c[1], c[2]);
       // est
       tcol(W - 1, j);
       ha = seaEdge ? SEA_Y : cornerH(W, j); hb = seaEdge ? SEA_Y : cornerH(W, j + 1);
-      quad([xMax, ha, za], [xMax + SKIRT, ha, za], [xMax, hb, zb], [xMax + SKIRT, hb, zb], c[0], c[1], c[2]);
+      d = seaEdge ? 0 : SKIRT_DROP;
+      quad([xMax, ha, za], [xMax + SKIRT, ha - d, za], [xMax, hb, zb], [xMax + SKIRT, hb - d, zb], c[0], c[1], c[2]);
     }
     // Les 4 coins
     const corners = [
@@ -1134,7 +1143,8 @@
     for (let i = 0; i < corners.length; i++) {
       const q = corners[i];
       tcol(q[0] >= W ? W - 1 : 0, q[1] >= H ? H - 1 : 0);
-      const h = seaEdge ? SEA_Y : cornerH(q[0], q[1]);
+      // Les coins de terre descendent ; les coins de mer restent au ras de l'eau.
+      const h = seaEdge ? SEA_Y : (cornerH(q[0], q[1]) - SKIRT_DROP);
       quad([q[2], h, q[3]], [q[4], h, q[3]], [q[2], h, q[5]], [q[4], h, q[5]], c[0], c[1], c[2]);
     }
 

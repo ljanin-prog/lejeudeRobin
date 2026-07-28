@@ -79,7 +79,14 @@
   const _geosLocales = new Map();
   function geoLocale(cle, creer) {
     let g = _geosLocales.get(cle);
-    if (!g) { g = creer(); _geosLocales.set(cle, g); }
+    if (!g) {
+      g = creer();
+      // Marquée partagée : R3.disposeTree() ne doit JAMAIS la détruire, sinon
+      // le joueur du monde et les 18 PNJ perdraient leur géométrie à la fin
+      // du premier combat.
+      g.userData.shared = true;
+      _geosLocales.set(cle, g);
+    }
     return g;
   }
   function GEO_CALOTTE() {   // calotte de cheveux : demi-sphère un peu débordante
@@ -525,8 +532,8 @@
       }
       if (!g) continue;
 
-      const x = (npc.x || 0) + 0.5;
-      const z = (npc.y || 0) + 0.5;
+      const x = (npc.x || 0);
+      const z = (npc.y || 0);
       const h = hauteurSol(x, z);
       g.position.set(x, h === null ? 0 : h, z);
       g.userData.solOk = (h !== null);

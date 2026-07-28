@@ -182,6 +182,14 @@
         fragmentShader: [
           'uniform vec3 uTop; uniform vec3 uMid; uniform vec3 uBot;',
           'varying vec3 vDir;',
+          // Un ShaderMaterial court-circuite renderer.outputColorSpace : comme les
+          // uniformes THREE.Color sont en espace LINEAIRE, il faut convertir en
+          // sRGB nous-memes, sinon l'arene sort plus sombre que le monde.
+          'vec3 toSRGB(vec3 c) {',
+          '  c = max(c, vec3(0.0));',
+          '  return mix(pow(c, vec3(0.4166667)) * 1.055 - 0.055, c * 12.92,',
+          '             vec3(lessThanEqual(c, vec3(0.0031308))));',
+          '}',
           'void main() {',
           '  float h = clamp(vDir.y * 0.5 + 0.5, 0.0, 1.0);',
           '  vec3 c = mix(uBot, uMid, smoothstep(0.30, 0.52, h));',
@@ -189,7 +197,7 @@
           // petit halo de soleil, en haut à gauche, pour donner une direction
           '  float s = max(0.0, dot(vDir, normalize(vec3(-0.45, 0.50, -0.72))));',
           '  c += vec3(1.0, 0.94, 0.76) * pow(s, 16.0) * 0.40;',
-          '  gl_FragColor = vec4(c, 1.0);',
+          '  gl_FragColor = vec4(toSRGB(c), 1.0);',
           '}',
         ].join('\n'),
         side: THREE.BackSide,
@@ -836,15 +844,25 @@
     return g;
   }
 
+  // Le personnage humain du combat est construit UNE SEULE FOIS puis réutilisé
+  // d'un combat à l'autre : le reconstruire à chaque fois faisait grossir sans
+  // fin la liste interne d'actors3d, et exit() détruisait son modèle.
+  let humanModel = null;
+
   function buildHuman() {
+    if (humanModel) {
+      if (humanModel.parent) humanModel.parent.remove(humanModel);
+      return humanModel;
+    }
     const actors = R3.get('actors');
     if (actors && typeof actors.buildPlayer === 'function') {
       try {
         const g = actors.buildPlayer();
-        if (g) { g.userData.fromActors = true; return g; }
+        if (g) { g.userData.fromActors = true; humanModel = g; return g; }
       } catch (e) { console.warn('[battle3d] buildPlayer indisponible :', e); }
     }
-    return fallbackHuman();
+    humanModel = fallbackHuman();
+    return humanModel;
   }
 
   function attachModel(side, model, scale, blobR) {
@@ -991,8 +1009,12 @@
     // côté-là. Les seules géométries propres au combat sont celles des modèles
     // de créatures ; R3.disposeTree() sait reconnaître ce qui est partagé.
     [foe, plr].forEach(function (s) {
-      if (s && s.model) R3.disposeTree(s.model);
-      if (s && s.blob && s.blob.material) s.blob.material.dispose();
+      if (!s) return;
+      // On ne détruit JAMAIS le personnage humain : il est réutilisé d'un combat
+      // à l'autre et partage ses géométries avec le joueur du monde et les PNJ.
+      if (s.model && s.model !== humanModel) R3.disposeTree(s.model);
+      else if (s.model && s.model.parent) s.model.parent.remove(s.model);
+      if (s.blob && s.blob.material) s.blob.material.dispose();
     });
 
     while (scene.children.length) scene.remove(scene.children[0]);
