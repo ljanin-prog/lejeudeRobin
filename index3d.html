@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Le jeu de Robin — 3D</title>
+  <link rel="stylesheet" href="css3d/hud3d.css">
+</head>
+<body>
+
+  <!-- Le canvas 3D occupe toute la fenêtre ; l'interface flotte par-dessus. -->
+  <canvas id="game"></canvas>
+
+  <div id="hud">
+
+    <button id="mute-btn" class="mute-btn" style="display: none;"
+            aria-label="Couper le son" title="Couper le son (M)">♪</button>
+
+    <div id="fps-counter" class="fps-counter hidden"></div>
+
+    <!-- Écran titre -->
+    <div id="title-overlay" class="overlay">
+      <div class="title-art">✨</div>
+      <h1>Le jeu de Robin</h1>
+      <h2>Capture les animaux magiques !</h2>
+      <label for="name-input">Comment t'appelles-tu ?</label>
+      <input id="name-input" type="text" maxlength="12" placeholder="Robin" autocomplete="off">
+      <button id="start-btn">Commencer l'aventure !</button>
+      <p class="version-switch"><a href="index.html">Jouer à la version 2D d'origine</a></p>
+    </div>
+
+    <!-- Choix du compagnon de départ -->
+    <div id="starter-overlay" class="overlay hidden">
+      <h2>Choisis ton compagnon de départ !</h2>
+      <div id="starter-grid"></div>
+      <p class="hint"><strong>← →</strong> pour choisir &nbsp;·&nbsp; <strong>Espace</strong> pour confirmer</p>
+    </div>
+
+    <!-- Boîte de dialogue -->
+    <div id="message-box" class="message-box hidden">
+      <p id="message-text"></p>
+      <p class="continue-hint">▼ Espace</p>
+    </div>
+
+    <!-- Collection -->
+    <div id="collection-overlay" class="overlay hidden">
+      <h2>Ma collection</h2>
+      <div id="collection-grid"></div>
+      <button id="close-collection">Fermer (C)</button>
+    </div>
+
+    <!-- Bandeau de biome, compteur, menu de combat et carte : créés par hud3d.js -->
+
+    <p id="controls-hint" class="controls-hint hidden">
+      <strong>Flèches</strong> se déplacer &nbsp;·&nbsp;
+      <strong>Espace</strong> parler &nbsp;·&nbsp;
+      <strong>C</strong> collection &nbsp;·&nbsp;
+      <strong>N</strong> carte &nbsp;·&nbsp;
+      <strong>M</strong> son
+    </p>
+
+  </div>
+
+  <!-- ---------------------------------------------------------------------
+       1. Three.js (build UMD local : le jeu reste jouable hors ligne)
+       --------------------------------------------------------------------- -->
+  <script src="js3d/vendor/three.min.js"></script>
+
+  <!-- ---------------------------------------------------------------------
+       2. Le jeu 2D d'origine, INCHANGÉ — on réutilise ses données et sa
+          logique (carte, créatures, PNJ, audio). Ses fonctions de dessin
+          canvas restent inertes, sauf pour les vignettes de la collection.
+          js/game.js n'est PAS chargé : js3d/game3d.js le remplace.
+          Ordre imposé : npcs.js modifie MAP au chargement.
+       --------------------------------------------------------------------- -->
+  <script src="js/palette.js"></script>
+  <script src="js/sprites.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/world.js"></script>
+  <script src="js/npcs.js"></script>
+  <script src="js/creatures.js"></script>
+
+  <!-- ---------------------------------------------------------------------
+       3. Moteur 3D
+       --------------------------------------------------------------------- -->
+  <script src="js3d/core3d.js"></script>
+  <script src="js3d/water3d.js"></script>
+  <script src="js3d/sky3d.js"></script>
+  <script src="js3d/world3d.js"></script>
+  <script src="js3d/creatures3d.lib.js"></script>
+  <script src="js3d/creatures3d.p1.js"></script>
+  <script src="js3d/creatures3d.p2.js"></script>
+  <script src="js3d/creatures3d.p3.js"></script>
+  <script src="js3d/creatures3d.p4.js"></script>
+  <script src="js3d/actors3d.js"></script>
+  <script src="js3d/hud3d.js"></script>
+  <script src="js3d/battle3d.js"></script>
+  <script src="js3d/game3d.js"></script>
+
+</body>
+</html>
