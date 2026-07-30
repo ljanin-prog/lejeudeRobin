@@ -54,8 +54,11 @@
     <p id="controls-hint" class="controls-hint hidden">
       <strong>Flèches</strong> se déplacer &nbsp;·&nbsp;
       <strong>Espace</strong> parler &nbsp;·&nbsp;
-      <strong>C</strong> collection &nbsp;·&nbsp;
+      <strong>B</strong> lancer une Ball &nbsp;·&nbsp;
+      <strong>E</strong> équipe &nbsp;·&nbsp;
+      <strong>C</strong> Pokédex &nbsp;·&nbsp;
       <strong>N</strong> carte &nbsp;·&nbsp;
+      <strong>V</strong> vue &nbsp;·&nbsp;
       <strong>M</strong> son
     </p>
 
@@ -81,18 +84,49 @@
   <script src="js/creatures.js"></script>
 
   <!-- ---------------------------------------------------------------------
-       3. Moteur 3D
+       3. Moteur 3D — ordre imposé par js3d/CONTRACT2.md §21.
+          Chaque module se contente de s'enregistrer au chargement et va
+          chercher ses voisins à la volée : l'ordre ci-dessous n'a donc
+          d'importance que pour tiles3d.js, qui étend le socle.
        --------------------------------------------------------------------- -->
   <script src="js3d/core3d.js"></script>
+
+  <!-- Données : tuiles, types, capacités, espèces, équipe -->
+  <script src="js3d/tiles3d.js"></script>
+  <script src="js3d/types3d.js"></script>
+  <script src="js3d/moves3d.js"></script>
+  <script src="js3d/dex3d.js"></script>
+  <script src="js3d/team3d.js"></script>
+
+  <!-- Le monde : villes, arènes, les 6 régions -->
+  <script src="js3d/cities3d.js"></script>
+  <script src="js3d/arenas3d.js"></script>
+  <script src="js3d/regions3d.js"></script>
+
+  <!-- Rendu du décor -->
   <script src="js3d/water3d.js"></script>
   <script src="js3d/sky3d.js"></script>
+  <script src="js3d/citybuild3d.js"></script>
   <script src="js3d/world3d.js"></script>
+
+  <!-- Les créatures : 26 d'origine puis 36 légendaires -->
   <script src="js3d/creatures3d.lib.js"></script>
   <script src="js3d/creatures3d.p1.js"></script>
   <script src="js3d/creatures3d.p2.js"></script>
   <script src="js3d/creatures3d.p3.js"></script>
   <script src="js3d/creatures3d.p4.js"></script>
+  <script src="js3d/legendlib3d.js"></script>
+  <script src="js3d/legend3d.p1.js"></script>
+  <script src="js3d/legend3d.p2.js"></script>
+  <script src="js3d/legend3d.p3.js"></script>
+
+  <!-- Acteurs, créatures sur la carte, caméra, dirigeable -->
   <script src="js3d/actors3d.js"></script>
+  <script src="js3d/roamers3d.js"></script>
+  <script src="js3d/camera3d.js"></script>
+  <script src="js3d/airship3d.js"></script>
+
+  <!-- Interface, combat, contrôleur -->
   <script src="js3d/hud3d.js"></script>
   <script src="js3d/battle3d.js"></script>
   <script src="js3d/game3d.js"></script>

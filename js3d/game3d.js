@@ -1,86 +1,117 @@
 // =============================================================================
-//  game3d.js — CONTRÔLEUR du « Jeu de Robin » en 3D
+//  game3d.js — CONTRÔLEUR du « Jeu de Robin » en 3D  (CONTRACT2.md §19)
 // =============================================================================
-//  Remplace js/game.js : la LOGIQUE de jeu est reprise telle quelle (elle est
-//  correcte et testée), seule la couche de rendu change — canvas 2D ➜ Three.js.
+//  C'est le chef d'orchestre : il ne dessine presque rien lui-même, il fait
+//  jouer ensemble la vingtaine de modules js3d/*. Il assure :
 //
-//  Responsabilités :
-//    • créer le renderer, la scène et la caméra 3e personne ;
-//    • orchestrer les modules js3d/* (sky, world, actors, hud, battle) en
-//      tolérant l'absence de n'importe lequel d'entre eux ;
-//    • faire tourner la machine à états title / starter / world / battle /
-//      collection / map ;
-//    • sauvegarder dans la MÊME clé localStorage que le jeu 2D.
+//    • la machine à états  title / starter / world / battle / team / dex /
+//      map / airship / transition ;
+//    • le déplacement à la tuile, les collisions et les rencontres, contre
+//      `R3.get('regions')` (qui remplace js/world.js pour la 3D) ;
+//    • les tuiles spéciales : PORTAL (changement de région), AIRSHIP_DOCK
+//      (voyage en dirigeable), ARENA_DOOR (défi de champion), HEAL_DOOR
+//      (centre de soins), SHOP_DOOR, SIGN ;
+//    • le lancer de Pokéball en monde ouvert (touche B) via `roamers3d` ;
+//    • les combats : construction du `battleState` du §17, tours, IA, XP,
+//      capture, badges ;
+//    • la sauvegarde `robinGame3d_v1`, avec import UNIQUE depuis la
+//      sauvegarde 2D `robinGame_v2` au tout premier lancement ;
+//    • l'auto-qualité, mesurée sur le TEMPS DE TRAVAIL d'une frame (budget
+//      14 ms), jamais sur le FPS.
+//
+//  RÈGLE ABSOLUE — aucune exception au chargement, même si la moitié des
+//  modules manque : tout passe par `mod()` (accès tolérant) et `safeCall()`
+//  (isolation d'erreur avec désactivation définitive de l'appel fautif).
+//
+//  Le jeu 2D (`js/`) n'est JAMAIS modifié, et sa sauvegarde jamais réécrite :
+//  on la lit une seule fois, en lecture seule.
 // =============================================================================
 
 (function () {
   'use strict';
 
   // ---------------------------------------------------------------------------
-  //  Constantes de jeu (identiques au jeu 2D)
+  //  CONSTANTES DE JEU
   // ---------------------------------------------------------------------------
-  const MOVE_DURATION_MS = 160;   // durée d'un pas d'une tuile
+  const MOVE_DURATION_MS = 160;   // durée d'un pas d'une tuile (jeu 2D d'origine)
+  const ENCOUNTER_CHANCE = 0.18;  // 18 % de rencontre en fin de pas sur herbe haute
   // Distance (en tuiles) au-delà de laquelle on cesse d'afficher un PNJ : ils
-  // sont articulés (≈ 34 meshes chacun), donc coûteux, et ils sont de toute
-  // façon dispersés — on n'en voit que deux ou trois à la fois.
+  // sont articulés (≈ 34 meshes chacun), donc coûteux, et dispersés.
   const DIST_PNJ = 24;
-  const ENCOUNTER_CHANCE = 0.18;  // 18 % de rencontre en fin de pas
-  const START_X = 5;
-  const START_Y = 5;
-  const SAVE_KEY = 'robinGame_v2';
 
-  // Caméra : 3e personne, ORIENTATION FIXE (un enfant ne doit jamais se perdre).
-  const CAM_BACK = 11;    // recul derrière le joueur (sur +z)
-  const CAM_HEIGHT = 9;   // hauteur au-dessus du joueur
-  const CAM_LOOK_AHEAD = 1.6;  // on vise un peu DEVANT le joueur
+  const SAVE_KEY = 'robinGame3d_v1';
+  const OLD_SAVE_KEY = 'robinGame_v2';   // sauvegarde du jeu 2D — LECTURE SEULE
+
+  const START_REGION = 'val';
+  const START_X = 24, START_Y = 30;      // §3 : départ de la partie
+
+  const FADE_MS = 320;            // durée d'un demi-fondu de transition
+  const BALL_RANGE = 3.4;         // portée du lancer de Ball en monde ouvert
+
+  // Caméra de REPLI, utilisée seulement si camera3d.js est absent : 3e
+  // personne, orientation fixe (un enfant ne doit jamais se perdre).
+  const CAM_BACK = 11;
+  const CAM_HEIGHT = 9;
+  const CAM_LOOK_AHEAD = 1.6;
   const ZOOM_MIN = 0.60;
   const ZOOM_MAX = 1.70;
 
-  // Le jeu 2D n'a pas de piste musicale pour ces biomes : silence total.
-  // On les rabat sur la piste existante la plus proche (bug corrigé ici, sans
-  // toucher à js/audio.js).
+  // js/audio.js ne contient que 7 pistes (forest, lake, plain, beach, sea,
+  // park, city). Tous les autres biomes — les 3 anciens sans piste et les 8
+  // nouveaux du §5 — sont rabattus ici sur la piste la plus proche en
+  // ambiance. Sans cette table, la moitié du monde serait silencieuse.
   const MUSIC_FALLBACK = {
     mountain: 'forest',
     village: 'plain',
     city2: 'city',
+    jungle: 'forest',     // même luxuriance, même flûte
+    swamp: 'lake',        // eau stagnante : les nappes du lac collent bien
+    volcano: 'city',      // la piste la plus grave et la plus martiale
+    desert: 'beach',      // chaleur et sable
+    glacier: 'sea',       // notes cristallines et lentes
+    celestial: 'park',    // la plus lumineuse et la plus aérienne
+    coast: 'beach',
+    citadel: 'city',
   };
 
+  // Bonus de capture par Ball (§11).
+  const BALL_BONUS = { pokeball: 1.0, superball: 1.5, hyperball: 2.2, ballmaitresse: 99 };
+
   // ---------------------------------------------------------------------------
-  //  ÉTAT DU JEU — mêmes champs que le jeu 2D (la sauvegarde doit rester
-  //  compatible), plus quelques champs propres à la 3D.
+  //  ÉTAT DU JEU — c'est aussi ce que lit hud3d.js via window.GAME3D.state
   // ---------------------------------------------------------------------------
   const state = {
-    screen: 'title',      // 'title' | 'starter' | 'world' | 'battle' | 'collection' | 'map'
+    screen: 'title',   // title|starter|world|battle|team|dex|map|airship|transition
     playerName: '',
-    starter: null,
-    starterHp: 40,
-    starterMaxHp: 40,
+    regionId: START_REGION,
     starterCursor: 0,
-    defeatedTrainers: {},
     player: {
-      tileX: START_X,
-      tileY: START_Y,
-      pixelX: START_X * 16,
-      pixelY: START_Y * 16,
-      worldX: START_X,         // position 3D continue (centre de tuile)
-      worldZ: START_Y,
-      worldY: 0,
+      tileX: START_X, tileY: START_Y,
+      worldX: START_X, worldY: 0, worldZ: START_Y,
       dir: 'down',
       moving: false,
       moveProgress: 0,
       moveFromX: START_X, moveFromY: START_Y,
       moveToX: START_X, moveToY: START_Y,
-      walkFrame: 0,
     },
-    camera: { x: 0, y: 0 },   // conservé par compatibilité
-    zoom: 1,
+    zoom: 1,           // seulement pour la caméra de repli
     input: { up: false, down: false, left: false, right: false },
     messages: [],
     battle: null,
-    collection: {},
+    // --- progression, tout ce qui part dans la sauvegarde -------------------
+    collection: {},          // { speciesId: nombre de captures }
+    seen: {},                // { speciesId: true }
+    badges: {},              // { regionId: true }
+    defeatedTrainers: {},    // { npcId: true }
+    items: { pokeball: 20, superball: 0, hyperball: 0, potion: 5 },
+    visitedRegions: { val: true },   // `val` est visitée d'office (§17 bis)
+    cameraMode: 'aventure',
+    // --- éphémère ------------------------------------------------------------
     tick: 0,
     lastBiome: null,
-    biomeBannerTimer: 0,
+    transition: null,        // { phase:'out'|'in', t, to, toX, toY, label }
+    aimed: null,             // roamer visé (pour le viseur du HUD)
+    throwing: false,         // un lancer de Ball est en cours
   };
 
   // ---------------------------------------------------------------------------
@@ -91,19 +122,22 @@
   let scene = null;
   let camera = null;
   let playerGroup = null;
-  let npcEntries = [];      // [{ group, npc }]
-  let bangMarker = null;    // le « ! » au-dessus du PNJ à qui l'on peut parler
+  let npcEntries = [];      // [{ group, npc }] — reconstruits à chaque région
+  let bangMarker = null;    // le « ! » au-dessus d'un PNJ à qui l'on peut parler
   let fallbackSun = null;   // soleil de secours si sky3d.js est absent
-  let started = false;      // la boucle tourne-t-elle ?
+  let fadeEl = null;        // voile noir des transitions de région
+  let started = false;
   let lastTime = 0;
 
-  const camPos = new THREE.Vector3();
-  const camAim = new THREE.Vector3();
+  const camPos = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  const camAim = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 
   // ---------------------------------------------------------------------------
   //  Accès tolérant aux modules — aucun n'est obligatoire.
   // ---------------------------------------------------------------------------
-  function mod(name) { return R3.get(name); }
+  function mod(name) {
+    try { return R3.get(name); } catch (e) { return undefined; }
+  }
 
   const _broken = Object.create(null);
   /** Appelle fn() en isolant les erreurs : au premier échec, l'appel est
@@ -119,8 +153,23 @@
     }
   }
 
+  /** Petit raccourci : appelle une méthode d'un module si elle existe. */
+  function call(modName, fnName, args) {
+    const m = mod(modName);
+    if (!m || typeof m[fnName] !== 'function') return undefined;
+    return safeCall(modName + '.' + fnName, function () {
+      return m[fnName].apply(m, args || []);
+    });
+  }
+
+  /** Les bruitages du jeu 2D, sans jamais planter si Audio_ manque. */
+  function sfx(name) {
+    try { if (typeof Audio_ !== 'undefined' && Audio_.sfx && Audio_.sfx[name]) Audio_.sfx[name](); }
+    catch (e) { /* audio indisponible : le jeu continue */ }
+  }
+
   // ===========================================================================
-  //  INITIALISATION
+  //  1. INITIALISATION
   // ===========================================================================
 
   function init() {
@@ -129,14 +178,16 @@
 
     initRenderer();
     initScene();
+    buildFade();
     buildModules();
     bindEvents();
 
-    loadGame();
-    refreshCollectionCount();
+    loadGame();                 // peut importer l'ancienne sauvegarde 2D
+    applyRegion(state.regionId, { silent: true });
+    refreshHudCounters();
     updateMuteButton(typeof Audio_ !== 'undefined' && Audio_.isMuted && Audio_.isMuted());
 
-    // Position de départ de la caméra : déjà en place, sans glissement au début.
+    // Position de départ de la caméra : déjà en place, sans glissement.
     updatePlayerTransform(0);
     updateCamera(1e9);
 
@@ -184,22 +235,35 @@
     camera.position.set(START_X, CAM_HEIGHT, START_Y + CAM_BACK);
   }
 
+  /** Voile noir des transitions de région : un simple div, créé à la volée
+   *  pour ne pas avoir à toucher index3d.html. */
+  function buildFade() {
+    try {
+      fadeEl = document.createElement('div');
+      fadeEl.id = 'region-fade';
+      fadeEl.style.cssText = 'position:fixed;inset:0;background:#0a0c18;opacity:0;' +
+        'pointer-events:none;z-index:80;transition:none;display:none;';
+      document.body.appendChild(fadeEl);
+    } catch (e) { fadeEl = null; }
+  }
+
+  function setFade(alpha) {
+    if (!fadeEl) return;
+    const a = Math.max(0, Math.min(1, alpha));
+    fadeEl.style.opacity = String(a);
+    fadeEl.style.display = a <= 0.001 ? 'none' : 'block';
+  }
+
   function buildModules() {
     // --- Ciel, soleil, brouillard ---
     const sky = mod('sky');
-    if (sky && sky.build) {
-      safeCall('sky.build', function () { sky.build(scene); });
-    }
+    if (sky && sky.build) safeCall('sky.build', function () { sky.build(scene); });
     if (!sky || _broken['sky.build']) buildFallbackSky();
 
-    // --- Terrain et décors ---
+    // --- Terrain et décors (le contenu vient au premier applyRegion) ---
     const world = mod('world');
-    if (world && world.build) {
-      safeCall('world.build', function () { world.build(scene); });
-    } else {
-      console.warn('[game3d] module « world » absent : sol de secours.');
-      buildFallbackGround();
-    }
+    if (world && world.build) safeCall('world.build', function () { world.build(scene); });
+    else { console.warn('[game3d] module « world » absent : sol de secours.'); buildFallbackGround(); }
     if (_broken['world.build']) buildFallbackGround();
 
     // --- Joueur ---
@@ -210,33 +274,46 @@
     if (!playerGroup) playerGroup = buildFallbackPlayer();
     scene.add(playerGroup);
 
-    // --- PNJ ---
-    npcEntries = [];
-    if (actors && actors.buildNPCs) {
-      const list = safeCall('actors.buildNPCs', function () { return actors.buildNPCs(scene); });
-      if (list && list.length) {
-        for (let i = 0; i < list.length; i++) {
-          const e = list[i];
-          if (!e) continue;
-          // On accepte aussi bien une liste de groupes qu'une liste de paires.
-          const g = e.isObject3D ? e : (e.group || e.mesh || e.object || null);
-          const n = e.npc || (g && g.userData && g.userData.npc) ||
-                    (typeof NPCS !== 'undefined' ? NPCS[i] : null);
-          if (g) npcEntries.push({ group: g, npc: n });
-        }
-      }
-    }
-    if (npcEntries.length === 0) console.warn('[game3d] aucun PNJ 3D construit.');
-
     // --- Marqueur « ! » de dialogue ---
     bangMarker = buildBangMarker();
     bangMarker.visible = false;
     scene.add(bangMarker);
 
+    // --- Créatures qui se baladent sur la carte ---
+    call('roamers', 'build', [scene]);
+    const roamers = mod('roamers');
+    if (roamers && roamers.onEncounter) {
+      safeCall('roamers.onEncounter', function () {
+        roamers.onEncounter(function (roamer) { onRoamerTouch(roamer); });
+      });
+    }
+
+    // --- Dirigeable : il prend la caméra et le joueur pendant le vol, et
+    //     c'est LUI qui nous dit quand charger la région (onMidFlight). ---
+    call('airship', 'build', [scene, camera]);
+    call('airship', 'setPlayer', [playerGroup]);
+    const airship = mod('airship');
+    if (airship && airship.onMidFlight) {
+      safeCall('airship.onMidFlight', function () {
+        airship.onMidFlight(function (from, to) {
+          // On est au-dessus des nuages : le chargement (~150 ms) est masqué.
+          loadRegionData(to);
+        });
+      });
+    }
+
+    // --- Caméra à deux vues ---
+    call('camera', 'init', [camera]);
+
     // --- Interface ---
     const hud = mod('hud');
     if (hud && hud.init) safeCall('hud.init', function () { hud.init(); });
     else console.warn('[game3d] module « hud » absent : interface minimale.');
+    if (hud && hud.onStarterPick) {
+      safeCall('hud.onStarterPick', function () {
+        hud.onStarterPick(function (i) { state.starterCursor = i; confirmStarter(); });
+      });
+    }
   }
 
   /** Ciel/lumière de secours si sky3d.js manque : il faut TOUJOURS y voir clair. */
@@ -263,24 +340,20 @@
 
   /** Sol plat de secours si world3d.js manque : mieux qu'un écran vide. */
   function buildFallbackGround() {
-    const g = new THREE.Mesh(
-      R3.geo.plane(400, 400),
-      R3.mat('#63b846', { rough: 1 })
-    );
+    const g = new THREE.Mesh(R3.geo.plane(800, 800), R3.mat('#63b846', { rough: 1 }));
     g.rotation.x = -Math.PI / 2;
-    g.position.set(60, 0, 35);
+    g.position.set(192, 0, 112);
     g.receiveShadow = true;
     scene.add(g);
   }
 
   /** Silhouette de joueur de secours si actors3d.js manque. */
   function buildFallbackPlayer() {
-    const g = R3.group(
+    return R3.group(
       R3.cyl(0.17, 0.21, 0.44, '#41a6f6', 0, 0.30, 0),
       R3.sphere(0.19, '#ffd9a8', 0, 0.66, 0),
       R3.sphere(0.21, '#6b4423', 0, 0.72, -0.02)
     );
-    return g;
   }
 
   /** Bulle « ! » qui flotte au-dessus d'un PNJ à qui l'on peut parler. */
@@ -296,7 +369,7 @@
   }
 
   // ===========================================================================
-  //  ÉVÉNEMENTS
+  //  2. ÉVÉNEMENTS
   // ===========================================================================
 
   function bindEvents() {
@@ -311,7 +384,7 @@
     }
 
     const closeCol = document.getElementById('close-collection');
-    if (closeCol) closeCol.addEventListener('click', closeCollection);
+    if (closeCol) closeCol.addEventListener('click', function () { closeOverlays(); });
 
     const muteBtn = document.getElementById('mute-btn');
     if (muteBtn) muteBtn.addEventListener('click', toggleMute);
@@ -330,15 +403,17 @@
     renderer.setSize(w, h);
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    const battle = mod('battle');
-    if (battle && battle.onResize) safeCall('battle.onResize', function () { battle.onResize(w, h); });
+    call('battle', 'onResize', [w, h]);
   }
 
-  /** Molette = zoom, entre deux bornes confortables. */
+  /** Molette = zoom. camera3d gère ses propres bornes par vue ; en repli, on
+   *  garde les bornes historiques. */
   function onWheel(e) {
     if (state.screen !== 'world') return;
     e.preventDefault();
     const step = (e.deltaY > 0 ? 1 : -1) * 0.09;
+    const cam = mod('camera');
+    if (cam && cam.zoom) { safeCall('camera.zoom', function () { cam.zoom(step); }); return; }
     state.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, state.zoom + step));
   }
 
@@ -347,75 +422,55 @@
   }
 
   // ===========================================================================
-  //  ENTRÉES CLAVIER — repris à l'identique du jeu 2D
+  //  3. ENTRÉES CLAVIER (§19)
+  //     Flèches/ZQSD · Espace · B · E · C · N · V · Shift+←/→ · M · Échap
   // ===========================================================================
 
   function onKeyDown(e) {
-    if (state.screen === 'title') return;
+    // Pendant un vol ou un fondu, c'est le module concerné qui a la main
+    // (airship3d capture Espace tout seul pour sauter la cinématique).
+    if (state.screen === 'title' || state.screen === 'transition') return;
+    if (state.screen === 'airship') return;
 
-    // Navigation dans le menu des capacités (combat de dresseur)
-    if (state.screen === 'battle' && state.battle && state.battle.isTrainer) {
-      if (state.messages.length > 0) {
-        if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); advanceMessage(); }
-        return;
-      }
-      if (state.battle.phase === 'choose_move') {
-        e.preventDefault();
-        const moves = state.starter ? (state.starter.moves || []) : [];
-        switch (e.key) {
-          case 'ArrowLeft': case 'a': case 'A': case 'q': case 'Q':
-            if (state.battle.moveCursor % 2 === 1) state.battle.moveCursor--;
-            break;
-          case 'ArrowRight': case 'd': case 'D':
-            if (state.battle.moveCursor % 2 === 0 && state.battle.moveCursor + 1 < moves.length)
-              state.battle.moveCursor++;
-            break;
-          case 'ArrowUp': case 'w': case 'W': case 'z': case 'Z':
-            if (state.battle.moveCursor >= 2) state.battle.moveCursor -= 2;
-            break;
-          case 'ArrowDown': case 's': case 'S':
-            if (state.battle.moveCursor + 2 < moves.length) state.battle.moveCursor += 2;
-            break;
-          case ' ': case 'Enter':
-            useTrainerMove();
-            break;
-        }
-        return;
-      }
-      return;
-    }
-
-    // Écran de sélection du starter
+    // --- Écran de sélection du compagnon de départ ---------------------------
     if (state.screen === 'starter') {
       if (state.messages.length > 0) {
         if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); advanceMessage(); }
         return;
       }
       switch (e.key) {
-        case 'ArrowLeft': case 'a': case 'q': case 'A': case 'Q':
-          e.preventDefault();
-          state.starterCursor = Math.max(0, state.starterCursor - 1);
-          updateStarterHighlight();
-          break;
+        case 'ArrowLeft': case 'a': case 'A': case 'q': case 'Q':
+          e.preventDefault(); moveStarterCursor(-1); break;
         case 'ArrowRight': case 'd': case 'D':
-          e.preventDefault();
-          state.starterCursor = Math.min(2, state.starterCursor + 1);
-          updateStarterHighlight();
-          break;
+          e.preventDefault(); moveStarterCursor(1); break;
         case ' ': case 'Enter':
-          e.preventDefault();
-          confirmStarter();
-          break;
+          e.preventDefault(); confirmStarter(); break;
       }
       return;
     }
 
-    // En collection : C ou Échap pour fermer
-    if (state.screen === 'collection') {
-      if (e.key === 'c' || e.key === 'C' || e.key === 'Escape') {
-        e.preventDefault();
-        closeCollection();
-      }
+    // --- Combat ---------------------------------------------------------------
+    if (state.screen === 'battle') { onBattleKey(e); return; }
+
+    // --- Overlays (équipe / Pokédex / carte) ---------------------------------
+    // hud3d.js gère lui-même les flèches de l'écran ÉQUIPE et referme les
+    // overlays sur Échap (en rejouant un faux Échap pour nous prévenir) : ici
+    // on se contente de resynchroniser `state.screen`.
+    if (state.screen === 'team' || state.screen === 'dex' || state.screen === 'map') {
+      const k = e.key;
+      const ferme = (k === 'Escape')
+        || (state.screen === 'team' && (k === 'e' || k === 'E'))
+        || (state.screen === 'dex' && (k === 'c' || k === 'C'))
+        || (state.screen === 'map' && (k === 'n' || k === 'N' || k === ' '));
+      if (ferme) { e.preventDefault(); closeOverlays(); }
+      return;
+    }
+
+    // --- Monde ouvert ---------------------------------------------------------
+    // Shift + ←/→ : pivoter la vue RPG. À tester AVANT le déplacement.
+    if (e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      e.preventDefault();
+      call('camera', 'rotate', [e.key === 'ArrowLeft' ? -1 : 1]);
       return;
     }
 
@@ -430,21 +485,20 @@
         e.preventDefault(); state.input.right = true; break;
       case ' ': case 'Enter':
         e.preventDefault(); onAction(); break;
+      case 'b': case 'B':
+        e.preventDefault(); throwBallInWorld(); break;
+      case 'e': case 'E':
+        e.preventDefault(); openTeamScreen(); break;
       case 'c': case 'C':
-        e.preventDefault();
-        if (state.screen === 'world' && state.messages.length === 0) openCollection();
-        break;
+        e.preventDefault(); openDexScreen(); break;
+      case 'n': case 'N':
+        e.preventDefault(); openMapScreen(); break;
+      case 'v': case 'V':
+        e.preventDefault(); toggleView(); break;
       case 'm': case 'M':
         e.preventDefault(); toggleMute(); break;
-      case 'n': case 'N':
-        e.preventDefault();
-        if (state.screen === 'world' && state.messages.length === 0) openMap();
-        else if (state.screen === 'map') closeMap();
-        break;
       case 'Escape':
-        e.preventDefault();
-        if (state.screen === 'map') closeMap();
-        break;
+        e.preventDefault(); closeOverlays(); break;
     }
   }
 
@@ -461,50 +515,43 @@
     }
   }
 
+  /** Espace / Entrée en monde ouvert. */
   function onAction() {
-    // En priorité : avancer la boîte de message
     if (state.messages.length > 0) { advanceMessage(); return; }
+    if (state.screen !== 'world' || state.player.moving) return;
 
-    if (state.screen === 'battle' && state.battle && state.battle.phase === 'await') {
-      throwPokeball();
-      return;
+    // 1. Un PNJ juste devant ?
+    const front = getTileInFront();
+    const npc = npcAt(front.x, front.y);
+    if (npc) { talkToNPC(npc); return; }
+
+    // 2. Une créature de la carte juste devant ? Espace = vrai combat (§16).
+    const roamer = aimedRoamer();
+    if (roamer) { startRoamerBattle(roamer); return; }
+
+    // 3. Un panneau ?
+    const poi = poiAt(front.x, front.y);
+    if (poi && poi.kind === 'sign') {
+      sfx('menu');
+      showMessage('📜 ' + (poi.label || 'Panneau') +
+        (poi.data && poi.data.text ? '\n' + poi.data.text : ''));
     }
-    if (state.screen === 'world' && !state.player.moving) {
-      const front = getTileInFront();
-      const npc = getNPCAt(front.x, front.y);
-      if (npc) { talkToNPC(npc); return; }
-    }
-    if (state.screen === 'map') closeMap();
   }
 
-  function getTileInFront() {
-    let dx = 0, dy = 0;
-    switch (state.player.dir) {
-      case 'up': dy = -1; break;
-      case 'down': dy = 1; break;
-      case 'left': dx = -1; break;
-      case 'right': dx = 1; break;
-    }
-    return { x: state.player.tileX + dx, y: state.player.tileY + dy };
-  }
-
-  function talkToNPC(npc) {
-    Audio_.sfx.menu();
-    if (npc.isTrainer && !state.defeatedTrainers[npc.id]) {
-      startTrainerBattle(npc);
-      return;
-    }
-    const lines = (npc.isTrainer && state.defeatedTrainers[npc.id] && npc.dialogDefeated)
-      ? npc.dialogDefeated
-      : npc.dialog;
-    for (let i = 0; i < lines.length; i++) {
-      showMessage(npc.name + ' : ' + lines[i]);
-    }
+  function toggleView() {
+    const cam = mod('camera');
+    if (!cam || !cam.toggle) { showToast('Une seule vue disponible.', '🧭'); return; }
+    safeCall('camera.toggle', function () { cam.toggle(); });
+    state.cameraMode = (cam.mode && cam.mode()) || state.cameraMode;
+    showToast(state.cameraMode === 'rpg' ? 'Vue RPG' : 'Vue aventure', '🧭');
+    saveGame();
   }
 
   function toggleMute() {
-    const muted = Audio_.toggleMute();
+    let muted = false;
+    try { muted = Audio_.toggleMute(); } catch (e) { return; }
     updateMuteButton(muted);
+    call('hud', 'setMuted', [muted]);
   }
 
   function updateMuteButton(muted) {
@@ -515,14 +562,10 @@
     btn.setAttribute('aria-label', muted ? 'Activer le son' : 'Couper le son');
   }
 
-  /** Musique du biome, avec repli pour les biomes sans piste dédiée. */
-  function playBiomeMusic(biome) {
-    if (!biome) return;
-    try { Audio_.playMusic(MUSIC_FALLBACK[biome] || biome); } catch (e) { /* audio indispo */ }
-  }
+  function showToast(text, icon) { call('hud', 'toast', [text, icon]); }
 
   // ===========================================================================
-  //  BOUCLE PRINCIPALE
+  //  4. BOUCLE PRINCIPALE
   // ===========================================================================
 
   function frame(timestamp) {
@@ -537,17 +580,16 @@
     R3.tickClock(dtMs);
     const dt = R3.clock.dt;
     const t = R3.clock.t;
-
     state.tick++;
-    if (state.biomeBannerTimer > 0) state.biomeBannerTimer -= dtMs;
 
     const tWork0 = performance.now();
 
     // --- Logique ---
     if (state.screen === 'world') updateWorld(dtMs);
     else if (state.screen === 'battle') updateBattle(dtMs);
+    else if (state.screen === 'transition') updateTransition(dtMs);
 
-    // --- Monde 3D (toujours animé : il sert aussi de décor à l'écran titre) ---
+    // --- Monde 3D (toujours animé : il sert de décor à l'écran titre) ---
     updatePlayerTransform(dt);
     updateCamera(dt);
     updateSceneModules(t, dt);
@@ -561,23 +603,25 @@
     }
     if (!rendered) renderer.render(scene, camera);
 
-    // On juge la qualité sur le TEMPS DE TRAVAIL réel de la frame, jamais sur le
-    // FPS : celui-ci est plafonné par le vsync (écran 30 ou 60 Hz) et bridé quand
-    // la fenêtre n'est pas au premier plan — s'y fier dégraderait le jeu pour rien.
+    // On juge la qualité sur le TEMPS DE TRAVAIL réel de la frame, jamais sur
+    // le FPS : celui-ci est plafonné par le vsync et bridé quand la fenêtre
+    // n'est pas au premier plan — s'y fier dégraderait le jeu pour rien.
     measurePerf(rawMs, performance.now() - tWork0);
   }
 
   function updateSceneModules(t, dt) {
     const px = state.player.worldX, pz = state.player.worldZ;
 
-    const world = mod('world');
-    if (world && world.update) safeCall('world.update', function () { world.update(t, px, pz); });
+    call('world', 'update', [t, px, pz]);
+    call('water', 'update', [t]);
+    call('sky', 'update', [t, px, pz]);
+    call('citybuild', 'update', [t]);
+    call('airship', 'update', [t, dt]);
 
-    const water = mod('water');
-    if (water && water.update) safeCall('water.update', function () { water.update(t); });
-
-    const sky = mod('sky');
-    if (sky && sky.update) safeCall('sky.update', function () { sky.update(t, px, pz); });
+    // Les créatures de la carte ne vivent que dans le monde ouvert.
+    if (state.screen === 'world' || state.screen === 'title' || state.screen === 'starter') {
+      call('roamers', 'update', [t, dt, px, pz]);
+    }
 
     // Soleil de secours : on le garde centré sur le joueur pour que l'ombre suive.
     if (fallbackSun) {
@@ -586,18 +630,16 @@
       fallbackSun.target.updateMatrixWorld();
     }
 
-    // PNJ : petite animation d'attente.
+    // PNJ : petite animation d'attente, avec culling par distance.
     const actors = mod('actors');
     if (actors && actors.updateNPC && npcEntries.length) {
       safeCall('actors.updateNPC', function () {
+        const limite = Math.min(R3.quality.viewDistance, DIST_PNJ);
         for (let i = 0; i < npcEntries.length; i++) {
           const e = npcEntries[i];
           if (!e.npc) continue;
-          // Culling simple : on n'anime — et on ne rend — que ce qui est autour
-          // du joueur. Un personnage articulé pèse une quinzaine de draw calls,
-          // et le brouillard masque de toute façon ce qui est au-delà.
           const d = Math.abs(e.npc.x - px) + Math.abs(e.npc.y - pz);
-          const proche = d <= Math.min(R3.quality.viewDistance, DIST_PNJ);
+          const proche = d <= limite;
           if (e.group.visible !== proche) e.group.visible = proche;
           if (!proche) continue;
           actors.updateNPC(e.group, e.npc, t);
@@ -606,6 +648,7 @@
     }
 
     updateBangMarker(t);
+    updateAimReticle();
   }
 
   /** Le « ! » au-dessus du PNJ juste devant le joueur. */
@@ -613,92 +656,223 @@
     if (!bangMarker) return;
     if (state.screen !== 'world' || state.player.moving) { bangMarker.visible = false; return; }
     const front = getTileInFront();
-    const npc = (typeof getNPCAt === 'function') ? getNPCAt(front.x, front.y) : null;
+    const npc = npcAt(front.x, front.y);
     if (!npc) { bangMarker.visible = false; return; }
-    const gx = npc.x, gz = npc.y;
     bangMarker.visible = true;
-    bangMarker.position.set(gx, groundHeight(gx, gz) + 1.55 + Math.sin(t * 3.4) * 0.07, gz);
+    bangMarker.position.set(npc.x, groundHeight(npc.x, npc.y) + 1.55 + Math.sin(t * 3.4) * 0.07, npc.y);
     bangMarker.rotation.y = Math.sin(t * 1.6) * 0.18;
   }
 
+  /** Viseur de Pokéball : quand une créature est à portée devant le joueur. */
+  function updateAimReticle() {
+    if (state.screen !== 'world') {
+      if (state.aimed) { state.aimed = null; call('hud', 'showAimReticle', [null]); }
+      return;
+    }
+    const r = aimedRoamer();
+    if (r === state.aimed) return;
+    state.aimed = r;
+    call('hud', 'showAimReticle', [r || null]);
+  }
+
   // ===========================================================================
-  //  ÉCRAN « MONDE » — logique de déplacement reprise à l'identique
+  //  5. MONDE OUVERT — déplacement à la tuile
   // ===========================================================================
 
+  function regions() { return mod('regions'); }
+
+  function isWalkable(x, y) {
+    const R = regions();
+    if (!R || !R.isWalkable) return true;
+    const v = safeCall('regions.isWalkable', function () { return R.isWalkable(x, y); });
+    return v !== false;
+  }
+
+  function isEncounterTile(x, y) {
+    const R = regions();
+    if (!R || !R.isEncounter) return false;
+    return safeCall('regions.isEncounter', function () { return R.isEncounter(x, y); }) === true;
+  }
+
+  function biomeAt(x, y) {
+    const R = regions();
+    if (!R || !R.biomeAt) return 'plain';
+    return safeCall('regions.biomeAt', function () { return R.biomeAt(x, y); }) || 'plain';
+  }
+
+  function tileAt(x, y) {
+    const R = regions();
+    if (!R || !R.tileAt) return '';
+    return safeCall('regions.tileAt', function () { return R.tileAt(x, y); }) || '';
+  }
+
+  function poiAt(x, y) {
+    const R = regions();
+    if (!R || !R.poiAt) return null;
+    return safeCall('regions.poiAt', function () { return R.poiAt(x, y); }) || null;
+  }
+
+  function npcAt(x, y) {
+    for (let i = 0; i < npcEntries.length; i++) {
+      const n = npcEntries[i].npc;
+      if (n && n.x === x && n.y === y) return n;
+    }
+    return null;
+  }
+
+  function getTileInFront() {
+    let dx = 0, dy = 0;
+    switch (state.player.dir) {
+      case 'up': dy = -1; break;
+      case 'down': dy = 1; break;
+      case 'left': dx = -1; break;
+      case 'right': dx = 1; break;
+    }
+    return { x: state.player.tileX + dx, y: state.player.tileY + dy };
+  }
+
+  /**
+   * Commande brute (haut/bas/gauche/droite) tournée selon l'orientation de la
+   * caméra. En vue « aventure », `yaw` vaut toujours 0 : rien ne change. En vue
+   * RPG après une rotation, « haut » doit rester « vers le haut de l'écran » —
+   * c'est la recette donnée par le bandeau de camera3d.js.
+   */
+  function rotateCommand(dx, dz) {
+    const cam = mod('camera');
+    if (!cam || !cam.frame) return { dx: dx, dz: dz };
+    const f = safeCall('camera.frame', function () { return cam.frame(); });
+    if (!f) return { dx: dx, dz: dz };
+    const a = f.rotating ? f.yawTarget : f.yaw;
+    if (!a) return { dx: dx, dz: dz };
+    const c = Math.cos(a), s = Math.sin(a);
+    // `a` est un multiple exact de π/2 : on arrondit pour effacer l'erreur de
+    // virgule flottante et rester sur une commande à la tuile.
+    return { dx: Math.round(dx * c + dz * s), dz: Math.round(-dx * s + dz * c) };
+  }
+
+  function dirOf(dx, dz) {
+    if (dz < 0) return 'up';
+    if (dz > 0) return 'down';
+    if (dx < 0) return 'left';
+    return 'right';
+  }
+
   function updateWorld(dt) {
-    // Un message ouvert bloque les déplacements
-    if (state.messages.length > 0) return;
+    if (state.messages.length > 0) return;   // un message ouvert bloque tout
 
     if (state.player.moving) {
       state.player.moveProgress += dt / MOVE_DURATION_MS;
       if (state.player.moveProgress >= 1) {
-        // Fin du pas
         state.player.moveProgress = 1;
         state.player.tileX = state.player.moveToX;
         state.player.tileY = state.player.moveToY;
-        state.player.pixelX = state.player.tileX * 16;
-        state.player.pixelY = state.player.tileY * 16;
         state.player.moving = false;
-
-        // Changement de biome : bannière, ciel, musique, sauvegarde
-        const biome = getBiomeAt(state.player.tileX, state.player.tileY);
-        if (biome && biome !== state.lastBiome) {
-          state.lastBiome = biome;
-          state.biomeBannerTimer = 2000;
-          onBiomeChanged(biome);
-        }
-
-        // Rencontre ?
-        if (isEncounterTile(state.player.tileX, state.player.tileY)) {
-          if (Math.random() < ENCOUNTER_CHANCE) triggerEncounter();
-        }
+        onStepFinished();
       }
       return;
     }
 
-    // Déclencher un nouveau pas — priorité haut > bas > gauche > droite
-    let dx = 0, dy = 0;
-    let newDir = state.player.dir;
-    if (state.input.up)         { dy = -1; newDir = 'up';    }
-    else if (state.input.down)  { dy = 1;  newDir = 'down';  }
-    else if (state.input.left)  { dx = -1; newDir = 'left';  }
-    else if (state.input.right) { dx = 1;  newDir = 'right'; }
+    // Nouveau pas — priorité haut > bas > gauche > droite (comme le jeu 2D).
+    let dx = 0, dz = 0;
+    if (state.input.up)         { dz = -1; }
+    else if (state.input.down)  { dz = 1;  }
+    else if (state.input.left)  { dx = -1; }
+    else if (state.input.right) { dx = 1;  }
+    if (dx === 0 && dz === 0) return;
 
-    if (dx !== 0 || dy !== 0) {
-      state.player.dir = newDir;
-      const nx = state.player.tileX + dx;
-      const ny = state.player.tileY + dy;
-      if (isWalkable(nx, ny) && !getNPCAt(nx, ny)) {
-        state.player.moving = true;
-        state.player.moveProgress = 0;
-        state.player.moveFromX = state.player.tileX;
-        state.player.moveFromY = state.player.tileY;
-        state.player.moveToX = nx;
-        state.player.moveToY = ny;
-        state.player.walkFrame = 1 - state.player.walkFrame;
-        Audio_.sfx.footstep();
-      }
+    const cmd = rotateCommand(dx, dz);
+    state.player.dir = dirOf(cmd.dx, cmd.dz);
+
+    const nx = state.player.tileX + cmd.dx;
+    const ny = state.player.tileY + cmd.dz;
+    if (!isWalkable(nx, ny) || npcAt(nx, ny)) return;
+
+    state.player.moving = true;
+    state.player.moveProgress = 0;
+    state.player.moveFromX = state.player.tileX;
+    state.player.moveFromY = state.player.tileY;
+    state.player.moveToX = nx;
+    state.player.moveToY = ny;
+    sfx('footstep');
+  }
+
+  /** Fin d'un pas : biome, tuile spéciale, puis éventuelle rencontre. */
+  function onStepFinished() {
+    const x = state.player.tileX, y = state.player.tileY;
+
+    const biome = biomeAt(x, y);
+    if (biome && biome !== state.lastBiome) {
+      state.lastBiome = biome;
+      onBiomeChanged(biome);
     }
+
+    // Les tuiles spéciales priment sur la rencontre : marcher sur un portail
+    // ne doit pas déclencher un combat au moment où l'écran part au noir.
+    if (handleSpecialTile(x, y)) return;
+
+    if (isEncounterTile(x, y) && Math.random() < ENCOUNTER_CHANCE) triggerWildEncounter();
   }
 
   function onBiomeChanged(biome) {
-    const label = (typeof BIOME_LABEL !== 'undefined') ? BIOME_LABEL[biome] : null;
-    const hud = mod('hud');
-    if (hud && hud.setBiomeBanner && label) {
-      safeCall('hud.setBiomeBanner', function () { hud.setBiomeBanner(label); });
-    }
+    const R = regions();
+    const label = (R && R.labelOf) ? R.labelOf(biome) : biome;
+    call('hud', 'setBiomeBanner', [label]);
     const sky = mod('sky');
-    if (sky && sky.setBiome) {
-      safeCall('sky.setBiome', function () { sky.setBiome(biome, false); });
-    } else if (scene.fog) {
-      // Repli : on fait au moins bouger la couleur du brouillard et du ciel.
+    if (sky && sky.setBiome) safeCall('sky.setBiome', function () { sky.setBiome(biome, false); });
+    else if (scene && scene.fog) {
       const mood = R3.biomeMood(biome);
       scene.fog.color.set(mood.fog);
       if (scene.background && scene.background.set) scene.background.set(mood.sky);
     }
     playBiomeMusic(biome);
-    // Le jeu 2D ne sauvait la position qu'à la capture : c'était frustrant.
     saveGame();
+  }
+
+  /** Musique du biome, avec repli pour les biomes sans piste dédiée. */
+  function playBiomeMusic(biome) {
+    if (!biome) return;
+    try { Audio_.playMusic(MUSIC_FALLBACK[biome] || biome); } catch (e) { /* audio indispo */ }
+  }
+
+  /**
+   * Tuiles spéciales du §5. -> true si la tuile a « pris la main » (le pas ne
+   * doit alors déclencher aucune rencontre).
+   */
+  function handleSpecialTile(x, y) {
+    const type = tileAt(x, y);
+    const poi = poiAt(x, y);
+
+    if (type === 'PORTAL') {
+      const R = regions();
+      const gate = (R && R.gateAt) ? safeCall('regions.gateAt', function () { return R.gateAt(x, y); }) : null;
+      const data = gate || (poi && poi.data) || null;
+      if (data && data.toRegion) {
+        startRegionTransition(data.toRegion, data.toX, data.toY, (gate && gate.label) || (poi && poi.label));
+        return true;
+      }
+      return false;
+    }
+
+    if (type === 'AIRSHIP_DOCK') { openAirshipMenu(); return true; }
+
+    if (type === 'ARENA_DOOR') { challengeChampion(); return true; }
+
+    if (type === 'HEAL_DOOR') {
+      const team = mod('team');
+      if (team && team.healAll) safeCall('team.healAll', function () { team.healAll(); });
+      sfx('catch');
+      showMessage('Centre de soins ✦\nToute ton équipe est requinquée !');
+      saveGame();
+      return true;
+    }
+
+    if (type === 'SHOP_DOOR') {
+      sfx('menu');
+      showMessage('Boutique 🛍️\n« Reviens plus tard, jeune dresseur :\nle marchand est parti chercher des Balls ! »');
+      return true;
+    }
+
+    return false;
   }
 
   /** Hauteur du terrain sous un point (repli à 0 si world3d.js manque). */
@@ -713,14 +887,17 @@
 
   /** Place le joueur dans le monde 3D et joue son animation. */
   function updatePlayerTransform(dt) {
+    const airship = mod('airship');
+    // Pendant le vol, le dirigeable a reparenté le joueur dans sa nacelle :
+    // écrire sa position ici le décrocherait de son siège.
+    if (airship && airship.isFlying && airship.isFlying()) return;
+
     const p = state.player;
     let tx, ty;
     if (p.moving) {
       const k = R3.clamp01(p.moveProgress);
       tx = p.moveFromX + (p.moveToX - p.moveFromX) * k;
       ty = p.moveFromY + (p.moveToY - p.moveFromY) * k;
-      p.pixelX = tx * 16;
-      p.pixelY = ty * 16;
     } else {
       tx = p.tileX;
       ty = p.tileY;
@@ -731,21 +908,16 @@
 
     if (!playerGroup) return;
     playerGroup.position.set(p.worldX, p.worldY, p.worldZ);
-    // On ne le cache que si battle3d prend vraiment la main sur le rendu.
     playerGroup.visible = (state.screen !== 'battle') || !mod('battle');
 
     const actors = mod('actors');
     if (actors && actors.updatePlayer) {
       safeCall('actors.updatePlayer', function () {
         actors.updatePlayer(playerGroup, {
-          moving: p.moving,
-          moveProgress: p.moveProgress,
-          dir: p.dir,
-          t: R3.clock.t,
+          moving: p.moving, moveProgress: p.moveProgress, dir: p.dir, t: R3.clock.t,
         });
       });
     } else {
-      // Repli : au moins orienter le bonhomme dans la bonne direction.
       const target = dirToAngle(p.dir);
       playerGroup.rotation.y = angleDamp(playerGroup.rotation.y, target, 0.0001, dt);
     }
@@ -769,24 +941,36 @@
   }
 
   // ---------------------------------------------------------------------------
-  //  CAMÉRA : 3e personne, orientation FIXE, suivi lissé.
+  //  CAMÉRA — déléguée à camera3d.js, avec repli sur l'ancien calcul fixe.
   // ---------------------------------------------------------------------------
   function updateCamera(dt) {
     if (!camera) return;
     const p = state.player;
-    const z = state.zoom;
 
-    // Léger balancement décoratif, uniquement sur l'écran titre.
+    const cam = mod('camera');
+    if (cam && cam.update) {
+      // Léger balancement décoratif, uniquement sur l'écran titre.
+      const sway = (state.screen === 'title' || state.screen === 'starter')
+        ? Math.sin(R3.clock.t * 0.25) * 2.2 : 0;
+      const ok = safeCall('camera.update', function () {
+        cam.update(dt, {
+          worldX: p.worldX, worldY: p.worldY, worldZ: p.worldZ,
+          dir: p.dir, moving: p.moving, sway: sway,
+        }, groundHeight(p.worldX, p.worldZ));
+        return true;
+      });
+      if (ok) return;
+    }
+
+    // --- repli : 3e personne, orientation FIXE, suivi lissé -------------------
+    const airship = mod('airship');
+    if (airship && airship.isFlying && airship.isFlying()) return;   // le vol pilote la caméra
+
+    const z = state.zoom;
     const idle = (state.screen === 'title' || state.screen === 'starter')
       ? Math.sin(R3.clock.t * 0.25) * 2.2 : 0;
 
-    const tx = p.worldX + idle;
-    const ty = p.worldY + CAM_HEIGHT * z;
-    const tz = p.worldZ + CAM_BACK * z;
-
-    camPos.set(tx, ty, tz);
-
-    // Anti-traversée du relief : la caméra reste au-dessus du terrain.
+    camPos.set(p.worldX + idle, p.worldY + CAM_HEIGHT * z, p.worldZ + CAM_BACK * z);
     const hCam = groundHeight(camPos.x, camPos.z);
     if (camPos.y < hCam + 2.2) camPos.y = hCam + 2.2;
 
@@ -797,151 +981,1025 @@
       R3.damp(camera.position.y, camPos.y, smooth, dt),
       R3.damp(camera.position.z, camPos.z, smooth, dt)
     );
-
-    // On vise un peu DEVANT le joueur : il n'est jamais collé au bas de l'écran.
     camAim.set(p.worldX + idle * 0.5, p.worldY + 0.85, p.worldZ - CAM_LOOK_AHEAD);
     camera.lookAt(camAim);
   }
 
   // ===========================================================================
-  //  COMBAT SAUVAGE / CAPTURE
+  //  6. RÉGIONS — chargement, PNJ, transitions
   // ===========================================================================
 
-  function triggerEncounter() {
-    const biome = getBiomeAt(state.player.tileX, state.player.tileY);
-    const creature = pickRandomCreature(biome);
-    if (creature.rare) Audio_.sfx.rare();
-    else Audio_.sfx.encounter();
-    startBattle(creature);
+  /** Charge les DONNÉES d'une région et met à jour tous les modules qui en
+   *  dépendent. Utilisé aussi bien par les portails que par le dirigeable
+   *  (appelé alors au milieu du vol, quand l'écran est noyé de nuages). */
+  function loadRegionData(id) {
+    const R = regions();
+    if (R && R.load) safeCall('regions.load', function () { R.load(id); });
+    state.regionId = id;
+    state.visitedRegions[id] = true;
+    // world.setRegion rappelle regions.load() : c'est sans coût (mise en cache)
+    // et ça garantit qu'il travaille bien sur la bonne région.
+    call('world', 'setRegion', [id]);
+    call('roamers', 'setRegion', [id]);
+    rebuildNPCs(id);
+    registerAirshipPort(id);
   }
 
-  function startBattle(creature) {
-    state.screen = 'battle';
-    state.battle = {
-      creature: creature,
-      phase: 'intro',
-      pokeballX: 0,
-      pokeballY: 0,
-      animTick: 0,
-      shakeOffset: 0,
-      result: null,
-      creatureVisible: true,
-      flashTick: 0,
-      hitPlayed: false,
-      lastShakeIndex: -1,
-      throwProgress: 0,   // 0 → 1 pendant le lancer (pour battle3d)
-      shakeIndex: -1,
-    };
-    enterBattleScene();
-    showMessage(
-      'Un ' + creature.name + ' sauvage apparaît !\n' + creature.description +
-      '\n\nESPACE pour lancer ta Pokéball, ' + state.playerName + ' ✦',
-      function () {
-        if (state.battle) state.battle.phase = 'await';
-      }
-    );
+  /** Charge une région ET y place le joueur. `opts.silent` : pas de bandeau. */
+  function applyRegion(id, opts) {
+    opts = opts || {};
+    loadRegionData(id);
+
+    const R = regions();
+    const def = (R && R.get) ? safeCall('regions.get', function () { return R.get(id); }) : null;
+
+    if (typeof opts.x === 'number' && typeof opts.y === 'number') {
+      teleport(opts.x, opts.y);
+    } else if (!opts.keepPosition) {
+      const sp = (R && R.spawnOf) ? R.spawnOf(id) : { x: START_X, y: START_Y };
+      teleport(sp.x, sp.y);
+    } else {
+      // On garde la position (reprise de sauvegarde) mais on la sécurise.
+      teleport(state.player.tileX, state.player.tileY);
+    }
+
+    state.lastBiome = biomeAt(state.player.tileX, state.player.tileY);
+    const sky = mod('sky');
+    if (sky && sky.setBiome) safeCall('sky.setBiome.init', function () { sky.setBiome(state.lastBiome, true); });
+    playBiomeMusic(state.lastBiome);
+
+    if (!opts.silent) {
+      call('hud', 'setRegionBanner', [(def && def.name) || id]);
+      const lbl = (R && R.labelOf) ? R.labelOf(state.lastBiome) : state.lastBiome;
+      call('hud', 'setBiomeBanner', [lbl]);
+    }
+    saveGame();
   }
 
-  function throwPokeball() {
-    if (!state.battle || state.battle.phase !== 'await') return;
-    state.battle.phase = 'throw';
-    state.battle.animTick = 0;
-    Audio_.sfx.throwBall();
+  /** Téléporte le joueur sur une tuile, en cherchant la plus proche marchable
+   *  si celle demandée ne l'est pas (un enfant coincé, c'est un jeu cassé). */
+  function teleport(x, y) {
+    const p = findWalkableNear(x, y, 6);
+    state.player.tileX = p.x;
+    state.player.tileY = p.y;
+    state.player.moving = false;
+    state.player.moveProgress = 0;
+    state.player.moveFromX = state.player.moveToX = p.x;
+    state.player.moveFromY = state.player.moveToY = p.y;
+    state.player.worldX = p.x;
+    state.player.worldZ = p.y;
+    updatePlayerTransform(0);
+    updateCamera(1e9);
   }
 
-  function updateBattle(dt) {
-    if (!state.battle) return;
-    const b = state.battle;
-
-    if (b.isTrainer) { syncTrainerHud(b); return; }
-
-    if (b.phase === 'throw') {
-      b.animTick += dt;
-      const t = b.animTick;
-      const throwDuration = 600;    // ms : la ball atteint la créature
-      const shakeDuration = 1200;   // ms : 3 secousses de 400 ms
-
-      if (t < throwDuration) {
-        const p = t / throwDuration;
-        b.throwProgress = p;
-        // Trajectoire en parabole (normalisée, battle3d la met à l'échelle 3D)
-        b.pokeballX = p;
-        b.pokeballY = Math.sin(p * Math.PI);
-      } else if (t < throwDuration + shakeDuration) {
-        if (!b.hitPlayed) { Audio_.sfx.hit(); b.hitPlayed = true; }
-        b.creatureVisible = false;
-        b.throwProgress = 1;
-        b.pokeballX = 1;
-        b.pokeballY = 0;
-        const shakePhase = (t - throwDuration) % 400;
-        const shakeIdx = Math.floor((t - throwDuration) / 400);
-        if (shakeIdx !== b.lastShakeIndex && shakeIdx > 0) Audio_.sfx.shake();
-        b.lastShakeIndex = shakeIdx;
-        b.shakeIndex = shakeIdx;
-        if (shakePhase < 100) b.shakeOffset = -2;
-        else if (shakePhase < 200) b.shakeOffset = 2;
-        else if (shakePhase < 300) b.shakeOffset = -1;
-        else b.shakeOffset = 0;
-      } else {
-        // Résultat
-        b.shakeOffset = 0;
-        const success = Math.random() < b.creature.catchRate;
-        b.result = success ? 'caught' : 'escaped';
-        b.phase = 'result';
-
-        if (success) {
-          const cid = b.creature.id;
-          state.collection[cid] = (state.collection[cid] || 0) + 1;
-          saveGame();
-          refreshCollectionCount();
-          Audio_.sfx.catch();
-          showMessage(
-            'Hourra ! ' + b.creature.name + ' a rejoint ta collection ! ✦',
-            function () { endBattle(); }
-          );
-        } else {
-          b.creatureVisible = true;
-          Audio_.sfx.escape();
-          showMessage(
-            'Oh non... ' + b.creature.name + ' s\'est échappé(e) !',
-            function () { endBattle(); }
-          );
+  function findWalkableNear(x, y, radius) {
+    if (isWalkable(x, y)) return { x: x, y: y };
+    for (let r = 1; r <= radius; r++) {
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          if (isWalkable(x + dx, y + dy)) return { x: x + dx, y: y + dy };
         }
       }
-    } else if (b.phase === 'result') {
-      b.flashTick += dt;
+    }
+    return { x: x, y: y };
+  }
+
+  /** Reconstruit les PNJ 3D de la région active (les anciens sont libérés). */
+  function rebuildNPCs(id) {
+    for (let i = 0; i < npcEntries.length; i++) {
+      const g = npcEntries[i].group;
+      if (!g) continue;
+      if (g.parent) g.parent.remove(g);
+      try { R3.disposeTree(g); } catch (e) { /* déjà libéré */ }
+    }
+    npcEntries = [];
+
+    const R = regions();
+    const actors = mod('actors');
+    if (!R || !R.npcsOf || !actors || !actors.buildNPC) return;
+
+    const list = safeCall('regions.npcsOf', function () { return R.npcsOf(id); }) || [];
+    const ANG = actors.ANGLE_DIR || {};
+    safeCall('actors.buildNPC', function () {
+      for (let i = 0; i < list.length; i++) {
+        const npc = list[i];
+        if (!npc || typeof npc.x !== 'number') continue;
+        const g = actors.buildNPC(npc);
+        if (!g) continue;
+        g.position.set(npc.x, groundHeight(npc.x, npc.y), npc.y);
+        g.rotation.y = (ANG[npc.dir] !== undefined) ? ANG[npc.dir] : 0;
+        g.userData.solOk = false;   // actors3d rattrapera la hauteur du sol
+        scene.add(g);
+        npcEntries.push({ group: g, npc: npc });
+      }
+    });
+  }
+
+  function registerAirshipPort(id) {
+    const R = regions();
+    const airship = mod('airship');
+    if (!R || !R.get || !airship) return;
+    const def = safeCall('regions.get.port', function () { return R.get(id); });
+    if (!def || !def.airship) return;
+    call('airship', 'registerPort', [id, def.airship.x, def.airship.y, def.airship.name]);
+    if (id === state.regionId) call('airship', 'dockAt', [id, def.airship.x, def.airship.y]);
+  }
+
+  // --- Transition de région (tuile PORTAL) : fondu court, puis bascule --------
+
+  function startRegionTransition(toRegion, toX, toY, label) {
+    if (state.transition) return;
+    releaseAllKeys();
+    sfx('menu');
+    state.screen = 'transition';
+    state.transition = {
+      phase: 'out', t: 0,
+      to: toRegion,
+      toX: (typeof toX === 'number') ? toX : null,
+      toY: (typeof toY === 'number') ? toY : null,
+      label: label || null,
+    };
+  }
+
+  function updateTransition(dtMs) {
+    const tr = state.transition;
+    if (!tr) { state.screen = 'world'; return; }
+    tr.t += dtMs;
+
+    if (tr.phase === 'out') {
+      setFade(tr.t / FADE_MS);
+      if (tr.t < FADE_MS) return;
+      setFade(1);
+      // Écran noir : c'est le moment où l'on paie le chargement.
+      const R = regions();
+      const def = (R && R.get) ? R.get(tr.to) : null;
+      applyRegion(tr.to, {
+        x: (tr.toX === null) ? undefined : tr.toX,
+        y: (tr.toY === null) ? undefined : tr.toY,
+        silent: true,
+      });
+      call('hud', 'setRegionBanner', [(def && def.name) || tr.to]);
+      if (tr.label) showToast(tr.label, '🚪');
+      tr.phase = 'in';
+      tr.t = 0;
+      return;
+    }
+
+    setFade(1 - tr.t / FADE_MS);
+    if (tr.t >= FADE_MS) {
+      setFade(0);
+      state.transition = null;
+      state.screen = 'world';
     }
   }
 
-  function enterBattleScene() {
-    const battle = mod('battle');
-    const biome = getBiomeAt(state.player.tileX, state.player.tileY) || 'plain';
-    if (battle && battle.enter) {
-      safeCall('battle.enter', function () { battle.enter(state.battle, biome); });
-    }
+  // ===========================================================================
+  //  7. DIRIGEABLE (§17 bis)
+  // ===========================================================================
+
+  function openAirshipMenu() {
+    const airship = mod('airship');
     const hud = mod('hud');
-    if (hud && hud.setInBattle) safeCall('hud.setInBattle', function () { hud.setInBattle(true); });
+    releaseAllKeys();
+    sfx('menu');
+
+    if (hud && hud.openAirshipMenu) {
+      const options = (airship && airship.travelOptions)
+        ? safeCall('airship.travelOptions', function () {
+            return airship.travelOptions(state.regionId, state.visitedRegions);
+          })
+        : null;
+      state.screen = 'airship';
+      const ok = safeCall('hud.openAirshipMenu', function () {
+        hud.openAirshipMenu(options || (airship && airship.PORTS) || null, state.regionId,
+          function (toRegion) { startFlight(toRegion); });
+        return true;
+      });
+      if (ok) return;
+    }
+
+    // Repli texte : le voyage doit rester possible même sans interface dédiée.
+    const dispo = [];
+    for (const id in state.visitedRegions) {
+      if (state.visitedRegions[id] && id !== state.regionId) dispo.push(id);
+    }
+    state.screen = 'world';
+    if (!dispo.length) {
+      showMessage('🎈 Le dirigeable est amarré ici.\nIl faut découvrir d\'autres régions à pied\navant de pouvoir y voler !');
+      return;
+    }
+    const cible = dispo[0];
+    showMessage('🎈 Embarquement immédiat pour ' + regionName(cible) + ' !',
+      function () { startFlight(cible); });
+  }
+
+  function regionName(id) {
+    const R = regions();
+    const def = (R && R.get) ? R.get(id) : null;
+    return (def && def.name) || id;
+  }
+
+  function startFlight(toRegion) {
+    if (!toRegion || toRegion === state.regionId) { state.screen = 'world'; return; }
+    const airship = mod('airship');
+    const from = state.regionId;
+
+    if (!airship || !airship.fly) {
+      // Repli : téléportation simple (le contrat l'autorise explicitement).
+      state.screen = 'world';
+      arriveAtPort(from, toRegion);
+      return;
+    }
+
+    state.screen = 'airship';
+    releaseAllKeys();
+    const ok = safeCall('airship.fly', function () {
+      airship.fly(from, toRegion, function (f, to) { arriveAtPort(f, to || toRegion); });
+      return true;
+    });
+    if (!ok) { state.screen = 'world'; arriveAtPort(from, toRegion); }
+  }
+
+  /** Fin du vol : la région est déjà chargée (onMidFlight), il reste à poser
+   *  le joueur sur l'embarcadère et à rendre la main. */
+  function arriveAtPort(from, to) {
+    if (state.regionId !== to) loadRegionData(to);
+
+    const R = regions();
+    const def = (R && R.get) ? R.get(to) : null;
+    let x = null, y = null;
+    if (def && def.airship) {
+      x = (typeof def.airship.dockX === 'number') ? def.airship.dockX : def.airship.x;
+      y = (typeof def.airship.dockY === 'number') ? def.airship.dockY : def.airship.y;
+    }
+    if (typeof x !== 'number') {
+      const sp = (R && R.spawnOf) ? R.spawnOf(to) : { x: START_X, y: START_Y };
+      x = sp.x; y = sp.y;
+    }
+    teleport(x, y);
+
+    state.lastBiome = biomeAt(state.player.tileX, state.player.tileY);
+    const sky = mod('sky');
+    if (sky && sky.setBiome) safeCall('sky.setBiome.fly', function () { sky.setBiome(state.lastBiome, true); });
+    playBiomeMusic(state.lastBiome);
+    call('hud', 'setRegionBanner', [(def && def.name) || to]);
+    state.screen = 'world';
+    saveGame();
+  }
+
+  // ===========================================================================
+  //  8. CAPTURE EN MONDE OUVERT (touche B)  — §16
+  // ===========================================================================
+
+  function aimedRoamer() {
+    const ro = mod('roamers');
+    if (!ro) return null;
+    const p = state.player;
+    let r = null;
+    if (ro.aimed) {
+      r = safeCall('roamers.aimed', function () {
+        return ro.aimed(p.worldX, p.worldZ, p.dir, BALL_RANGE);
+      }) || null;
+    }
+    if (!r && ro.nearest) {
+      r = safeCall('roamers.nearest', function () {
+        return ro.nearest(p.worldX, p.worldZ, 1.6);
+      }) || null;
+    }
+    return r;
+  }
+
+  /** Le premier type de Ball disponible dans le sac. */
+  function firstBall() {
+    const ordre = ['pokeball', 'superball', 'hyperball', 'ballmaitresse'];
+    for (let i = 0; i < ordre.length; i++) {
+      if ((state.items[ordre[i]] | 0) > 0) return ordre[i];
+    }
+    return null;
+  }
+
+  function throwBallInWorld() {
+    if (state.screen !== 'world' || state.messages.length > 0 || state.throwing) return;
+    const ro = mod('roamers');
+    const target = aimedRoamer();
+    if (!target) { showToast('Aucune créature en vue…', '🔍'); return; }
+
+    const ballId = firstBall();
+    if (!ballId) { showToast('Plus aucune Ball !', '⚪'); return; }
+
+    const team = mod('team');
+    const dex = mod('dex');
+    const species = (dex && dex.get) ? dex.get(target.speciesId) : null;
+    const faux = { hp: 1, maxHp: 1, id: target.speciesId, level: target.level || 5 };
+    const chance = (team && team.catchChance)
+      ? safeCall('team.catchChance', function () { return team.catchChance(faux, species, BALL_BONUS[ballId] || 1); })
+      : 0.35;
+
+    state.items[ballId] = Math.max(0, (state.items[ballId] | 0) - 1);
+    call('hud', 'setItems', [state.items]);
+    state.throwing = true;
+    sfx('throwBall');
+    markSeen(target.speciesId);
+
+    if (!ro || !ro.throwBall) { state.throwing = false; return; }
+    safeCall('roamers.throwBall', function () {
+      ro.throwBall(target, chance, function (result) {
+        state.throwing = false;
+        if (result === 'caught') onCaught(target.speciesId, target.level || 5, target);
+        else {
+          sfx('escape');
+          showToast('Oh non… elle s\'est échappée !', '💨');
+        }
+      });
+    });
+    if (_broken['roamers.throwBall']) state.throwing = false;
+  }
+
+  /** Capture réussie (monde ouvert OU combat) : équipe, collection, sauvegarde. */
+  function onCaught(speciesId, level, roamer) {
+    const team = mod('team');
+    const dex = mod('dex');
+    const species = (dex && dex.get) ? dex.get(speciesId) : null;
+    const nom = (species && species.name) || speciesId;
+
+    let where = 'box';
+    if (team && team.create && team.add) {
+      safeCall('team.add', function () {
+        const m = team.create(speciesId, level || 5, {
+          caughtAt: { regionId: state.regionId, x: state.player.tileX, y: state.player.tileY },
+        });
+        where = team.add(m);
+      });
+    }
+    state.collection[speciesId] = (state.collection[speciesId] || 0) + 1;
+    markSeen(speciesId);
+    sfx('catch');
+    refreshHudCounters();
+    if (roamer) call('roamers', 'remove', [roamer]);
+    saveGame();
+
+    showMessage('Bravo ! ' + nom + ' est capturé' + (species && species.legendary ? ' !!! ✨' : ' ! ✦') +
+      (where === 'box' ? '\nTon équipe est pleine : il rejoint la Boîte.' : '\nIl rejoint ton équipe !'));
+  }
+
+  function markSeen(speciesId) {
+    if (speciesId) state.seen[speciesId] = true;
+  }
+
+  /** Un roamer a touché le joueur : vrai combat sauvage (§16). */
+  function onRoamerTouch(roamer) {
+    if (!roamer || state.screen !== 'world' || state.messages.length > 0) return;
+    startRoamerBattle(roamer);
+  }
+
+  function startRoamerBattle(roamer) {
+    if (!roamer) return;
+    const dex = mod('dex');
+    const species = (dex && dex.get) ? dex.get(roamer.speciesId) : null;
+    call('roamers', 'remove', [roamer]);
+    startWildBattle(roamer.speciesId, roamer.level || 5, species);
+  }
+
+  // ===========================================================================
+  //  9. COMBATS (§17)
+  // ===========================================================================
+
+  function teamApi() { return mod('team'); }
+  function movesApi() { return mod('moves'); }
+
+  function playerTeamList() {
+    const team = teamApi();
+    return (team && Array.isArray(team.team)) ? team.team : [];
+  }
+
+  function activeMon() {
+    const team = teamApi();
+    if (team && team.active) {
+      const m = safeCall('team.active', function () { return team.active(); });
+      if (m) return m;
+    }
+    const list = playerTeamList();
+    for (let i = 0; i < list.length; i++) if (list[i] && list[i].hp > 0) return list[i];
+    return null;
+  }
+
+  function indexOfMon(list, m) {
+    for (let i = 0; i < list.length; i++) if (list[i] === m) return i;
+    return 0;
+  }
+
+  /** Rencontre sauvage classique, tirée du Pokédex selon région et biome. */
+  function triggerWildEncounter() {
+    const dex = mod('dex');
+    const biome = biomeAt(state.player.tileX, state.player.tileY);
+    let species = null;
+    if (dex && dex.pickWild) {
+      species = safeCall('dex.pickWild', function () { return dex.pickWild(state.regionId, biome); });
+    }
+    if (!species) return;
+    // `species.minLevel`/`maxLevel` couvrent l'UNION de toutes les régions où
+    // l'espèce apparaît (voir js3d/dex3d.js, §8 du contrat) — une créature
+    // commune à val (Nv 3-8) et braise (Nv 32-40) déclare donc 3-40. Sans
+    // recroiser avec la fourchette de LA RÉGION COURANTE (dex.REGION_LEVELS),
+    // un joueur tout juste parti de val peut croiser un adversaire de niveau
+    // 40 dès sa première rencontre — trouvé en jouant réellement à la partie.
+    const lo0 = species.minLevel || 3, hi0 = Math.max(lo0, species.maxLevel || lo0 + 2);
+    const band = dex && dex.REGION_LEVELS && dex.REGION_LEVELS[state.regionId];
+    let lo = lo0, hi = hi0;
+    if (band) {
+      const lo1 = Math.max(lo0, band[0]), hi1 = Math.min(hi0, band[1]);
+      if (lo1 <= hi1) { lo = lo1; hi = hi1; }
+      else { lo = band[0]; hi = band[1]; }  // pas de recoupement : on suit la région, pas l'espèce
+    }
+    const level = lo + Math.floor(Math.random() * (hi - lo + 1));
+    startWildBattle(species.id, level, species);
+  }
+
+  function startWildBattle(speciesId, level, species) {
+    const team = teamApi();
+    const mine = activeMon();
+    if (!mine) { showMessage('Toute ton équipe est K.O. !\nVa vite au centre de soins.'); return; }
+    if (!team || !team.create) return;
+
+    const foeMon = safeCall('team.create.wild', function () { return team.create(speciesId, level); });
+    if (!foeMon) return;
+
+    const dex = mod('dex');
+    const sp = species || ((dex && dex.get) ? dex.get(speciesId) : null);
+    if (sp && sp.legendary) sfx('rare'); else sfx('encounter');
+    markSeen(speciesId);
+
+    const list = playerTeamList();
+    const b = {
+      kind: 'wild',
+      regionId: state.regionId,
+      biome: biomeAt(state.player.tileX, state.player.tileY) || 'plain',
+      player: { mon: mine, team: list, index: indexOfMon(list, mine) },
+      foe: { mon: foeMon, team: [foeMon], index: 0, trainer: null },
+      phase: 'intro',
+      menuCursor: 0, moveCursor: 0, monCursor: 0, bagCursor: 0,
+      result: null,
+      anim: { seq: 0, side: null, moveId: null, fx: null, progress: 0 },
+      ball: { active: false, progress: 0, shakeIndex: 0, result: null },
+      canFlee: true,
+      canCatch: true,
+    };
+    enterBattle(b, 'Un ' + (foeMon.nick || speciesId) + ' sauvage apparaît !' +
+      (sp && sp.description ? '\n' + sp.description : ''));
+  }
+
+  /** Combat contre l'un des dresseurs de la région. */
+  function startTrainerBattle(npc) {
+    const arenas = mod('arenas');
+    if (!activeMon()) { showMessage('Ton équipe est trop fatiguée pour se battre !'); return; }
+
+    let b = null;
+    if (arenas && arenas.makeTrainerBattle) {
+      const R = regions();
+      const def = (R && R.get) ? R.get(state.regionId) : null;
+      // Les PNJ des régions n'ont pas de niveau : on leur donne celui conseillé
+      // pour la région, sinon tous les dresseurs du jeu resteraient au niveau 5.
+      const copie = {};
+      for (const k in npc) copie[k] = npc[k];
+      copie.level = (def && def.recommendedLevel) || 5;
+      b = safeCall('arenas.makeTrainerBattle', function () {
+        return arenas.makeTrainerBattle(copie, playerTeamList(), state.regionId);
+      });
+    }
+    if (!b) return;
+    b.npcId = npc.id;
+    sfx('encounter');
+    const intro = (npc.dialog && npc.dialog[0]) ? npc.name + ' : « ' + npc.dialog[0] + ' »\n' : '';
+    enterBattle(b, intro + npc.name + ' envoie ' + (b.foe.mon.nick || 'sa créature') + ' au combat !');
+  }
+
+  /** Défi du champion, déclenché par la tuile ARENA_DOOR. */
+  function challengeChampion() {
+    const arenas = mod('arenas');
+    if (!arenas || !arenas.makeBattle) { showMessage('L\'arène est fermée aujourd\'hui.'); return; }
+    if (state.badges[state.regionId]) {
+      const a = arenas.get ? arenas.get(state.regionId) : null;
+      showMessage('🏟️ ' + ((a && a.name) || 'Arène') + '\nTu as déjà gagné ce badge ! Bravo ✦');
+      return;
+    }
+    if (!activeMon()) { showMessage('Soigne ton équipe avant d\'affronter le champion !'); return; }
+
+    const b = safeCall('arenas.makeBattle', function () {
+      return arenas.makeBattle(state.regionId, playerTeamList());
+    });
+    if (!b) { showMessage('L\'arène est fermée aujourd\'hui.'); return; }
+
+    sfx('rare');
+    const tr = b.foe.trainer || {};
+    const lignes = (tr.dialogIntro && tr.dialogIntro.length) ? tr.dialogIntro[0] : 'Montre-moi ta force !';
+    enterBattle(b, (tr.name || 'Le champion') + ' : « ' + lignes + ' »\n' +
+      (tr.name || 'Le champion') + ' envoie ' + (b.foe.mon.nick || 'sa créature') + ' !');
+  }
+
+  // --- Mise en place / sortie -------------------------------------------------
+
+  function enterBattle(b, introText) {
+    state.battle = b;
+    state.screen = 'battle';
+    releaseAllKeys();
+    _hudBattle.phase = null;
+    _hudBattle.foe = '';
+    _hudBattle.player = '';
+
+    call('battle', 'enter', [b, b.biome]);
+    call('hud', 'setItems', [state.items]);
+    call('hud', 'showBattleUI', [b]);
+    showMessage(introText, function () { setBattlePhase('choose'); });
   }
 
   function endBattle() {
-    state.screen = 'world';
     state.battle = null;
-    _hudCache.menu = null;
-    _hudCache.foe = '';
-    _hudCache.player = '';
+    state.screen = 'world';
+    _hudBattle.phase = null;
+    call('hud', 'hideBattleUI', []);
+    call('battle', 'exit', []);
+    playBiomeMusic(state.lastBiome);
+    saveGame();
+  }
+
+  function setBattlePhase(p) {
+    const b = state.battle;
+    if (!b) return;
+    b.phase = p;
+    call('hud', 'showBattleUI', [b]);
+    _hudBattle.phase = p;
+  }
+
+  // --- Synchronisation légère de l'interface (barres de PV) -------------------
+  const _hudBattle = { phase: null, foe: '', player: '' };
+
+  function updateBattle() {
+    const b = state.battle;
+    if (!b) return;
     const hud = mod('hud');
-    if (hud) {
-      if (hud.hideMoveMenu) safeCall('hud.hideMoveMenu', function () { hud.hideMoveMenu(); });
-      if (hud.hideBattleUI) safeCall('hud.hideBattleUI', function () { hud.hideBattleUI(); });
-      else if (hud.hideHP) safeCall('hud.hideHP', function () { hud.hideHP(); });
-      if (hud.setInBattle) safeCall('hud.setInBattle', function () { hud.setInBattle(false); });
+    if (!hud || !hud.setHP) return;
+
+    const pm = b.player && b.player.mon;
+    const fm = b.foe && b.foe.mon;
+    if (fm) {
+      const key = fm.uid + ':' + fm.hp + '/' + fm.maxHp;
+      if (key !== _hudBattle.foe) {
+        _hudBattle.foe = key;
+        safeCall('hud.setHP.foe', function () {
+          hud.setHP('foe', fm.hp, fm.maxHp, fm.nick || fm.id, fm.level, fm.types);
+        });
+      }
     }
-    const battle = mod('battle');
-    if (battle && battle.exit) safeCall('battle.exit', function () { battle.exit(); });
+    if (pm) {
+      const key = pm.uid + ':' + pm.hp + '/' + pm.maxHp;
+      if (key !== _hudBattle.player) {
+        _hudBattle.player = key;
+        safeCall('hud.setHP.player', function () {
+          hud.setHP('player', pm.hp, pm.maxHp, pm.nick || pm.id, pm.level, pm.types);
+        });
+      }
+    }
+  }
+
+  // --- Clavier en combat ------------------------------------------------------
+
+  function onBattleKey(e) {
+    const b = state.battle;
+    if (!b) return;
+
+    if (state.messages.length > 0) {
+      if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); advanceMessage(); }
+      return;
+    }
+
+    const k = e.key;
+    const valide = (k === ' ' || k === 'Enter');
+    const retour = (k === 'Escape');
+    const gauche = (k === 'ArrowLeft' || k === 'a' || k === 'A' || k === 'q' || k === 'Q');
+    const droite = (k === 'ArrowRight' || k === 'd' || k === 'D');
+    const haut = (k === 'ArrowUp' || k === 'w' || k === 'W' || k === 'z' || k === 'Z');
+    const bas = (k === 'ArrowDown' || k === 's' || k === 'S');
+    if (!valide && !retour && !gauche && !droite && !haut && !bas) return;
+    e.preventDefault();
+
+    if (b.phase === 'choose') {
+      // Menu 2×2 : 0 Attaque · 1 Équipe · 2 Sac · 3 Fuite
+      let c = b.menuCursor | 0;
+      if (gauche && c % 2 === 1) c--;
+      else if (droite && c % 2 === 0) c++;
+      else if (haut && c >= 2) c -= 2;
+      else if (bas && c < 2) c += 2;
+      else if (valide) { chooseMainMenu(c); return; }
+      if (c !== b.menuCursor) { b.menuCursor = c; sfx('menu'); call('hud', 'setMenuCursor', [c]); }
+      return;
+    }
+
+    if (b.phase === 'choose_move') {
+      const moves = (b.player.mon && b.player.mon.moves) || [];
+      let c = b.moveCursor | 0;
+      if (retour) { setBattlePhase('choose'); return; }
+      if (gauche && c % 2 === 1) c--;
+      else if (droite && c % 2 === 0 && c + 1 < moves.length) c++;
+      else if (haut && c >= 2) c -= 2;
+      else if (bas && c + 2 < moves.length) c += 2;
+      else if (valide) { usePlayerMove(c); return; }
+      if (c !== b.moveCursor) { b.moveCursor = c; sfx('menu'); call('hud', 'setMoveCursor', [c]); }
+      return;
+    }
+
+    if (b.phase === 'choose_mon') {
+      const list = b.player.team || [];
+      let c = b.monCursor | 0;
+      if (retour) { setBattlePhase('choose'); return; }
+      if (gauche || haut) c = Math.max(0, c - 1);
+      else if (droite || bas) c = Math.min(list.length - 1, c + 1);
+      else if (valide) { swapPlayerMon(c); return; }
+      if (c !== b.monCursor) { b.monCursor = c; sfx('menu'); call('hud', 'setMonCursor', [c]); }
+      return;
+    }
+
+    if (b.phase === 'bag') {
+      const list = bagList();
+      let c = b.bagCursor | 0;
+      if (retour) { setBattlePhase('choose'); return; }
+      if (gauche || haut) c = Math.max(0, c - 1);
+      else if (droite || bas) c = Math.min(Math.max(0, list.length - 1), c + 1);
+      else if (valide) { useBagItem(list[c]); return; }
+      if (c !== b.bagCursor) { b.bagCursor = c; sfx('menu'); call('hud', 'setBagCursor', [c]); }
+    }
+  }
+
+  /** Les objets du sac, dans le MÊME ordre que hud3d.js les affiche. */
+  function bagList() {
+    const out = [];
+    for (const id in state.items) if ((state.items[id] | 0) > 0) out.push(id);
+    return out;
+  }
+
+  function chooseMainMenu(i) {
+    const b = state.battle;
+    sfx('menu');
+    b.menuCursor = i;
+    if (i === 0) { b.moveCursor = 0; setBattlePhase('choose_move'); return; }
+    if (i === 1) { b.monCursor = 0; setBattlePhase('choose_mon'); return; }
+    if (i === 2) { b.bagCursor = 0; setBattlePhase('bag'); return; }
+    // Fuite
+    if (b.canFlee === false) { showToast('Impossible de fuir ce combat !', '🚫'); return; }
+    b.phase = 'animating';
+    if (Math.random() < 0.85) {
+      b.result = 'fled';
+      b.phase = 'result';
+      showMessage('Tu prends la fuite !', function () { endBattle(); });
+    } else {
+      showMessage('Impossible de s\'enfuir !', function () { foeTurn(); });
+    }
+  }
+
+  // --- Un tour de combat ------------------------------------------------------
+
+  function moveOf(slot) {
+    const mv = movesApi();
+    const id = (slot && slot.id) || slot;
+    if (mv && mv.get) return mv.get(id);
+    return { id: id, name: id, power: [10, 15], type: null, fx: 'slash' };
+  }
+
+  function usePlayerMove(index) {
+    const b = state.battle;
+    const mon = b.player.mon;
+    const slots = (mon && mon.moves) || [];
+    const slot = slots[index] || slots[0];
+    if (!slot) return;
+    if (slot.pp !== undefined && slot.pp <= 0) { showToast('Plus de PP pour cette capacité !', '💤'); return; }
+
+    b.moveCursor = index;
+    const move = moveOf(slot);
+    const team = teamApi();
+    if (team && team.spendPP) safeCall('team.spendPP', function () { team.spendPP(mon, move.id); });
+
+    b.phase = 'animating';
+    const texte = applyMove('player', mon, b.foe.mon, move);
+
+    if (b.foe.mon.hp <= 0) {
+      showMessage(texte + '\n' + (b.foe.mon.nick || 'L\'adversaire') + ' est K.O. !',
+        function () { onFoeFainted(); });
+      return;
+    }
+    showMessage(texte, function () { foeTurn(); });
+  }
+
+  function foeTurn() {
+    const b = state.battle;
+    if (!b) return;
+    const mv = movesApi();
+    const foe = b.foe.mon, mine = b.player.mon;
+    if (!foe || !mine) { setBattlePhase('choose'); return; }
+
+    let move = null;
+    if (mv && mv.pickAI) move = safeCall('moves.pickAI', function () { return mv.pickAI(foe, mine, b); });
+    if (!move) move = moveOf('charge');
+
+    const team = teamApi();
+    if (team && team.spendPP) safeCall('team.spendPP.foe', function () { team.spendPP(foe, move.id); });
+
+    b.phase = 'animating';
+    const texte = applyMove('foe', foe, mine, move);
+
+    if (mine.hp <= 0) {
+      showMessage(texte + '\n' + (mine.nick || 'Ta créature') + ' est K.O. !',
+        function () { onPlayerFainted(); });
+      return;
+    }
+    showMessage(texte, function () { setBattlePhase('choose'); });
+  }
+
+  /** Applique une capacité et renvoie le texte à afficher. */
+  function applyMove(side, attacker, defender, move) {
+    const b = state.battle;
+    const mv = movesApi();
+    const team = teamApi();
+    const nom = attacker.nick || attacker.id;
+
+    let res = null;
+    if (mv && mv.compute) res = safeCall('moves.compute', function () { return mv.compute(attacker, defender, move); });
+    if (!res) res = { missed: false, dmg: 8, heal: 0, mult: 1, crit: false, text: null };
+
+    call('battle', 'notifyMove', [side, move]);
+    if (b && b.anim) b.anim.seq = (b.anim.seq | 0) + 1;
+
+    let txt = nom + ' utilise ' + (move.name || move.id) + ' !';
+    if (res.missed) return txt + '\nRaté…';
+
+    if (res.heal > 0) {
+      const soigne = (team && team.heal)
+        ? safeCall('team.heal', function () { return team.heal(attacker, res.heal); })
+        : (attacker.hp = Math.min(attacker.maxHp, attacker.hp + res.heal), res.heal);
+      return txt + '\n+' + soigne + ' PV récupérés !';
+    }
+
+    const degats = (team && team.damage)
+      ? safeCall('team.damage', function () { return team.damage(defender, res.dmg); })
+      : (defender.hp = Math.max(0, defender.hp - res.dmg), res.dmg);
+    sfx('hit');
+    txt += '\n' + degats + ' dégâts sur ' + (defender.nick || defender.id) + ' !';
+    if (res.crit) txt += ' Coup critique !';
+    if (res.text) txt += '\n' + res.text;
+    return txt;
+  }
+
+  function swapPlayerMon(index) {
+    const b = state.battle;
+    const list = b.player.team || [];
+    const cible = list[index];
+    if (!cible || cible.hp <= 0 || cible === b.player.mon) { showToast('Impossible d\'envoyer celle-ci.', '🚫'); return; }
+
+    const team = teamApi();
+    if (team && team.setActive) safeCall('team.setActive', function () { team.setActive(index); });
+    b.player.mon = cible;
+    b.player.index = index;
+    b.moveCursor = 0;
+    call('battle', 'swapIn', ['player', cible]);
+    _hudBattle.player = '';
+    b.phase = 'animating';
+    showMessage('En avant, ' + (cible.nick || cible.id) + ' !', function () { foeTurn(); });
+  }
+
+  function useBagItem(id) {
+    const b = state.battle;
+    if (!id) { showToast('Ton sac est vide.', '🎒'); return; }
+    if ((state.items[id] | 0) <= 0) return;
+
+    if (id === 'potion') {
+      const mon = b.player.mon;
+      const team = teamApi();
+      const rendu = (team && team.heal) ? team.heal(mon, 20) : 0;
+      if (!rendu) { showToast('Cette créature est déjà en pleine forme.', '💊'); return; }
+      state.items.potion = Math.max(0, state.items.potion - 1);
+      call('hud', 'setItems', [state.items]);
+      b.phase = 'animating';
+      showMessage('Tu utilises une Potion.\n+' + rendu + ' PV pour ' + (mon.nick || mon.id) + ' !',
+        function () { foeTurn(); });
+      return;
+    }
+
+    // Une Ball : capture PENDANT le combat (uniquement en combat sauvage).
+    if (b.canCatch === false) { showToast('On ne capture pas la créature d\'un dresseur !', '🚫'); return; }
+    throwBallInBattle(id);
+  }
+
+  function throwBallInBattle(ballId) {
+    const b = state.battle;
+    const team = teamApi();
+    const dex = mod('dex');
+    const foe = b.foe.mon;
+    const species = (dex && dex.get) ? dex.get(foe.id) : null;
+    const chance = (team && team.catchChance)
+      ? safeCall('team.catchChance.battle', function () { return team.catchChance(foe, species, BALL_BONUS[ballId] || 1); })
+      : 0.35;
+
+    state.items[ballId] = Math.max(0, (state.items[ballId] | 0) - 1);
+    call('hud', 'setItems', [state.items]);
+    b.phase = 'ball';
+    b.ball = { active: true, progress: 0, shakeIndex: 0, result: null };
+    call('hud', 'showBattleUI', [b]);
+    sfx('throwBall');
+
+    const bt = mod('battle');
+    if (!bt || !bt.throwBall) { resolveBattleCatch(Math.random() < chance ? 'caught' : 'escaped'); return; }
+    const ok = safeCall('battle.throwBall', function () {
+      bt.throwBall(chance, function (result) { resolveBattleCatch(result); });
+      return true;
+    });
+    if (!ok) resolveBattleCatch(Math.random() < chance ? 'caught' : 'escaped');
+  }
+
+  function resolveBattleCatch(result) {
+    const b = state.battle;
+    if (!b) return;
+    b.ball.result = result;
+    b.ball.active = false;
+    if (result === 'caught') {
+      b.result = 'caught';
+      b.phase = 'result';
+      onCaughtInBattle(b.foe.mon);
+      return;
+    }
+    sfx('escape');
+    b.phase = 'animating';
+    showMessage('Oh non… ' + (b.foe.mon.nick || 'la créature') + ' s\'est libérée !',
+      function () { foeTurn(); });
+  }
+
+  /** Capture pendant un combat : le Mon adverse rejoint l'équipe TEL QUEL
+   *  (niveau, PV, capacités) — c'est bien plus gratifiant qu'une copie neuve. */
+  function onCaughtInBattle(mon) {
+    const team = teamApi();
+    let where = 'box';
+    if (team && team.add) {
+      mon.caughtAt = { regionId: state.regionId, x: state.player.tileX, y: state.player.tileY };
+      where = safeCall('team.add.catch', function () { return team.add(mon); }) || 'box';
+    }
+    state.collection[mon.id] = (state.collection[mon.id] || 0) + 1;
+    markSeen(mon.id);
+    sfx('catch');
+    refreshHudCounters();
+    saveGame();
+    showMessage('Bravo ! ' + (mon.nick || mon.id) + ' est capturé ! ✦' +
+      (where === 'box' ? '\nTon équipe est pleine : il rejoint la Boîte.' : '\nIl rejoint ton équipe !'),
+      function () { endBattle(); });
+  }
+
+  // --- Fin d'un camp ----------------------------------------------------------
+
+  function onFoeFainted() {
+    const b = state.battle;
+    if (!b) return;
+    const team = teamApi();
+    const vaincu = b.foe.mon;
+
+    // XP pour la créature au combat (et une part pour le reste de l'équipe).
+    let lignes = '';
+    if (team && team.gainXp && team.xpFor) {
+      const gain = safeCall('team.xpFor', function () {
+        return team.xpFor(vaincu, { trainer: b.kind !== 'wild' });
+      }) || 10;
+      const res = safeCall('team.gainXp', function () { return team.gainXp(b.player.mon, gain); });
+      lignes += '\n' + (b.player.mon.nick || 'Ta créature') + ' gagne ' + gain + ' points d\'expérience !';
+      if (res && res.leveled > 0) {
+        lignes += '\nNiveau ' + res.level + ' ! 🎉';
+        if (res.learned && res.learned.length) {
+          lignes += '\nNouvelle capacité : ' + res.learned.map(function (id) {
+            return (moveOf(id).name || id);
+          }).join(', ') + ' !';
+        }
+        if (res.pendingLearn && res.pendingLearn.length) {
+          lignes += '\n' + (b.player.mon.nick || 'Ta créature') + ' aimerait apprendre ' +
+            (moveOf(res.pendingLearn[0].moveId).name || res.pendingLearn[0].moveId) +
+            ',\nmais connaît déjà 4 capacités. Ce sera pour plus tard !';
+        }
+      }
+      // Un tiers de l'XP pour les autres membres présents : personne n'est oublié.
+      const list = b.player.team || [];
+      for (let i = 0; i < list.length; i++) {
+        if (list[i] && list[i] !== b.player.mon && list[i].hp > 0) {
+          safeCall('team.gainXp.reste', function () { team.gainXp(list[i], Math.round(gain / 3)); });
+        }
+      }
+    }
+    _hudBattle.player = '';
+
+    // Combat sauvage : c'est fini.
+    if (b.kind === 'wild') {
+      b.result = 'win';
+      b.phase = 'result';
+      showMessage('Victoire ! ✦' + lignes, function () { endBattle(); });
+      return;
+    }
+
+    // Dresseur / champion : la créature suivante entre en scène.
+    const foeTeam = b.foe.team || [];
+    let next = -1;
+    for (let i = 0; i < foeTeam.length; i++) {
+      if (foeTeam[i] && foeTeam[i].hp > 0) { next = i; break; }
+    }
+    if (next >= 0) {
+      b.foe.mon = foeTeam[next];
+      b.foe.index = next;
+      call('battle', 'swapIn', ['foe', b.foe.mon]);
+      _hudBattle.foe = '';
+      b.phase = 'animating';
+      const tr = b.foe.trainer || {};
+      showMessage(lignes.replace(/^\n/, '') + '\n' + (tr.name || 'L\'adversaire') + ' envoie ' +
+        (b.foe.mon.nick || 'une autre créature') + ' !', function () { setBattlePhase('choose'); });
+      return;
+    }
+
+    onTrainerDefeated(lignes);
+  }
+
+  function onTrainerDefeated(lignes) {
+    const b = state.battle;
+    const tr = b.foe.trainer || {};
+    b.result = 'win';
+    b.phase = 'result';
+    sfx('catch');
+
+    let texte = 'Victoire ! ' + (tr.name || 'Ton adversaire') + ' est battu ! ✦' + lignes;
+
+    if (b.kind === 'champion') {
+      state.badges[b.regionId || state.regionId] = true;
+      const arenas = mod('arenas');
+      const badge = (arenas && arenas.badgeOf) ? arenas.badgeOf(b.regionId || state.regionId) : null;
+      const reward = (arenas && arenas.rewardText) ? arenas.rewardText(b.regionId || state.regionId) : '';
+      if (reward) texte += '\n\n' + reward;
+      else if (badge) texte += '\n\nTu remportes le ' + badge.name + ' ' + badge.icon + ' !';
+      call('hud', 'setBadges', [state.badges]);
+      // Le badge récompense TOUTE l'équipe (§12).
+      const team = teamApi();
+      const a = (arenas && arenas.get) ? arenas.get(b.regionId || state.regionId) : null;
+      const bonus = (a && a.xpReward) || 120;
+      if (team && team.gainXp) {
+        const list = b.player.team || [];
+        for (let i = 0; i < list.length; i++) {
+          if (list[i]) safeCall('team.gainXp.badge', function () { team.gainXp(list[i], bonus); });
+        }
+      }
+    } else if (b.npcId) {
+      state.defeatedTrainers[b.npcId] = true;
+      if (tr.dialogWin && tr.dialogWin.length) texte += '\n\n' + tr.name + ' : « ' + tr.dialogWin[0] + ' »';
+    }
+
+    saveGame();
+    showMessage(texte, function () { endBattle(); });
+  }
+
+  function onPlayerFainted() {
+    const b = state.battle;
+    if (!b) return;
+    const team = teamApi();
+    const list = b.player.team || [];
+
+    let next = -1;
+    for (let i = 0; i < list.length; i++) if (list[i] && list[i].hp > 0) { next = i; break; }
+
+    if (next >= 0) {
+      b.player.mon = list[next];
+      b.player.index = next;
+      b.moveCursor = 0;
+      if (team && team.setActive) safeCall('team.setActive.ko', function () { team.setActive(next); });
+      call('battle', 'swapIn', ['player', b.player.mon]);
+      _hudBattle.player = '';
+      b.phase = 'animating';
+      showMessage('En avant, ' + (b.player.mon.nick || 'toi') + ' !', function () { setBattlePhase('choose'); });
+      return;
+    }
+
+    // Toute l'équipe est K.O. : on soigne tout le monde. Jamais punitif.
+    b.result = 'lose';
+    b.phase = 'result';
+    sfx('escape');
+    if (team && team.healAll) safeCall('team.healAll.ko', function () { team.healAll(); });
+    saveGame();
+    showMessage('Toute ton équipe est K.O.…\nUn passant vous ramène au centre de soins :\ntout le monde est de nouveau en forme ! ✦',
+      function () { endBattle(); });
   }
 
   // ===========================================================================
-  //  MESSAGES
+  //  10. PNJ ET DIALOGUES
+  // ===========================================================================
+
+  function talkToNPC(npc) {
+    sfx('menu');
+    if (npc.isTrainer && !state.defeatedTrainers[npc.id]) { startTrainerBattle(npc); return; }
+    const lines = (npc.isTrainer && state.defeatedTrainers[npc.id] && npc.dialogDefeated)
+      ? npc.dialogDefeated
+      : (npc.dialog || ['…']);
+    for (let i = 0; i < lines.length; i++) showMessage(npc.name + ' : ' + lines[i]);
+  }
+
+  // ===========================================================================
+  //  11. MESSAGES
   // ===========================================================================
 
   function showMessage(text, onComplete) {
@@ -980,16 +2038,8 @@
     if (boxEl) boxEl.classList.add('hidden');
   }
 
-  function refreshCollectionCount() {
-    const hud = mod('hud');
-    if (!hud || !hud.setCollectionCount) return;
-    const uniques = Object.keys(state.collection).length;
-    const total = (typeof CREATURES !== 'undefined') ? CREATURES.length : 26;
-    safeCall('hud.setCollectionCount', function () { hud.setCollectionCount(uniques, total); });
-  }
-
   // ===========================================================================
-  //  ÉCRAN TITRE / LANCEMENT DE LA PARTIE
+  //  12. ÉCRAN TITRE ET CHOIX DU COMPAGNON
   // ===========================================================================
 
   function startGame() {
@@ -998,428 +2048,198 @@
     state.playerName = name;
     const overlay = document.getElementById('title-overlay');
     if (overlay) overlay.classList.add('hidden');
-    Audio_.init();
-    if (state.starter) {
-      launchWorld();          // partie déjà commencée : on repart directement
-    } else {
-      state.screen = 'starter';
-      openStarterSelection(); // première partie : choix du compagnon
-    }
+    try { Audio_.init(); } catch (e) { /* audio indisponible */ }
+
+    if (playerTeamList().length > 0) launchWorld();   // partie déjà commencée
+    else { state.screen = 'starter'; openStarterSelection(); }
   }
 
   function openStarterSelection() {
     state.starterCursor = 0;
     const overlay = document.getElementById('starter-overlay');
     if (overlay) overlay.classList.remove('hidden');
-    buildStarterCards();
+    const hud = mod('hud');
+    if (hud && hud.buildStarterCards) {
+      safeCall('hud.buildStarterCards', function () { hud.buildStarterCards(); });
+      if (!_broken['hud.buildStarterCards']) return;
+    }
+    buildStarterCardsFallback();
   }
 
-  function buildStarterCards() {
+  /** Grille de secours si hud3d.js ne la fournit pas. */
+  function buildStarterCardsFallback() {
     const grid = document.getElementById('starter-grid');
     if (!grid) return;
     grid.innerHTML = '';
-    const options = [
-      { id: 'miaouche', label: 'Animal mignon' },
-      { id: 'flamdrak', label: 'Dragon de feu' },
-      { id: null,       label: 'Surprise !' },
-    ];
-    options.forEach(function (opt, i) {
+    STARTERS.forEach(function (opt, i) {
       const card = document.createElement('div');
       card.className = 'starter-card' + (i === 0 ? ' selected' : '');
       card.id = 'starter-card-' + i;
-      card.onclick = function () {
-        state.starterCursor = i;
-        updateStarterHighlight();
-        confirmStarter();
-      };
-
-      const cv = document.createElement('canvas');
-      cv.width = 64; cv.height = 64;
-      cv.style.imageRendering = 'pixelated';
-      const cctx = cv.getContext('2d');
-      cctx.imageSmoothingEnabled = false;
-      cctx.fillStyle = '#1a1c2c';
-      cctx.fillRect(0, 0, 64, 64);
-      if (opt.id) {
-        const c = CREATURES.find(function (cr) { return cr.id === opt.id; });
-        if (c) c.draw(cctx, 16, 16, 2);
-      } else {
-        cctx.fillStyle = '#fcec6c';
-        cctx.font = 'bold 32px sans-serif';
-        cctx.textAlign = 'center';
-        cctx.textBaseline = 'middle';
-        cctx.fillText('?', 32, 34);
-      }
-      card.appendChild(cv);
-
+      card.onclick = function () { state.starterCursor = i; updateStarterHighlight(); confirmStarter(); };
       const nameEl = document.createElement('div');
       nameEl.className = 'starter-name';
-      nameEl.textContent = opt.id
-        ? CREATURES.find(function (cr) { return cr.id === opt.id; }).name
-        : '???';
+      nameEl.textContent = opt.id ? speciesName(opt.id) : '???';
       card.appendChild(nameEl);
-
       const typeEl = document.createElement('div');
       typeEl.className = 'starter-type';
       typeEl.textContent = opt.label;
       card.appendChild(typeEl);
-
       grid.appendChild(card);
     });
   }
 
+  const STARTERS = [
+    { id: 'miaouche', label: 'Animal mignon' },
+    { id: 'flamdrak', label: 'Dragon de feu' },
+    { id: null, label: 'Surprise !' },
+  ];
+
+  function speciesName(id) {
+    const dex = mod('dex');
+    const sp = (dex && dex.get) ? dex.get(id) : null;
+    return (sp && sp.name) || id;
+  }
+
+  function moveStarterCursor(delta) {
+    state.starterCursor = Math.max(0, Math.min(STARTERS.length - 1, state.starterCursor + delta));
+    sfx('menu');
+    const hud = mod('hud');
+    if (hud && hud.setStarterCursor) safeCall('hud.setStarterCursor', function () { hud.setStarterCursor(state.starterCursor); });
+    else updateStarterHighlight();
+  }
+
   function updateStarterHighlight() {
-    const cards = document.querySelectorAll('.starter-card');
-    for (let i = 0; i < cards.length; i++) {
-      cards[i].classList.toggle('selected', i === state.starterCursor);
-    }
+    const cards = document.querySelectorAll('#starter-grid .starter-card');
+    for (let i = 0; i < cards.length; i++) cards[i].classList.toggle('selected', i === state.starterCursor);
   }
 
   function confirmStarter() {
-    const optIds = ['miaouche', 'flamdrak', null];
-    let id = optIds[state.starterCursor];
+    if (state.screen !== 'starter') return;
+    const dex = mod('dex');
+    let id = STARTERS[state.starterCursor] ? STARTERS[state.starterCursor].id : null;
     if (!id) {
-      // Surprise : créature aléatoire (sauf les deux starters fixes)
-      const pool = CREATURES.filter(function (c) {
-        return c.id !== 'miaouche' && c.id !== 'flamdrak';
-      });
-      id = pool[Math.floor(Math.random() * pool.length)].id;
+      // Surprise : une créature commune au hasard (jamais un légendaire).
+      const pool = (dex && Array.isArray(dex.BASE)) ? dex.BASE.filter(function (s) {
+        return s.id !== 'miaouche' && s.id !== 'flamdrak';
+      }) : [];
+      id = pool.length ? pool[Math.floor(Math.random() * pool.length)].id : 'feuillou';
     }
-    state.starter = CREATURES.find(function (c) { return c.id === id; });
-    state.starterHp = state.starterMaxHp;
+
+    const team = teamApi();
+    let mon = null;
+    if (team && team.create) {
+      mon = safeCall('team.create.starter', function () { return team.create(id, 5); });
+      if (mon) safeCall('team.add.starter', function () { team.add(mon); });
+    }
+    state.collection[id] = (state.collection[id] || 0) + 1;
+    markSeen(id);
 
     const overlay = document.getElementById('starter-overlay');
     if (overlay) overlay.classList.add('hidden');
-    Audio_.sfx.catch();
-    showMessage(
-      'Tu as choisi ' + state.starter.name + ' ! ✦\n' + state.starter.description +
-      '\nPrends-en bien soin dans tes combats !',
-      function () { launchWorld(); }
-    );
+    sfx('catch');
+    const sp = (dex && dex.get) ? dex.get(id) : null;
+    showMessage('Tu as choisi ' + ((mon && mon.nick) || speciesName(id)) + ' ! ✦\n' +
+      ((sp && sp.description) ? sp.description + '\n' : '') +
+      'Prends-en bien soin dans tes combats !', function () { launchWorld(); });
   }
 
   function launchWorld() {
     state.screen = 'world';
-    state.lastBiome = getBiomeAt(state.player.tileX, state.player.tileY);
-    state.biomeBannerTimer = 2000;
-    saveGame();
+    state.visitedRegions[state.regionId] = true;
+    state.lastBiome = biomeAt(state.player.tileX, state.player.tileY);
 
-    // Ambiance de départ
+    const R = regions();
+    const def = (R && R.get) ? R.get(state.regionId) : null;
+    call('hud', 'setRegionBanner', [(def && def.name) || state.regionId]);
+    const lbl = (R && R.labelOf) ? R.labelOf(state.lastBiome) : state.lastBiome;
+    call('hud', 'setBiomeBanner', [lbl]);
+
     const sky = mod('sky');
-    if (sky && sky.setBiome) {
-      safeCall('sky.setBiome.init', function () { sky.setBiome(state.lastBiome, true); });
-    }
-    const hud = mod('hud');
-    const label = (typeof BIOME_LABEL !== 'undefined') ? BIOME_LABEL[state.lastBiome] : null;
-    if (hud && hud.setBiomeBanner && label) {
-      safeCall('hud.setBiomeBanner.init', function () { hud.setBiomeBanner(label); });
-    }
+    if (sky && sky.setBiome) safeCall('sky.setBiome.launch', function () { sky.setBiome(state.lastBiome, true); });
     playBiomeMusic(state.lastBiome);
-    refreshCollectionCount();
-    if (hud) {
-      if (hud.showCollectionCount) safeCall('hud.showCollectionCount', function () { hud.showCollectionCount(true); });
-      if (hud.showQualityPicker) safeCall('hud.showQualityPicker', function () { hud.showQualityPicker(true); });
-    }
+
+    refreshHudCounters();
+    call('hud', 'showCollectionCount', [true]);
+    call('hud', 'showQualityPicker', [true]);
+    call('hud', 'setBadges', [state.badges]);
+    call('hud', 'setItems', [state.items]);
 
     const muteBtn = document.getElementById('mute-btn');
     if (muteBtn) muteBtn.style.display = '';
     const hint = document.getElementById('controls-hint');
     if (hint) hint.classList.remove('hidden');
 
-    showMessage(
-      'Bienvenue, ' + state.playerName + ' ! ✦\n' +
+    saveGame();
+    showMessage('Bienvenue, ' + state.playerName + ' ! ✦\n' +
       'Flèches pour explorer · Hautes herbes = rencontres.\n' +
-      'Parle aux dresseurs pour les affronter !\n' +
-      'C : collection · N : carte · M : son · Molette : zoom'
-    );
+      'B : lancer une Ball sur une créature en vue.\n' +
+      'E : équipe · C : Pokédex · N : carte · V : vue · M : son');
   }
 
   // ===========================================================================
-  //  COMBAT CONTRE LES DRESSEURS — logique reprise telle quelle
+  //  13. ÉCRANS ANNEXES (équipe / Pokédex / carte)
   // ===========================================================================
 
-  function startTrainerBattle(npc) {
-    if (!state.starter) return;
-    const trainerCreature = CREATURES.find(function (c) { return c.id === npc.party[0]; })
-      || CREATURES[0];
-    Audio_.sfx.encounter();
-    state.screen = 'battle';
-    state.battle = {
-      isTrainer: true,
-      trainer: npc,
-      trainerCreature: trainerCreature,
-      trainerHp: 40,
-      trainerMaxHp: 40,
-      playerHp: state.starterHp,
-      playerMaxHp: state.starterMaxHp,
-      phase: 'intro',
-      moveCursor: 0,
-      animTick: 0,
-      result: null,
-      creatureVisible: true,
-      attackSeq: 0,          // incrémenté à chaque coup porté
-      pendingAttacks: [],    // [{ side, move, dmg }] — battle3d peut les consommer
-    };
-    enterBattleScene();
-    showMessage(
-      npc.name + ' : "' + npc.dialog[0] + '"\n' +
-      npc.name + ' envoie ' + trainerCreature.name + ' au combat !',
-      function () {
-        if (state.battle) {
-          state.battle.phase = 'choose_move';
-          state.battle.moveCursor = 0;
-        }
-      }
-    );
-  }
-
-  // On prévient battle3d du coup joué. Sans ça, il devine l'animation en
-  // comparant les PV d'une frame à l'autre : si un soin et une attaque
-  // s'annulent dans le même tour, plus aucune animation ne se déclenche.
-  function notifyBattleMove(side, move) {
-    const bt = mod('battle');
-    if (bt && bt.notifyMove) {
-      safeCall('battle.notifyMove', function () { bt.notifyMove(side, move); });
-    }
-  }
-
-  function useTrainerMove() {
-    const b = state.battle;
-    if (!b || !b.isTrainer || b.phase !== 'choose_move') return;
-    if (state.messages.length > 0) return;
-
-    const moves = state.starter ? (state.starter.moves || []) : [];
-    const move = moves[b.moveCursor] || moves[0] || { name: 'Attaque', power: [10, 16] };
-
-    b.phase = 'animating';
-    b.pendingAttacks = [];
-
-    let playerMsg = '';
-
-    if (move.heal) {
-      const healed = Math.min(move.heal, b.playerMaxHp - b.playerHp);
-      b.playerHp = Math.min(b.playerMaxHp, b.playerHp + move.heal);
-      playerMsg = state.starter.name + ' utilise ' + move.name + ' !\n+' + healed + ' PV récupérés !';
-      b.pendingAttacks.push({ side: 'player', move: move, heal: healed });
-    } else {
-      const dmg = rollDamage(move.power);
-      b.trainerHp = Math.max(0, b.trainerHp - dmg);
-      playerMsg = state.starter.name + ' utilise ' + move.name + ' !\n' +
-        dmg + ' dégâts sur ' + b.trainerCreature.name + ' !';
-      b.pendingAttacks.push({ side: 'player', move: move, dmg: dmg });
-    }
-    b.attackSeq++;
-    notifyBattleMove('player', move);
-
-    if (b.trainerHp <= 0) {
-      b.phase = 'result'; b.result = 'win'; b.creatureVisible = false;
-      Audio_.sfx.catch();
-      const cid = b.trainerCreature.id;
-      state.collection[cid] = (state.collection[cid] || 0) + 1;
-      state.defeatedTrainers[b.trainer.id] = true;
-      state.starterHp = b.playerHp;
-      saveGame();
-      refreshCollectionCount();
-      showMessage(
-        playerMsg + '\nVictoire ! ' + b.trainer.name + ' est battu ! ✦\n' +
-        b.trainerCreature.name + ' rejoint ta collection !',
-        function () { endBattle(); }
-      );
-      return;
-    }
-
-    // Tour du dresseur (l'IA choisit une capacité)
-    const aiMove = pickAIMove(b.trainerCreature, b);
-    let trainerMsg = '';
-
-    if (aiMove.heal) {
-      const healed = Math.min(aiMove.heal, b.trainerMaxHp - b.trainerHp);
-      b.trainerHp = Math.min(b.trainerMaxHp, b.trainerHp + aiMove.heal);
-      trainerMsg = b.trainerCreature.name + ' utilise ' + aiMove.name + ' !\n+' + healed + ' PV récupérés.';
-      b.pendingAttacks.push({ side: 'foe', move: aiMove, heal: healed });
-    } else {
-      const dmg = rollDamage(aiMove.power);
-      b.playerHp = Math.max(0, b.playerHp - dmg);
-      trainerMsg = b.trainerCreature.name + ' utilise ' + aiMove.name + ' !\n' +
-        dmg + ' dégâts sur ' + state.starter.name + ' !';
-      b.pendingAttacks.push({ side: 'foe', move: aiMove, dmg: dmg });
-    }
-    b.attackSeq++;
-    notifyBattleMove('foe', aiMove);
-
-    if (b.playerHp <= 0) {
-      b.phase = 'result'; b.result = 'lose';
-      Audio_.sfx.escape();
-      state.starterHp = state.starterMaxHp;
-      saveGame();
-      showMessage(
-        playerMsg + '\n' + trainerMsg + '\nOh non, tu as perdu...',
-        function () { endBattle(); }
-      );
-    } else {
-      b.phase = 'choose_move';
-      state.starterHp = b.playerHp;
-      showMessage(
-        playerMsg + '\n' + trainerMsg + '\nPV ' + b.trainerCreature.name + ': ' +
-        b.trainerHp + '/' + b.trainerMaxHp + '  ·  Tes PV: ' + b.playerHp + '/' + b.playerMaxHp
-      );
-    }
-  }
-
-  function rollDamage(powerRange) {
-    return powerRange[0] + Math.floor(Math.random() * (powerRange[1] - powerRange[0] + 1));
-  }
-
-  function pickAIMove(creature, b) {
-    const moves = creature.moves || [];
-    if (moves.length === 0) return { name: 'Attaque', power: [8, 15] };
-    // Préfère soigner si les PV sont bas (< 30 %)
-    if (b.trainerHp / b.trainerMaxHp < 0.3) {
-      const healMove = moves.find(function (m) { return m.heal; });
-      if (healMove) return healMove;
-    }
-    const attackMoves = moves.filter(function (m) { return !m.heal; });
-    const pool = attackMoves.length > 0 ? attackMoves : moves;
-    return pool[Math.floor(Math.random() * pool.length)];
-  }
-
-  // --- Synchronisation de l'interface de combat (barres de PV, menu) ---------
-  const _hudCache = { menu: null, cursor: -1, foe: '', player: '' };
-
-  function syncTrainerHud(b) {
+  function openTeamScreen() {
+    if (state.screen !== 'world' || state.messages.length > 0) return;
     const hud = mod('hud');
-    if (!hud) return;
-
-    const wantMenu = (b.phase === 'choose_move' && state.messages.length === 0);
-    if (wantMenu !== _hudCache.menu) {
-      _hudCache.menu = wantMenu;
-      _hudCache.cursor = -1;
-      if (wantMenu && hud.showMoveMenu) {
-        safeCall('hud.showMoveMenu', function () { hud.showMoveMenu(b); });
-      } else if (!wantMenu && hud.hideMoveMenu) {
-        safeCall('hud.hideMoveMenu', function () { hud.hideMoveMenu(); });
-      }
-    }
-    if (wantMenu && hud.setMoveCursor && b.moveCursor !== _hudCache.cursor) {
-      _hudCache.cursor = b.moveCursor;
-      safeCall('hud.setMoveCursor', function () { hud.setMoveCursor(b.moveCursor); });
-    }
-
-    if (!hud.setHP) return;
-    const foeKey = b.trainerHp + '/' + b.trainerMaxHp;
-    if (foeKey !== _hudCache.foe) {
-      _hudCache.foe = foeKey;
-      safeCall('hud.setHP.foe', function () {
-        hud.setHP('foe', b.trainerHp, b.trainerMaxHp, b.trainerCreature.name);
-      });
-    }
-    const plKey = b.playerHp + '/' + b.playerMaxHp;
-    if (plKey !== _hudCache.player) {
-      _hudCache.player = plKey;
-      safeCall('hud.setHP.player', function () {
-        hud.setHP('player', b.playerHp, b.playerMaxHp, state.starter ? state.starter.name : '');
-      });
-    }
-  }
-
-  // ===========================================================================
-  //  COLLECTION
-  // ===========================================================================
-
-  function openCollection() {
-    state.screen = 'collection';
-    Audio_.sfx.menu();
+    if (!hud || !hud.openTeam) { showToast('Écran Équipe indisponible.', '⚠️'); return; }
     releaseAllKeys();
-    const hud = mod('hud');
-    if (hud && hud.openCollection) {
-      safeCall('hud.openCollection', function () { hud.openCollection(); });
-      if (!_broken['hud.openCollection']) return;
-    }
-    buildCollectionGridFallback();
-    const overlay = document.getElementById('collection-overlay');
-    if (overlay) overlay.classList.remove('hidden');
+    sfx('menu');
+    state.screen = 'team';
+    safeCall('hud.openTeam', function () { hud.openTeam(); });
   }
 
-  function closeCollection() {
-    Audio_.sfx.menu();
+  function openDexScreen() {
+    if (state.screen !== 'world' || state.messages.length > 0) return;
     const hud = mod('hud');
-    if (hud && hud.closeCollection) {
-      safeCall('hud.closeCollection', function () { hud.closeCollection(); });
-    }
-    const overlay = document.getElementById('collection-overlay');
-    if (overlay) overlay.classList.add('hidden');
-    state.screen = 'world';
-  }
-
-  /** Grille de la collection en repli (si hud3d.js ne la fournit pas).
-   *  Les vignettes réutilisent le dessin 2D des créatures : c'est joli et ça
-   *  marche tel quel. */
-  function buildCollectionGridFallback() {
-    const grid = document.getElementById('collection-grid');
-    if (!grid || typeof CREATURES === 'undefined') return;
-    grid.innerHTML = '';
-    CREATURES.forEach(function (c) {
-      const count = state.collection[c.id] || 0;
-      const card = document.createElement('div');
-      card.className = 'creature-card' + (count === 0 ? ' unknown' : '');
-
-      const cv = document.createElement('canvas');
-      cv.width = 32; cv.height = 32;
-      const cctx = cv.getContext('2d');
-      cctx.imageSmoothingEnabled = false;
-      if (count > 0) {
-        c.draw(cctx, 0, 0, 2);
-      } else {
-        cctx.fillStyle = '#0a0a14';
-        cctx.fillRect(0, 0, 32, 32);
-        cctx.fillStyle = '#566c86';
-        cctx.font = 'bold 20px sans-serif';
-        cctx.textAlign = 'center';
-        cctx.textBaseline = 'middle';
-        cctx.fillText('?', 16, 18);
-      }
-      card.appendChild(cv);
-
-      const nameEl = document.createElement('div');
-      nameEl.className = 'creature-name';
-      nameEl.textContent = count > 0 ? c.name : '???';
-      card.appendChild(nameEl);
-
-      const countEl = document.createElement('div');
-      countEl.className = 'creature-count';
-      countEl.textContent = count > 0 ? '×' + count : 'Pas encore vu';
-      card.appendChild(countEl);
-
-      grid.appendChild(card);
-    });
-  }
-
-  // ===========================================================================
-  //  CARTE DU MONDE
-  // ===========================================================================
-
-  function openMap() {
-    if (state.screen !== 'world') return;
-    const hud = mod('hud');
-    if (!hud || !hud.openMap) { console.warn('[game3d] carte indisponible (hud absent).'); return; }
-    // On relâche les touches pour ne pas repartir tout seul en fermant la carte.
+    if (!hud || !hud.openDex) { showToast('Pokédex indisponible.', '⚠️'); return; }
     releaseAllKeys();
+    sfx('menu');
+    state.screen = 'dex';
+    safeCall('hud.openDex', function () { hud.openDex(); });
+  }
+
+  function openMapScreen() {
+    if (state.screen !== 'world' || state.messages.length > 0) return;
+    const hud = mod('hud');
+    if (!hud || !hud.openMap) { showToast('Carte indisponible.', '⚠️'); return; }
+    releaseAllKeys();
+    sfx('menu');
     state.screen = 'map';
-    Audio_.sfx.menu();
     safeCall('hud.openMap', function () { hud.openMap(); });
   }
 
-  function closeMap() {
-    if (state.screen !== 'map') return;
-    Audio_.sfx.menu();
-    const hud = mod('hud');
-    if (hud && hud.closeMap) safeCall('hud.closeMap', function () { hud.closeMap(); });
+  /** Ferme tout ce qui peut être ouvert et revient au monde. Idempotent :
+   *  hud3d.js referme certains overlays lui-même puis nous rejoue un Échap. */
+  function closeOverlays() {
+    const etait = state.screen;
+    call('hud', 'closeTeam', []);
+    call('hud', 'closeDex', []);
+    call('hud', 'closeMap', []);
+    call('hud', 'closeAirshipMenu', []);
+    call('hud', 'closeCollection', []);
+    const ov = document.getElementById('collection-overlay');
+    if (ov) ov.classList.add('hidden');
     releaseAllKeys();
-    state.screen = 'world';
+    if (etait === 'team' || etait === 'dex' || etait === 'map' || etait === 'airship') {
+      sfx('menu');
+      state.screen = 'world';
+      saveGame();
+    }
+  }
+
+  function refreshHudCounters() {
+    const dex = mod('dex');
+    const total = (dex && dex.count) || 62;
+    const uniques = Object.keys(state.collection).length;
+    call('hud', 'setCollectionCount', [uniques, total]);
+    call('hud', 'showBallCount', [state.items.pokeball | 0]);
+    call('hud', 'setItems', [state.items]);
   }
 
   // ===========================================================================
-  //  AUTO-QUALITÉ — on descend d'un cran si ça rame, jamais on ne remonte.
+  //  14. AUTO-QUALITÉ — on descend d'un cran si ça rame, jamais on ne remonte.
   // ===========================================================================
   let fpsAvg = 60;        // uniquement pour le compteur de debug
   let workAvg = 4;        // temps de travail moyen d'une frame, en ms
@@ -1430,13 +2250,11 @@
   let manualQuality = false;   // si Robin choisit lui-même, on ne touche plus à rien
 
   const QUALITY_DOWN = { high: 'medium', medium: 'low', low: null };
-
-  // Au-delà de ce temps de travail par frame, on ne tiendrait pas le 60 Hz.
-  const WORK_BUDGET_MS = 14;
+  const WORK_BUDGET_MS = 14;   // au-delà, on ne tiendrait pas le 60 Hz
 
   function measurePerf(rawMs, workMs) {
-    // Gros à-coup (onglet en arrière-plan, chargement, capture d'écran) : on ne
-    // juge pas la qualité là-dessus.
+    // Gros à-coup (onglet en arrière-plan, chargement de région, capture
+    // d'écran) : on ne juge pas la qualité là-dessus.
     if (rawMs > 120) return;
     const s = rawMs / 1000;
 
@@ -1446,8 +2264,6 @@
     if (warmup > 0) { warmup -= s; slowTime = 0; }
     if (qualityCooldown > 0) qualityCooldown -= s;
 
-    // On ne dégrade que pendant le jeu (pas sur les menus), et jamais si le
-    // joueur a réglé la qualité à la main.
     const enJeu = (state.screen === 'world' || state.screen === 'battle');
 
     if (warmup <= 0 && enJeu && !manualQuality) {
@@ -1499,61 +2315,139 @@
         fallbackSun.shadow.map = null;
       }
     }
+    saveGame();
   }
 
   // ===========================================================================
-  //  SAUVEGARDE — MÊME clé et MÊMES champs que le jeu 2D, pour que la
-  //  progression de Robin passe d'une version à l'autre dans les deux sens.
+  //  15. SAUVEGARDE  `robinGame3d_v1`  (§20)
+  //      Nouvelle clé : la sauvegarde du jeu 2D n'est JAMAIS réécrite, elle
+  //      n'est lue qu'une fois, au tout premier lancement de la 3D.
   // ===========================================================================
 
   function saveGame() {
     try {
+      const team = teamApi();
+      const ser = (team && team.serialize) ? team.serialize() : { team: [], box: [] };
+      const cam = mod('camera');
       const data = {
+        version: 1,
         playerName: state.playerName,
-        starterId: state.starter ? state.starter.id : null,
-        starterHp: state.starterHp,
-        collection: state.collection,
-        defeatedTrainers: state.defeatedTrainers,
+        regionId: state.regionId,
         tileX: state.player.tileX,
         tileY: state.player.tileY,
+        dir: state.player.dir,
+        team: ser.team || [],
+        box: ser.box || [],
+        activeIndex: ser.activeIndex || 0,
+        collection: state.collection,
+        seen: state.seen,
+        badges: state.badges,
+        defeatedTrainers: state.defeatedTrainers,
+        items: state.items,
+        visitedRegions: state.visitedRegions,
+        quality: R3.quality.level,
+        cameraMode: (cam && cam.mode) ? cam.mode() : state.cameraMode,
+        cameraState: (cam && cam.serialize) ? cam.serialize() : null,
       };
       localStorage.setItem(SAVE_KEY, JSON.stringify(data));
     } catch (e) { /* localStorage indisponible : on ignore */ }
   }
 
   function loadGame() {
+    let data = null;
     try {
       const raw = localStorage.getItem(SAVE_KEY);
-      if (!raw) return;
-      const data = JSON.parse(raw);
+      if (raw) data = JSON.parse(raw);
+    } catch (e) { data = null; }
+
+    if (!data) { importOldSave(); return; }
+
+    try {
       if (data.playerName) {
         state.playerName = data.playerName;
         const input = document.getElementById('name-input');
         if (input) input.value = data.playerName;
       }
-      if (data.starterId) {
-        state.starter = CREATURES.find(function (c) { return c.id === data.starterId; }) || null;
-        if (data.starterHp) state.starterHp = data.starterHp;
+      if (data.regionId) state.regionId = data.regionId;
+      if (typeof data.tileX === 'number') state.player.tileX = data.tileX;
+      if (typeof data.tileY === 'number') state.player.tileY = data.tileY;
+      if (data.dir) state.player.dir = data.dir;
+
+      const team = teamApi();
+      if (team && team.deserialize) {
+        safeCall('team.deserialize', function () {
+          team.deserialize({ team: data.team || [], box: data.box || [], activeIndex: data.activeIndex || 0 });
+        });
       }
       if (data.collection) state.collection = data.collection;
+      if (data.seen) state.seen = data.seen;
+      if (data.badges) state.badges = data.badges;
       if (data.defeatedTrainers) state.defeatedTrainers = data.defeatedTrainers;
-      if (typeof data.tileX === 'number' && typeof data.tileY === 'number'
-          && isWalkable(data.tileX, data.tileY)) {
-        state.player.tileX = data.tileX;
-        state.player.tileY = data.tileY;
-        state.player.pixelX = data.tileX * 16;
-        state.player.pixelY = data.tileY * 16;
-        state.player.moveFromX = state.player.moveToX = data.tileX;
-        state.player.moveFromY = state.player.moveToY = data.tileY;
-        state.player.worldX = data.tileX;
-        state.player.worldZ = data.tileY;
+      if (data.items) state.items = data.items;
+      if (data.visitedRegions) state.visitedRegions = data.visitedRegions;
+      state.visitedRegions[START_REGION] = true;
+      if (data.cameraMode) state.cameraMode = data.cameraMode;
+      if (data.quality && QUALITY_DOWN[data.quality] !== undefined) {
+        manualQuality = false;
+        R3.setQuality(data.quality);
       }
-      state.lastBiome = getBiomeAt(state.player.tileX, state.player.tileY);
-    } catch (e) { /* données corrompues : on ignore */ }
+      const cam = mod('camera');
+      if (cam && cam.deserialize) {
+        safeCall('camera.deserialize', function () { cam.deserialize(data.cameraState || data.cameraMode); });
+      }
+      // La position sera sécurisée par applyRegion (keepPosition + teleport).
+      _resumePosition = true;
+    } catch (e) {
+      console.warn('[game3d] sauvegarde illisible, on repart de zéro :', e);
+    }
+  }
+
+  let _resumePosition = false;
+
+  /**
+   * Premier lancement de la version 3D : on récupère la partie 2D de Robin
+   * (nom, starter, collection, dresseurs battus). La clé `robinGame_v2` est
+   * lue, JAMAIS écrite.
+   */
+  function importOldSave() {
+    let old = null;
+    try {
+      const raw = localStorage.getItem(OLD_SAVE_KEY);
+      if (raw) old = JSON.parse(raw);
+    } catch (e) { old = null; }
+    if (!old) return;
+
+    try {
+      if (old.playerName) {
+        state.playerName = old.playerName;
+        const input = document.getElementById('name-input');
+        if (input) input.value = old.playerName;
+      }
+      if (old.collection && typeof old.collection === 'object') {
+        for (const id in old.collection) {
+          state.collection[id] = old.collection[id];
+          state.seen[id] = true;
+        }
+      }
+      if (old.defeatedTrainers) state.defeatedTrainers = old.defeatedTrainers;
+
+      const team = teamApi();
+      if (team && team.importFromV2) {
+        const rapport = safeCall('team.importFromV2', function () { return team.importFromV2(old); });
+        if (rapport && (rapport.team || rapport.box)) {
+          console.log('[game3d] partie 2D reprise : ' + rapport.team + ' au combat, ' + rapport.box + ' en boîte.');
+        }
+      }
+      // On sauvegarde tout de suite dans la NOUVELLE clé : l'import n'aura
+      // lieu qu'une seule fois, quoi qu'il arrive ensuite.
+      saveGame();
+    } catch (e) {
+      console.warn('[game3d] import de la sauvegarde 2D impossible :', e);
+    }
   }
 
   // ===========================================================================
-  //  API de débogage — window.GAME3D
+  //  16. API de débogage — window.GAME3D
   // ===========================================================================
   const GAME3D = {
     state: state,
@@ -1569,23 +2463,31 @@
     saveGame: saveGame,
     loadGame: loadGame,
     setQuality: applyQuality,
-    teleport: function (tx, ty) {
-      state.player.tileX = tx; state.player.tileY = ty;
-      state.player.moving = false; state.player.moveProgress = 0;
-      state.player.moveFromX = state.player.moveToX = tx;
-      state.player.moveFromY = state.player.moveToY = ty;
-      updatePlayerTransform(0);
-      updateCamera(1e9);
-    },
-    encounter: triggerEncounter,
+    teleport: teleport,
+    goRegion: function (id, x, y) { applyRegion(id, { x: x, y: y }); },
+    encounter: triggerWildEncounter,
+    wild: startWildBattle,
+    champion: challengeChampion,
+    fly: startFlight,
+    throwBall: throwBallInWorld,
+    heal: function () { call('team', 'healAll', []); },
     giveAll: function () {
-      CREATURES.forEach(function (c) { state.collection[c.id] = state.collection[c.id] || 1; });
-      refreshCollectionCount();
+      const dex = mod('dex');
+      if (!dex || !dex.ALL) return;
+      dex.ALL.forEach(function (s) {
+        state.collection[s.id] = state.collection[s.id] || 1;
+        state.seen[s.id] = true;
+      });
+      refreshHudCounters();
       saveGame();
+    },
+    reset: function () {
+      try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* rien */ }
+      location.reload();
     },
   };
   window.GAME3D = GAME3D;
-  // Certains modules (interface, carte) peuvent avoir besoin de l'état du jeu.
+  // Certains modules (interface, carte) ont besoin de l'état du jeu.
   window.gameState = state;
 
   // ---------------------------------------------------------------------------
