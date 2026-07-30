@@ -1,0 +1,5 @@
+# Réglages locaux de l'éditeur / de l'assistant (propres à cette machine)
+.claude/settings.local.json
+
+# Arbres de travail git temporaires
+.claude/worktrees/

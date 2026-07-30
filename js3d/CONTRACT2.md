@@ -1054,3 +1054,207 @@ lisent encore `PALETTE` / `hashPos`), mais **la 3D n'utilise plus `MAP`, `MAP_W`
 - [ ] Aucun `fetch`, aucun `import`, aucun fichier externe.
 - [ ] Aucune modification dans `js/`, ni dans un fichier assigné à un autre agent.
 - [ ] Commentaires en français.
+
+---
+
+## 23. Rendre le jeu jouable — révision du 2026-07-30
+
+Six retours de Robin après une vraie partie. Ce qui suit **complète et corrige** les
+sections ci-dessus ; en cas de contradiction, c'est cette section qui fait foi.
+
+### 23.1 Anti-occlusion de la caméra (§18 bis)
+
+`camera3d.js` sonde chaque image la ligne « buste du joueur → position idéale de la
+caméra » (14 sondes, table `BLOCK_H` des hauteurs bloquantes par décor). Dès qu'un
+mur, une tour ou un arbre coupe la ligne, la caméra se rapproche (jamais en-deçà de
+`OCC_MIN = 0,34` de la distance normale) **en gardant sa hauteur** (`OCC_LIFT`) : on
+passe par-dessus l'obstacle au lieu de le traverser. Resserrement rapide,
+relâchement lent, aucun tremblement. `frame().occlusion` expose le facteur.
+
+Les hauteurs de `BLOCK_H` doivent rester celles des **maquettes réelles** de
+`world3d.js` / `citybuild3d.js` (un arbre de forêt culmine à ~2,7, pas à 5).
+
+**Corrigé au passage :** `game3d.js` passait à `camera.update()` une *hauteur*
+(nombre) là où le contrat demande une *fonction* `(x, z) => hauteur`. La caméra
+croyait donc le terrain plat.
+
+### 23.2 Troisième vue : `fps` (§18 bis)
+
+`MODES = ['aventure', 'rpg', 'fps']`. La vue FPS place la caméra à hauteur d'yeux
+(1,52), regard aligné sur `player.dir` (lissé), `fov` 74, léger balancement de
+marche, aucune occlusion possible. `frame().yaw` reste 0 : ce n'est pas la caméra
+qui tourne les commandes, c'est le joueur.
+
+Commandes en vue FPS (`game3d.js`) : **↑** avance dans la direction du regard,
+**↓** recule sans se retourner, **←/→** pivotent sur place d'un quart de tour
+(un tour toutes les 200 ms si la touche reste enfoncée). `game3d.js` masque le
+modèle du joueur quand `frame().mode === 'fps' && !frame().switching`.
+
+### 23.3 Plus aucune rencontre invisible (§16)
+
+`ENCOUNTER_CHANCE = 0` dans `game3d.js` : marcher dans les hautes herbes ne
+déclenche plus rien. Et un roamer qui touche le joueur n'impose plus de combat — il
+affiche un rappel (« Espace pour l'affronter, B pour une Ball »). **On n'affronte
+que ce que l'on voit et que l'on choisit.**
+
+### 23.4 Dirigeable réellement utilisable (§17 bis)
+
+- `game3d.js` déclare **les six ports** au chargement (leurs coordonnées sont
+  statiques) : `airship.canFly()` refusait toute destination dont le port lui était
+  inconnu, et un port n'était déclaré qu'au chargement de sa région — au premier
+  lancement, aucune destination n'était possible.
+- **Toutes** les régions sont proposées (l'écart au §17 bis est délibéré : les
+  portes sont sur les bords d'une carte de 384 × 224, exiger d'y être allé à pied
+  rendait le dirigeable inutile). Le menu indique les régions non encore explorées.
+- Touche **T** : le dirigeable vient chercher le joueur où qu'il soit (`startFlight`
+  le pose d'abord sur l'embarcadère de la région de départ).
+- Le menu se pilote au clavier : `hud3d.js` expose `setAirshipCursor`,
+  `moveAirshipCursor`, `confirmAirship`, `airshipCount`. Sans ça, aucune touche ne
+  répondait — pas même Échap — et on restait coincé dans l'écran.
+
+### 23.5 `gates3d.js` — les repères visibles de loin *(nouveau module)*
+
+`R3.register('gates', { build(scene), setRegion(id), update(t, px, pz), list(),
+nearest(x, z, kind), setVisible(v) })`.
+
+Un « phare » par lieu important de la région active : **porte** (obélisques, arche,
+anneau de runes, panneau nommant la destination), **port aérien**, **ville**,
+**arène**. Chacun porte une **colonne de lumière** (`fog: false`, `frustumCulled =
+false`) visible de l'autre bout de la carte. Les panneaux ne s'affichent qu'entre 16
+et 190 unités et gardent une taille constante à l'écran.
+
+### 23.6 Boussole permanente (§18)
+
+`hud3d.js` expose `setCompass(info)` / `showCompass(v)` / `setViewMode(mode)`.
+Panneau en bas à droite : nom de la région, coordonnées, mini-carte de la région
+(fond obtenu **une fois** par `regions.minimap()` puis mis en cache), position et
+orientation du joueur, portes/port/ville/arène, et une ligne « prochaine porte »
+avec flèche et distance. `game3d.js` appelle `refreshCompass()` à chaque fin de pas,
+demi-tour, téléportation et changement de région — **jamais à chaque image**.
+
+### 23.7 Outil de test : `window.GAME3D.tick(dtMs)`
+
+`frame()` a été scindé : `tickGame(dtMs)` exécute une image complète (logique, monde,
+rendu) et est exposée par l'API de débogage. Indispensable pour tester le jeu dans un
+onglet piloté par l'automatisation, où `requestAnimationFrame` ne se déclenche jamais.
+
+---
+
+## 24. Combats lisibles et spectaculaires — révision du 2026-07-30 (2)
+
+Trois retours de Robin en jouant. Comme le §23, cette section **fait foi** sur les
+points qu'elle traite.
+
+### 24.1 Changer de créature dans l'écran Équipe (§18)
+
+Deux causes se cumulaient :
+
+- **Le survol reconstruisait toute la grille** (`mouseenter` → `renderTeamScreen()`,
+  qui fait `innerHTML = ''`). L'élément visé par la souris était donc détruit entre
+  le `mousedown` et le `mouseup`, et l'événement `click` n'était jamais émis : les
+  cases semblaient mortes. Le survol passe désormais par `moveTeamCursor(zone, i)`,
+  qui ne touche QUE les classes et le panneau de détail. **Ne jamais reconstruire
+  une liste sous le curseur depuis un gestionnaire de survol.**
+- **Aucun bouton ne désignait la créature qui combat** : il fallait deviner qu'il
+  fallait échanger deux emplacements. Ajout de `ui.teamActiveBtn`
+  (« ⚔️ Envoyer au combat », touche **A**) qui appelle `team.setActive(i)`, et d'un
+  repère « ⚔️ Au combat » sur la case concernée.
+
+### 24.2 Rien ne doit cacher les PV pendant le choix d'une attaque (§18)
+
+- `showMoveMenu()` masquait délibérément la carte de PV du joueur. Elle reste
+  maintenant affichée, et `placeHpCards()` la **remonte au-dessus du menu** si les
+  deux boîtes se chevauchent — la position est MESURÉE (`getBoundingClientRect`),
+  pas devinée par media query, donc c'est juste à toutes les tailles de fenêtre.
+- `game3d.js` affectait `b.phase = 'animating'` **directement** au lieu de passer par
+  `setBattlePhase()` : `hud.showBattleUI()` n'était donc pas rappelé et le menu des
+  capacités restait ouvert par-dessus la boîte de dialogue pendant toute l'attaque.
+  Les 13 affectations de phase passent désormais toutes par `setBattlePhase()`.
+
+### 24.3 Effets d'attaque « spectaculaires » (§17)
+
+Les 18 effets de capacité passent tous par `fxImpact()` : c'est donc lui qui a été
+refait, ce qui les relève tous d'un coup. Nouvelles briques réutilisables :
+
+| brique | rôle |
+|---|---|
+| `glowTexture()` / `glowSprite()` | dégradé radial dessiné au canvas, sprite additif — **la** différence entre un effet géométrique et un effet lumineux |
+| `fxGlow(pos, couleur, taille, vie)` | halo qui enfle et s'éteint |
+| `fxRays(pos, couleur, n, len)` | rayons radiaux face caméra (signature « anime ») |
+| `fxDebris(pos, couleur, n)` | éclats projetés qui retombent en tournant |
+| `fxShockDome(pos, couleur, r)` | bulle d'énergie qui se propage |
+
+`fxImpact()` empile cœur blanc + halo teinté + sphère + deux anneaux + dôme + rayons
++ éclats + étincelles (sprites étirés dans le sens de la vitesse) + voile d'écran,
+puis ajoute le **ressenti** : secousse de caméra, **arrêt sur image** de ~65 ms
+(`hitStop`, le temps du combat tombe à 15 %) et **coup de zoom** (`zoomPunch`, −3,4°
+de `fov`).
+
+L'intensité s'adapte au coup : `game3d.js` passe le résultat du calcul de dégâts à
+`battle.notifyMove(side, move, res)`, d'où une **force** de 0,45 (raté — aucune gerbe
+d'impact, juste un souffle) à ~1,8 (super efficace + critique).
+
+Budget : ~30 objets d'effet au pic d'un impact, tous libérés avec l'effet. Les
+étincelles ne coûtent **qu'un sprite** chacune (pas de maillage doublé), et `qCount()`
+reste le seul point de réglage par qualité.
+
+---
+
+## 25. Le moteur d'effets « spectacle » — révision du 2026-07-30 (3)
+
+Robin a trouvé les attaques « trop simples » : cette section **remplace le §24.3**.
+Les 17 capacités offensives ont été réécrites autour d'un moteur commun.
+
+### 25.1 Trois actes
+
+Toute capacité se joue en **charge → frappe → explosion** :
+
+1. `fxCharge(pos, couleur, durée, taille)` — des particules convergent vers un
+   orbe qui grossit pendant qu'un anneau se resserre. C'est ce temps d'attente
+   (~0,2 s) qui rend la frappe impressionnante.
+2. **la frappe** — quelque chose de VOLUMIQUE traverse l'arène : torrent de feu
+   (`fxFlame`), éclair en **TubeGeometry brisée** (`fxLightning` / `boltMesh`),
+   mur d'eau, blocs de pierre en dodécaèdres (`rockMesh`), lames géantes,
+   tornade de feuilles, trou noir avec disque d'accrétion…
+3. `fxExplosion(pos, couleur, échelle, opts)` — flash, boule de feu
+   volumétrique en deux couches, double onde de choc, dôme, éclats 3D, rayons,
+   fumée décalée, trace au sol, anneau plein écran, secousse, arrêt sur image
+   et coup de zoom.
+
+### 25.2 Briques réutilisables
+
+| brique | rôle |
+|---|---|
+| `flameTexture()` / `smokeTexture()` / `ringTexture()` | textures dessinées au canvas (aucun fichier : le double-clic doit continuer à marcher) |
+| `fxCloud(pos, opts)` | nuage volumétrique de sprites — feu, fumée, poussière |
+| `fxProjectile(o, t, c, opts)` | corps + halo + queue orientée + traînée semée en vol |
+| `fxLightning(a, b, c, opts)` | éclair 3D en tube, avec ramifications et clignotement |
+| `fxColumn`, `fxCracks`, `fxShockDome`, `fxRays`, `fxDebris`, `fxScreenRing` | colonne montante, fissures au sol, dôme, rayons, éclats, onde plein écran |
+
+### 25.3 Règles à respecter absolument
+
+- **Fondu additif ≠ couleur.** Sur le ciel très clair d'une arène, une dizaine
+  de sprites additifs superposés saturent en blanc et la couleur du type
+  disparaît (constaté à l'écran). Le CORPS des flammes/nuages est donc en fondu
+  **normal** ; seul le cœur, plus petit, reste additif.
+- **Ce qui coûte, c'est la SURFACE repeinte**, pas le nombre d'objets :
+  `fxExplosion` réduit la TAILLE (et non seulement le compte) quand la qualité
+  baisse, et coupe l'anneau plein écran, le cœur et la fumée.
+- **Jamais de `setTimeout`** pour enchaîner : `setTimeoutFx(delai, fn)` compte
+  en temps de JEU (donc respecte l'arrêt sur image et disparaît avec la scène).
+- **`killFx(e, avorte)`** distingue le ménage (`onKill`, toujours exécuté —
+  c'est lui qui retire les voiles accrochés à la caméra) de l'enchaînement
+  (`onEnd`, sauté quand l'effet est interrompu).
+- **`updateFx` parcourt un INSTANTANÉ de la liste** : la fin d'un effet en crée
+  d'autres et le garde-fou en supprime, si bien qu'itérer sur des index vivants
+  faisait perdre la trace d'un effet — et son groupe restait dans la scène.
+- Garde-fou `FX_MAX = 60` effets vivants ; au-delà, les plus anciens sont
+  interrompus.
+
+### 25.4 Banc d'essai
+
+`.claude/verif_fx.js` charge les VRAIS modules (three.min.js + core3d +
+battle3d) dans un contexte `vm` avec un faux canvas, joue les 17 capacités +
+le soin + un enchaînement brutal de 30 capacités, et vérifie qu'aucune ne
+boucle et que la scène revient **exactement** à son décompte de départ. À
+relancer après toute retouche des effets.
