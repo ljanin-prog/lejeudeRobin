@@ -1,21 +1,35 @@
 // =============================================================================
-//  battle3d.js — LA SCÈNE DE COMBAT EN 3D
+//  battle3d.js — LA SCÈNE DE COMBAT EN 3D                          (CONTRACT2 §17)
 // =============================================================================
-//  Le combat est le moment fort du jeu : on lui offre sa PROPRE scène Three.js,
+//  Le combat est le moment de jeu le plus regardé : il a sa PROPRE scène Three.js,
 //  sa propre caméra (léger travelling permanent) et un éclairage plus contrasté
-//  que celui du monde ouvert.
+//  que celui du monde ouvert. Ce module gère :
+//    · le décor (dôme de ciel, arrière-plan de biome, deux plateformes) ;
+//    · les DEUX camps, toujours des créatures (jamais le dresseur à l'écran —
+//      c'est la règle du contrat : « le Mon du joueur vu de dos ») ;
+//    · le changement de créature en cours de combat (swapIn) ;
+//    · les 18 effets visuels des capacités (playFx), un par `move.fx` ;
+//    · la capture pendant un combat (throwBall), timings repris du jeu 2D ;
+//    · le traitement spécial des légendaires : plus grands, plateforme plus
+//      large, caméra reculée, aura, entrée en scène plus longue.
 //
-//  Timings repris À L'IDENTIQUE du jeu 2D (js/game.js, updateBattle) :
-//      0    → 600 ms   lancer de la pokéball en parabole
+//  CE QUI N'EST PAS ICI : les barres de PV, les menus, le sac. Tout ça est en
+//  HTML dans hud3d.js — battle3d ne lit ni n'écrit aucun texte à l'écran.
+//
+//  Timings de la Pokéball (identiques au jeu 2D et au contrat) :
+//      0    → 600 ms   lancer en parabole
 //      600  → 1800 ms  3 secousses de 400 ms
-//      1800 ms         résultat (capture ou fuite)
-//
-//  Les barres de PV et le menu de capacités sont en HTML (hud3d.js) : rien de
-//  tout cela n'est dessiné ici.
+//      1800 ms          résultat (capture ou échec)
 //
 //  Repères de la scène (mêmes axes que le monde : x droite, y haut, z vers la
-//  caméra) : l'adversaire est au fond à droite, le camp du joueur au premier
-//  plan à gauche, la caméra recule vers +z.
+//  caméra) : l'adversaire est au fond, le camp du joueur au premier plan, la
+//  caméra recule vers +z.
+//
+//  DÉPENDANCES — TOUTES FACULTATIVES (dégradation gracieuse obligatoire) :
+//    R3.get('dex')   -> savoir qui est légendaire, ses types, sa couleur
+//    R3.get('types') -> couleur d'un type (sinon gris neutre)
+//    R3.get('llib')  -> aura des légendaires (sinon pas d'aura, juste plus grand)
+//    R3.buildCreature(id) -> toujours défini par core3d, jamais null
 // =============================================================================
 
 (function () {
@@ -41,17 +55,31 @@
 
   const FOE_SCALE = 1.55;   // l'adversaire fait ~1,5 unité de haut
   const PLR_SCALE = 1.75;   // le compagnon du joueur est plus près : plus grand
-  const HUMAN_SCALE = 1.55; // le dresseur-joueur (combat sauvage)
+
+  // Traitement des légendaires : « ils doivent en imposer ».
+  //   - LEGEND_SCALE_MULT s'applique à tout modèle légendaire (le vrai modèle,
+  //     une fois modélisé, fait déjà 1,8 à 2,4 unités de haut — un léger boost
+  //     suffit).
+  //   - LEGEND_PLACEHOLDER_BOOST compense la silhouette de repli que
+  //     R3.buildCreature() renvoie tant que les 36 légendaires ne sont pas
+  //     tous modélisés (elle a la taille d'une créature normale) : sans ce
+  //     boost, un légendaire en cours de modélisation serait minuscule.
+  const LEGEND_SCALE_MULT = 1.18;
+  const LEGEND_PLACEHOLDER_BOOST = 2.6;
+  const LEGEND_PLAT_MULT = 1.32;   // plateforme plus large (X/Z seulement)
 
   const BALL_R = 0.19;
 
   const CAM_LOOK = new THREE.Vector3(-0.10, 1.25, -0.40);
+  const NEUTRAL_COLOR = '#94b0c2';   // repli si types3d est absent ou capacité neutre
 
   // ---------------------------------------------------------------------------
-  //  Ambiance d'arène par biome — mélange des couleurs du combat 2D
-  //  (drawBattleBackground) et de R3.biomeMood.
+  //  Ambiance d'arène par biome — mélange des couleurs du combat 2D et de
+  //  R3.biomeMood. Les biomes historiques ET les 8 nouveaux du contrat (§5)
+  //  ont chacun leur entrée ; un biome inconnu retombe sur `plain`.
   //    plat     : 'grass' | 'sand' | 'stone' | 'snow'
-  //    backdrop : 'trees' | 'meadow' | 'water' | 'dunes' | 'peaks' | 'city' | 'village'
+  //    backdrop : 'trees' | 'meadow' | 'water' | 'dunes' | 'peaks' | 'city' |
+  //               'village' | 'volcano' | 'celestial'
   // ---------------------------------------------------------------------------
   const ARENA = {
     forest:   { top: '#6fe3f2', mid: '#bfeedd', ground: '#4f9e3f', plat: 'grass', backdrop: 'trees'   },
@@ -64,6 +92,15 @@
     mountain: { top: '#b6dcf2', mid: '#dceaf2', ground: '#8a9199', plat: 'snow',  backdrop: 'peaks'   },
     village:  { top: '#95d4f2', mid: '#cfeeb4', ground: '#63b846', plat: 'grass', backdrop: 'village' },
     city2:    { top: '#a0cfe8', mid: '#d8e3ea', ground: '#a5aab0', plat: 'stone', backdrop: 'city'    },
+    // --- les 8 nouveaux biomes du monde légendaire (tiles3d.js §5) ---
+    jungle:    { top: '#6fd0c8', mid: '#bfe8c9', ground: '#2f6b34', plat: 'grass', backdrop: 'trees'    },
+    swamp:     { top: '#8fc0b0', mid: '#c9d6a8', ground: '#4c6238', plat: 'grass', backdrop: 'water'    },
+    volcano:   { top: '#e08a5a', mid: '#c96a44', ground: '#3a2018', plat: 'stone', backdrop: 'volcano'  },
+    desert:    { top: '#8fc9ef', mid: '#f0dca0', ground: '#d8b46a', plat: 'sand',  backdrop: 'dunes'    },
+    glacier:   { top: '#bfe4f6', mid: '#eaf6ff', ground: '#cfe9f5', plat: 'snow',  backdrop: 'peaks'    },
+    celestial: { top: '#9a8ce0', mid: '#dcd2f7', ground: '#6a5fa8', plat: 'stone', backdrop: 'celestial'},
+    coast:     { top: '#8fd4f4', mid: '#ffe6bd', ground: '#e0c489', plat: 'sand',  backdrop: 'dunes'    },
+    citadel:   { top: '#a8d4ea', mid: '#dfe7ec', ground: '#b6b0a4', plat: 'stone', backdrop: 'city'     },
   };
   function arena(b) { return ARENA[b] || ARENA.plain; }
 
@@ -117,22 +154,17 @@
   let cloudRing = null;       // nuages lointains (tournent doucement)
   let skyMat = null;          // matériau du dôme (créé une fois, réutilisé)
 
-  let ball = null;            // groupe pokéball
+  let foePlat = null, plrPlat = null;   // groupes des deux plateformes
+  let ball = null;             // groupe pokéball (capture pendant le combat)
   let ballRest = new THREE.Vector3();
   let ballHand = new THREE.Vector3();
+  let ballAnim = null;         // { active, t, chance, cb, result, ... } | null
 
-  let foe = null, plr = null; // les deux camps (voir makeSide)
-  const fxList = [];          // effets en cours
+  let foe = null, plr = null;  // les deux camps (voir makeSide)
+  const fxList = [];           // effets en cours
 
-  // Horloge locale du combat sauvage, en millisecondes : on ne dépend pas de
-  // battleState.animTick (unité incertaine selon l'appelant), on recompte ici.
-  let wildT = 0;
-  let lastShakeIdx = -1;
-  let suctionDone = false, resultDone = false, sparkleTimer = 0;
-
-  // Combat de dresseur
-  let lastFoeHp = 0, lastPlrHp = 0, explicitMoves = false;
-  const evQueue = [];
+  let resultDone = false;      // le flourish de fin de combat n'a joué qu'une fois
+  let animSeqLocal = 0;        // compteur local pour bs.anim.seq
 
   // ---------------------------------------------------------------------------
   //  Un « camp » : porteur de position + pivot d'animation + modèle
@@ -146,18 +178,23 @@
     holder.rotation.y = facing;
     return {
       holder, pivot,
-      model: null, human: false,
+      model: null, mon: null, legendary: false, auraGroup: null,
       base: basePos.clone(),
       scale: 1,
       phase: Math.random() * 6.28,
-      atkT: -1, atkDur: 0.8, atkDir: new THREE.Vector3(), impactDone: false, atkTarget: null,
+      atkT: -1, atkDur: 0.8, atkDir: new THREE.Vector3(), impactDone: false,
+      atkTarget: null, atkMove: null, atkIsHeal: false,
       hitT: -1, hitDur: 0.5, hitDir: new THREE.Vector3(),
-      shrink: 1,       // 1 = normal, 0 = aspiré dans la ball
+      shrink: 1,       // 1 = normal, 0 = aspiré / pas encore apparu
       faint: -1,       // animation de K.O.
       visible: true,
       blob: null,      // ombre douce de contact
+      introT: 0, introDur: 1.2, introDone: true, introFxDone: false,
+      swap: null,      // { phase:'out'|'in', t, nextMon } pendant un changement
     };
   }
+
+  function sideKeyOf(s) { return s === foe ? 'foe' : 'player'; }
 
   // ===========================================================================
   //  CONSTRUCTION DU DÉCOR
@@ -372,6 +409,44 @@
         lamp.castShadow = false;
         g.add(lamp);
       });
+    } else if (a.backdrop === 'volcano') {
+      // Roches basaltiques sombres, fissures de lave incandescentes et mares
+      // de magma : le décor de la Caldeira de Braise.
+      ring(9, 10, 19, function (x, z, r, ang) {
+        const h = 3 + r * 6, w = 1.6 + r * 1.6;
+        const rock = unitCone('#2b1a16', 6, true);
+        rock.position.set(x, h / 2 - 0.3, z);
+        rock.scale.set(w, h, w);
+        rock.rotation.y = ang;
+        g.add(rock);
+        if (r > 0.45) {
+          const crack = R3.box(0.5, 0.05, 0.05, '#ff6b3d', x, 0.04, z,
+            { emissive: '#ff6b3d', emissiveIntensity: 1.4, rough: 0.5 });
+          crack.rotation.y = ang;
+          crack.castShadow = false;
+          g.add(crack);
+        }
+      });
+      ring(7, 6.5, 13, function (x, z, r) {
+        const pool = R3.ellipsoid(0.8 + r, 0.10, 0.8 + r, '#ff6b3d', x, -0.18, z,
+          { emissive: '#ff8c42', emissiveIntensity: 1.1, rough: 0.4 });
+        pool.castShadow = false;
+        g.add(pool);
+      });
+    } else if (a.backdrop === 'celestial') {
+      // Colonnes de ruines flottantes à différentes hauteurs, couronnées
+      // d'or : le Plateau d'Aurore, observatoire céleste.
+      ring(10, 9, 18, function (x, z, r, ang) {
+        const h = 3 + r * 5;
+        const hover = r * 1.4;
+        const pillar = R3.cyl(0.45 + r * 0.25, 0.55 + r * 0.25, h, '#cfc6ee', x, h / 2 + hover, z, { rough: 0.7 });
+        pillar.rotation.y = ang;
+        g.add(pillar);
+        const cap = R3.cyl(0.62 + r * 0.25, 0.62 + r * 0.25, 0.18, '#ffe066', x, h + hover + 0.09, z,
+          { emissive: '#ffe066', emissiveIntensity: 0.6, rough: 0.5 });
+        cap.castShadow = false;
+        g.add(cap);
+      });
     }
 
     // Nuages très lointains, qui dérivent lentement
@@ -522,19 +597,20 @@
     return g;
   }
 
-  function setBallOpen(p) {
-    if (!ball) return;
-    ball.userData.hingeTop.rotation.x = -p * 1.55;
-    ball.userData.hingeBot.rotation.x = p * 0.28;
+  function setBallOpen(ballObj, p) {
+    if (!ballObj) return;
+    ballObj.userData.hingeTop.rotation.x = -p * 1.55;
+    ballObj.userData.hingeBot.rotation.x = p * 0.28;
   }
 
-  function setBallLit(on) {
-    if (!ball) return;
-    ball.userData.lens.material = on ? ball.userData.matLit : ball.userData.matDim;
+  function setBallLit(ballObj, on) {
+    if (!ballObj) return;
+    ballObj.userData.lens.material = on ? ballObj.userData.matLit : ballObj.userData.matDim;
   }
 
   // ===========================================================================
-  //  EFFETS — chaque effet est une petite machine autonome avec sa durée de vie
+  //  PETITS EFFETS RÉUTILISABLES — les briques dans lesquelles les 18 effets
+  //  de capacité (plus bas) puisent.
   // ===========================================================================
 
   function spawnFx(e) {
@@ -564,7 +640,7 @@
     while (fxList.length) killFx(fxList.pop());
   }
 
-  /** Gerbe d'étoiles dorées (capture réussie / victoire). */
+  /** Gerbe d'étoiles dorées (capture réussie / victoire / créature qui jaillit). */
   function fxStars(pos, n) {
     n = qCount(n || 16);
     const m = fxMat('#ffd75e', false, 1);
@@ -640,7 +716,7 @@
     });
   }
 
-  /** Nuage de fumée (la créature qui ressort de la ball). */
+  /** Nuage de fumée (la créature qui ressort de la ball, un rocher qui s'écrase…). */
   function fxSmoke(pos, n) {
     n = qCount(n || 12);
     const m = fxMat('#eef2f6', false, 0.85);
@@ -669,7 +745,7 @@
     });
   }
 
-  /** Anneau de choc qui s'élargit au sol ou dans l'air. */
+  /** Anneau de choc qui s'élargit au sol (par défaut) ou face à la caméra (flat=false). */
   function fxRing(pos, color, rMax, flat) {
     const m = fxMat(color || '#ffffff', true, 0.9);
     const geo = ownGeo('fx-ring', function () { return new THREE.TorusGeometry(1, 0.06, 8, 30); });
@@ -735,7 +811,9 @@
     });
   }
 
-  /** Éclat d'impact : halo + anneau + étincelles + petite secousse. */
+  /** Éclat d'impact tinté par type : halo + anneau + étincelles + petite secousse.
+   *  C'est la « confirmation de coup » commune à la plupart des 18 effets — ce
+   *  qui les distingue reste la forme bespoke que chacun ajoute par-dessus. */
   function fxImpact(pos, color) {
     const m = fxMat(color || '#fff0c8', true, 0.95);
     const halo = new THREE.Mesh(R3.geo.sphere(1, 12), m);
@@ -760,9 +838,12 @@
     }
   }
 
-  /** Spirale de particules vertes montantes : un soin a été utilisé. */
-  function fxHeal(pos, height) {
-    const m = fxMat('#7ef0a0', true, 1);
+  /** Spirale de particules montantes + croix blanche : un soin a été utilisé.
+   *  La croix reste blanche (lisible sur toutes les couleurs) ; la spirale,
+   *  elle, prend la couleur du type de la capacité. */
+  function fxHeal(pos, height, color) {
+    const col = color || '#7ef0a0';
+    const m = fxMat(col, true, 1);
     const g = new THREE.Group();
     const n = qCount(20);
     const h = height || 1.6;
@@ -773,7 +854,7 @@
       g.add(s);
       parts.push({ mesh: s, a0: (i / n) * Math.PI * 4, off: i / n, r: 0.42 + (i % 3) * 0.12 });
     }
-    const crossMat = fxMat('#b8ffcf', true, 1);
+    const crossMat = fxMat('#ffffff', true, 1);
     const cross = new THREE.Group();
     cross.add(new THREE.Mesh(R3.geo.box(0.34, 0.11, 0.02), crossMat));
     cross.add(new THREE.Mesh(R3.geo.box(0.11, 0.34, 0.02), crossMat));
@@ -797,7 +878,7 @@
     });
   }
 
-  /** Éclair de lumière plein écran (capture réussie). */
+  /** Éclair de lumière plein écran (capture réussie, victoire). */
   function fxFlash(color, life, strength) {
     if (!camera) return;
     const m = fxMat(color || '#ffffff', true, strength || 0.85);
@@ -815,54 +896,600 @@
   }
 
   // ===========================================================================
-  //  ENTRÉE / SORTIE
+  //  LES 18 EFFETS DE CAPACITÉ (playFx) — chacun doit se reconnaître d'un coup
+  //  d'œil. `origin` = position de l'attaquant, `target` = position de la
+  //  cible (le défenseur, ou l'attaquant lui-même pour un soin), `color` =
+  //  couleur du type de la capacité (R3.get('types').color(move.type)).
   // ===========================================================================
 
-  function resolvePlayerCreature(b) {
-    if (b && b.playerCreature) return b.playerCreature;
-    if (b && b.starter) return b.starter;
-    if (typeof window !== 'undefined' && window.GAME3D && window.GAME3D.state && window.GAME3D.state.starter) {
-      return window.GAME3D.state.starter;
+  /** slash — deux ou trois lames rapides qui balafrent la cible. */
+  function fxSlash(origin, target, color) {
+    const n = 3;
+    const mats = [];
+    const g = new THREE.Group();
+    const parts = [];
+    for (let i = 0; i < n; i++) {
+      const m = fxMat(color, true, 1);
+      mats.push(m);
+      const mesh = new THREE.Mesh(R3.geo.plane(1, 0.15), m);
+      mesh.position.copy(target);
+      mesh.rotation.z = -0.7 + i * 0.55;
+      mesh.rotation.y = 0.3;
+      mesh.castShadow = false;
+      g.add(mesh);
+      parts.push({ mesh: mesh, mat: m, delay: i * 0.05 });
     }
-    if (typeof state !== 'undefined' && state && state.starter) return state.starter;
-    return null;
+    spawnFx({
+      group: g, mats: mats, life: 0.38,
+      update: function (p) {
+        const t = p * 0.38;
+        parts.forEach(function (q) {
+          const lp = R3.clamp01((t - q.delay) / 0.16);
+          q.mesh.scale.set(0.15 + lp * 1.05, 1, 1);
+          q.mat.opacity = lp <= 0 ? 0 : Math.max(0, 1 - Math.max(0, (lp - 0.5) / 0.5));
+        });
+      },
+    });
+    fxImpact(target, color);
   }
 
-  /** Silhouette de dresseur de secours, si actors3d.js n'est pas là. */
-  function fallbackHuman() {
-    const g = R3.group(
-      R3.cyl(0.16, 0.20, 0.42, '#3b5dc9', 0, 0.24, 0),
-      R3.ellipsoid(0.19, 0.24, 0.16, '#41a6f6', 0, 0.62, 0),
-      R3.sphere(0.16, '#f6c8a0', 0, 0.90, 0),
-      R3.ellipsoid(0.19, 0.10, 0.19, '#e5402f', 0, 1.00, 0),
-      R3.box(0.34, 0.06, 0.10, '#e5402f', 0, 0.99, 0.14),
-      R3.cyl(0.05, 0.05, 0.34, '#f6c8a0', -0.22, 0.62, 0),
-      R3.cyl(0.05, 0.05, 0.34, '#f6c8a0', 0.22, 0.62, 0),
-      R3.cyl(0.06, 0.06, 0.26, '#2c3a63', -0.09, 0.10, 0),
-      R3.cyl(0.06, 0.06, 0.26, '#2c3a63', 0.09, 0.10, 0)
-    );
-    return g;
+  /** beam — un rayon net qui s'étire de l'attaquant à la cible. */
+  function fxBeam(origin, target, color) {
+    const dir = target.clone().sub(origin);
+    const dist = Math.max(0.4, dir.length());
+    const dirN = dir.clone().normalize();
+    const mid = origin.clone().addScaledVector(dir, 0.5);
+    const mOuter = fxMat(color, true, 0.55);
+    const mInner = fxMat('#ffffff', true, 0.9);
+    const outer = new THREE.Mesh(R3.geo.cyl(0.16, 0.16, 1, 10), mOuter);
+    const inner = new THREE.Mesh(R3.geo.cyl(0.06, 0.06, 1, 8), mInner);
+    [outer, inner].forEach(function (c) {
+      c.position.copy(mid);
+      c.castShadow = false;
+      c.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dirN);
+    });
+    const g = new THREE.Group();
+    g.add(outer, inner);
+    spawnFx({
+      group: g, mats: [mOuter, mInner], life: 0.4,
+      update: function (p) {
+        const grow = R3.easeOut(Math.min(1, p / 0.35));
+        const shrink = p > 0.6 ? (p - 0.6) / 0.4 : 0;
+        outer.scale.set(1, dist * grow, 1);
+        inner.scale.set(1, dist * grow, 1);
+        mOuter.opacity = 0.55 * (1 - shrink);
+        mInner.opacity = 0.9 * (1 - shrink);
+      },
+    });
+    fxImpact(target, color);
   }
 
-  // Le personnage humain du combat est construit UNE SEULE FOIS puis réutilisé
-  // d'un combat à l'autre : le reconstruire à chaque fois faisait grossir sans
-  // fin la liste interne d'actors3d, et exit() détruisait son modèle.
-  let humanModel = null;
+  /** ball — un orbe lumineux arqué comme un projectile. */
+  function fxBall(origin, target, color) {
+    const m = fxMat(color, true, 1);
+    const glow = fxMat('#ffffff', true, 0.55);
+    const core = new THREE.Mesh(R3.geo.sphere(1, 12), m);
+    const halo = new THREE.Mesh(R3.geo.sphere(1, 10), glow);
+    core.scale.setScalar(0.13); halo.scale.setScalar(0.22);
+    core.castShadow = false; halo.castShadow = false;
+    const g = new THREE.Group();
+    g.add(halo, core);
+    spawnFx({
+      group: g, mats: [m, glow], life: 0.5,
+      update: function (p) {
+        const pos = origin.clone().lerp(target, p);
+        pos.y += Math.sin(p * Math.PI) * 0.85;
+        core.position.copy(pos); halo.position.copy(pos);
+        core.rotation.x += 0.3; core.rotation.y += 0.22;
+      },
+      onEnd: function () { fxImpact(target, color); },
+    });
+  }
 
-  function buildHuman() {
-    if (humanModel) {
-      if (humanModel.parent) humanModel.parent.remove(humanModel);
-      return humanModel;
+  /** wave — une vague en demi-anneau qui déferle du lanceur vers la cible. */
+  function fxWave(origin, target, color) {
+    const dir = target.clone().sub(origin); dir.y = 0;
+    const dist = Math.max(0.5, dir.length());
+    const dirN = dir.clone().normalize();
+    const m = fxMat(color, true, 0.85);
+    const geo = ownGeo('fx-wave', function () { return new THREE.TorusGeometry(1, 0.10, 8, 26, Math.PI); });
+    const mesh = new THREE.Mesh(geo, m);
+    mesh.position.copy(origin); mesh.position.y = 0.05;
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.rotation.z = Math.atan2(dirN.x, dirN.z);
+    mesh.castShadow = false;
+    const g = new THREE.Group(); g.add(mesh);
+    spawnFx({
+      group: g, mats: [m], life: 0.55,
+      update: function (p) {
+        const trav = R3.easeOut(p);
+        mesh.position.set(origin.x + dir.x * trav, 0.05, origin.z + dir.z * trav);
+        const s = 0.3 + trav * (dist * 0.55);
+        mesh.scale.set(s, s, 1);
+        m.opacity = 0.85 * (1 - p);
+      },
+    });
+    fxImpact(target, color);
+  }
+
+  /** burst — explosion radiale soudaine sur la cible. */
+  function fxBurst(origin, target, color) {
+    const n = qCount(10);
+    const mats = [];
+    const g = new THREE.Group();
+    const parts = [];
+    for (let i = 0; i < n; i++) {
+      const m = fxMat(color, true, 1);
+      mats.push(m);
+      const mesh = new THREE.Mesh(R3.geo.box(0.16, 0.16, 0.02), m);
+      mesh.position.copy(target);
+      mesh.castShadow = false;
+      g.add(mesh);
+      const a = (i / n) * Math.PI * 2, b = (Math.random() - 0.5) * 1.2;
+      parts.push({
+        mesh: mesh, mat: m,
+        v: new THREE.Vector3(Math.sin(a) * Math.cos(b), Math.sin(b) + 0.3, Math.cos(a) * Math.cos(b))
+          .multiplyScalar(2.4 + Math.random()),
+      });
     }
-    const actors = R3.get('actors');
-    if (actors && typeof actors.buildPlayer === 'function') {
+    spawnFx({
+      group: g, mats: mats, life: 0.5,
+      update: function (p) {
+        const t = p * 0.5;
+        parts.forEach(function (q) {
+          q.mesh.position.set(target.x + q.v.x * t, target.y + q.v.y * t - 2.6 * t * t, target.z + q.v.z * t);
+          q.mesh.rotation.x += 0.4; q.mesh.rotation.y += 0.3;
+          q.mat.opacity = 1 - p * p;
+        });
+      },
+    });
+    fxImpact(target, color);
+    fxRing(target, color, 2.0, false);
+  }
+
+  /** storm — nuage sombre au-dessus de la cible, pluie de traits colorés. */
+  function fxStorm(origin, target, color) {
+    const cloudM = fxMat('#2c3244', false, 0.75);
+    const cloud = new THREE.Mesh(R3.geo.sphere(1, 12), cloudM);
+    cloud.scale.set(1.3, 0.5, 1.3);
+    cloud.position.set(target.x, target.y + 1.6, target.z);
+    cloud.castShadow = false;
+    const g = new THREE.Group(); g.add(cloud);
+
+    const n = qCount(10);
+    const mats = [cloudM];
+    const drops = [];
+    for (let i = 0; i < n; i++) {
+      const m = fxMat(color, true, 0.9);
+      mats.push(m);
+      const mesh = new THREE.Mesh(R3.geo.box(0.03, 0.28, 0.03), m);
+      mesh.castShadow = false;
+      g.add(mesh);
+      drops.push({ mesh: mesh, mat: m, x: (Math.random() - 0.5) * 0.9, z: (Math.random() - 0.5) * 0.9, off: Math.random() });
+    }
+    spawnFx({
+      group: g, mats: mats, life: 0.95,
+      update: function (p) {
+        cloud.scale.set(1.3 + p * 0.4, 0.5, 1.3 + p * 0.4);
+        cloudM.opacity = 0.75 * (p < 0.8 ? 1 : (1 - p) / 0.2);
+        drops.forEach(function (q) {
+          const u = (p * 2.2 + q.off) % 1;
+          q.mesh.position.set(target.x + q.x, target.y + 1.5 - u * 1.6, target.z + q.z);
+          q.mat.opacity = 0.9 * (1 - u);
+        });
+      },
+      onEnd: function () { fxImpact(target, color); },
+    });
+  }
+
+  /** quake — le sol se fissure, des blocs sautent, la caméra tremble fort. */
+  function fxQuake(origin, target, color) {
+    fxRing(new THREE.Vector3(target.x, 0.03, target.z), color, 2.6);
+    const n = qCount(9);
+    const mats = [];
+    const g = new THREE.Group();
+    const parts = [];
+    for (let i = 0; i < n; i++) {
+      const m = fxMat('#7a5c3a', false, 1);
+      mats.push(m);
+      const mesh = new THREE.Mesh(R3.geo.box(0.16, 0.16, 0.16), m);
+      const a = Math.random() * Math.PI * 2, r = 0.2 + Math.random() * 1.1;
+      mesh.position.set(target.x + Math.sin(a) * r, 0.05, target.z + Math.cos(a) * r);
+      mesh.castShadow = false;
+      g.add(mesh);
+      parts.push({ mesh: mesh, mat: m, up: 1.2 + Math.random() * 1.4, spin: (Math.random() - 0.5) * 8 });
+    }
+    spawnFx({
+      group: g, mats: mats, life: 0.6,
+      update: function (p) {
+        const t = p * 0.6;
+        parts.forEach(function (q) {
+          q.mesh.position.y = Math.max(0.05, q.up * t - 2.8 * t * t);
+          q.mesh.rotation.x += q.spin * 0.02; q.mesh.rotation.z += q.spin * 0.02;
+          q.mat.opacity = 1 - p;
+        });
+      },
+    });
+    camShake = Math.max(camShake, 0.32);
+    if (punchLight) { punchLight.position.copy(target); punchLight.intensity = 2.4; punchLight.color.set(color); }
+  }
+
+  /** ice — des pics de glace jaillissent tout autour de la cible. */
+  function fxIce(origin, target, color) {
+    const n = 6;
+    const mats = [];
+    const g = new THREE.Group();
+    const parts = [];
+    for (let i = 0; i < n; i++) {
+      const m = fxMat(color, false, 0.95);
+      mats.push(m);
+      const mesh = new THREE.Mesh(R3.geo.cone(0.09, 0.55, 6), m);
+      const a = (i / n) * Math.PI * 2 + Math.random() * 0.3;
+      const r = 0.15 + Math.random() * 0.35;
+      const y0 = target.y - 0.5;
+      mesh.position.set(target.x + Math.sin(a) * r, y0, target.z + Math.cos(a) * r);
+      mesh.castShadow = false;
+      g.add(mesh);
+      parts.push({ mesh: mesh, mat: m, y0: y0, yT: y0 + 0.35 + Math.random() * 0.15 });
+    }
+    spawnFx({
+      group: g, mats: mats, life: 0.55,
+      update: function (p) {
+        const grow = R3.easeOut(Math.min(1, p / 0.35));
+        parts.forEach(function (q) {
+          q.mesh.position.y = R3.lerp(q.y0, q.yT, grow);
+          q.mesh.scale.set(1, grow, 1);
+          q.mat.opacity = 0.95 * (p < 0.7 ? 1 : (1 - p) / 0.3);
+        });
+      },
+    });
+    fxSparks(target, 10, '#eaf7ff', 1.2);
+    fxImpact(target, color);
+  }
+
+  /** star — une pluie d'étoiles converge sur la cible puis éclate. */
+  function fxStar(origin, target, color) {
+    const n = qCount(14);
+    const mats = [];
+    const g = new THREE.Group();
+    const parts = [];
+    for (let i = 0; i < n; i++) {
+      const m = fxMat(color, true, 1);
+      mats.push(m);
+      const s = R3.star(5, 0.08, 0.035, 0.03, color, 0, 0, 0);
+      s.material = m; s.castShadow = false;
+      g.add(s);
+      const a = Math.random() * Math.PI * 2, r = 1.4 + Math.random() * 0.8;
+      parts.push({
+        mesh: s, mat: m,
+        p0: new THREE.Vector3(target.x + Math.sin(a) * r, target.y + (Math.random() - 0.2) * 1.2, target.z + Math.cos(a) * r),
+        spin: (Math.random() - 0.5) * 12,
+      });
+    }
+    spawnFx({
+      group: g, mats: mats, life: 0.55,
+      update: function (p) {
+        const conv = R3.easeInOut(Math.min(1, p / 0.75));
+        parts.forEach(function (q) {
+          q.mesh.position.lerpVectors(q.p0, target, conv);
+          q.mesh.rotation.z += q.spin * 0.02;
+          q.mat.opacity = p > 0.75 ? 1 - (p - 0.75) / 0.25 : 1;
+        });
+      },
+      onEnd: function () { fxImpact(target, color); },
+    });
+  }
+
+  /** void — un noyau sombre avale des fragments puis relâche une onde. */
+  function fxVoid(origin, target, color) {
+    const core = fxMat('#0d0e16', true, 0.9);
+    const rim = fxMat(color, true, 0.8);
+    const orb = new THREE.Mesh(R3.geo.sphere(1, 14), core);
+    orb.castShadow = false;
+    const g = new THREE.Group(); g.add(orb);
+    const n = qCount(12);
+    const mats = [core, rim];
+    const parts = [];
+    for (let i = 0; i < n; i++) {
+      const mesh = new THREE.Mesh(R3.geo.sphere(1, 6), rim);
+      mesh.castShadow = false;
+      g.add(mesh);
+      const a = Math.random() * Math.PI * 2, r = 0.9 + Math.random() * 0.6;
+      parts.push({ mesh: mesh, a0: new THREE.Vector3(target.x + Math.sin(a) * r, target.y + (Math.random() - 0.5) * 0.8, target.z + Math.cos(a) * r) });
+    }
+    spawnFx({
+      group: g, mats: mats, life: 0.6,
+      update: function (p) {
+        const suck = R3.easeInOut(Math.min(1, p / 0.55));
+        orb.position.copy(target);
+        orb.scale.setScalar(p < 0.55 ? R3.lerp(0.05, 0.5, suck) : R3.lerp(0.5, 1.6, (p - 0.55) / 0.45));
+        core.opacity = p < 0.55 ? 0.9 : Math.max(0, 0.9 * (1 - (p - 0.55) / 0.45));
+        parts.forEach(function (q) {
+          q.mesh.position.lerpVectors(q.a0, target, suck);
+          q.mesh.scale.setScalar(R3.lerp(0.05, 0.015, suck));
+        });
+        rim.opacity = p < 0.55 ? 0.8 * suck : Math.max(0, 0.8 * (1 - (p - 0.55) / 0.45));
+      },
+    });
+    fxRing(target, color, 1.7, false);
+  }
+
+  /** time — des anneaux translucides pulsent en écho, une aiguille tourne. */
+  function fxTime(origin, target, color) {
+    const n = 3;
+    const mats = [];
+    const g = new THREE.Group();
+    const rings = [];
+    for (let i = 0; i < n; i++) {
+      const m = fxMat(color, true, 0.6);
+      mats.push(m);
+      const mesh = new THREE.Mesh(ownGeo('fx-ring-thin', function () { return new THREE.TorusGeometry(1, 0.035, 6, 28); }), m);
+      mesh.rotation.x = Math.PI / 2 + (Math.random() - 0.5) * 0.5;
+      mesh.position.copy(target);
+      mesh.castShadow = false;
+      g.add(mesh);
+      rings.push({ mesh: mesh, mat: m, delay: i * 0.14 });
+    }
+    const handM = fxMat('#ffffff', true, 0.9);
+    mats.push(handM);
+    const hand = new THREE.Mesh(R3.geo.box(0.42, 0.03, 0.03), handM);
+    hand.position.copy(target);
+    hand.castShadow = false;
+    g.add(hand);
+    spawnFx({
+      group: g, mats: mats, life: 0.75,
+      update: function (p) {
+        const t = p * 0.75;
+        rings.forEach(function (q) {
+          const lp = R3.clamp01((t - q.delay) / 0.5);
+          q.mesh.scale.setScalar(0.15 + lp * 1.3);
+          q.mat.opacity = 0.6 * (1 - lp);
+        });
+        hand.rotation.z = p * 18;
+        handM.opacity = 0.9 * (1 - p);
+      },
+    });
+    fxImpact(target, color);
+  }
+
+  /** leaf — une bourrasque de feuilles tourbillonne autour de la cible. */
+  function fxLeaf(origin, target, color) {
+    const n = qCount(12);
+    const mats = [];
+    const g = new THREE.Group();
+    const parts = [];
+    for (let i = 0; i < n; i++) {
+      const m = fxMat(color, false, 1);
+      mats.push(m);
+      const mesh = new THREE.Mesh(R3.geo.plane(0.16, 0.09), m);
+      mesh.castShadow = false;
+      g.add(mesh);
+      const a0 = Math.random() * Math.PI * 2;
+      parts.push({ mesh: mesh, mat: m, a0: a0, r: 0.5 + Math.random() * 0.6, y0: Math.random() * 1.1, sp: 3 + Math.random() * 3 });
+    }
+    spawnFx({
+      group: g, mats: mats, life: 0.75,
+      update: function (p) {
+        const t = p * 0.75;
+        parts.forEach(function (q) {
+          const a = q.a0 + t * q.sp;
+          q.mesh.position.set(
+            target.x + Math.sin(a) * q.r * (1 - p * 0.3),
+            target.y + q.y0 - p * 0.4,
+            target.z + Math.cos(a) * q.r * (1 - p * 0.3)
+          );
+          q.mesh.rotation.set(a, a * 1.3, a * 0.6);
+          q.mat.opacity = 1 - p * p;
+        });
+      },
+    });
+    fxImpact(target, color);
+  }
+
+  /** flame — un jet de flammes court de l'attaquant à la cible. */
+  function fxFlame(origin, target, color) {
+    const n = qCount(14);
+    const mats = [];
+    const g = new THREE.Group();
+    const parts = [];
+    for (let i = 0; i < n; i++) {
+      const m = fxMat(i % 3 === 0 ? '#ffe27a' : color, true, 1);
+      mats.push(m);
+      const mesh = new THREE.Mesh(R3.geo.sphere(1, 8), m);
+      mesh.castShadow = false;
+      g.add(mesh);
+      parts.push({ mesh: mesh, mat: m, u: i / n, off: (Math.random() - 0.5) * 0.3 });
+    }
+    spawnFx({
+      group: g, mats: mats, life: 0.45,
+      update: function (p) {
+        parts.forEach(function (q) {
+          const along = R3.clamp01(p * 1.6 - q.u * 0.5);
+          const pos = origin.clone().lerp(target, Math.min(1, q.u + p * 0.8));
+          pos.x += q.off; pos.y += Math.sin(p * 8 + q.u * 6) * 0.08 + along * 0.15;
+          q.mesh.position.copy(pos);
+          q.mesh.scale.setScalar(0.09 + along * 0.1);
+          q.mat.opacity = along * (1 - p * 0.6);
+        });
+      },
+    });
+    fxImpact(target, color);
+  }
+
+  /** bubble — un chapelet de bulles flotte jusqu'à la cible puis éclate. */
+  function fxBubble(origin, target, color) {
+    const n = qCount(12);
+    const mats = [];
+    const g = new THREE.Group();
+    const parts = [];
+    for (let i = 0; i < n; i++) {
+      const m = fxMat(color, false, 0.55);
+      mats.push(m);
+      const mesh = new THREE.Mesh(R3.geo.sphere(1, 10), m);
+      mesh.castShadow = false;
+      g.add(mesh);
+      parts.push({ mesh: mesh, mat: m, u: i / n, r: 0.05 + Math.random() * 0.05, side: (Math.random() - 0.5) * 0.5 });
+    }
+    spawnFx({
+      group: g, mats: mats, life: 0.65,
+      update: function (p) {
+        parts.forEach(function (q) {
+          const t = R3.clamp01(p * 1.3 - q.u * 0.3);
+          const pos = origin.clone().lerp(target, t);
+          pos.y += Math.sin(t * Math.PI) * 0.5 + q.side * t;
+          q.mesh.position.copy(pos);
+          q.mesh.scale.setScalar(q.r * (1 + Math.sin(p * 20 + q.u * 5) * 0.06));
+          q.mat.opacity = 0.55 * (1 - p * p);
+        });
+      },
+    });
+    fxRing(target, color, 1.1, false);
+  }
+
+  /** bolt — un éclair en zigzag, instantané, avec un double flash. */
+  function fxBolt(origin, target, color) {
+    const segs = 6;
+    const pts = [];
+    for (let i = 0; i <= segs; i++) {
+      const u = i / segs;
+      const p = origin.clone().lerp(target, u);
+      if (i > 0 && i < segs) {
+        p.x += (Math.random() - 0.5) * 0.35;
+        p.y += (Math.random() - 0.5) * 0.35;
+      }
+      pts.push(p);
+    }
+    const m = fxMat(color, true, 1);
+    const g = new THREE.Group();
+    const meshes = [];
+    for (let i = 0; i < segs; i++) {
+      const a = pts[i], b = pts[i + 1];
+      const len = Math.max(0.02, a.distanceTo(b));
+      const mesh = new THREE.Mesh(R3.geo.cyl(0.028, 0.028, 1, 5), m);
+      mesh.scale.set(1, len, 1);
+      mesh.position.copy(a).lerp(b, 0.5);
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
+      mesh.castShadow = false;
+      g.add(mesh); meshes.push(mesh);
+    }
+    spawnFx({
+      group: g, mats: [m], life: 0.28,
+      update: function (p) {
+        const flick = (p < 0.12 || (p > 0.35 && p < 0.45)) ? 1 : 0.35;
+        m.opacity = flick * (1 - Math.max(0, (p - 0.5) / 0.5));
+        meshes.forEach(function (mesh) { mesh.visible = m.opacity > 0.03; });
+      },
+      onEnd: function () { fxImpact(target, color); },
+    });
+  }
+
+  /** wind — des arcs de vent balaient la cible, quelques étincelles emportées. */
+  function fxWind(origin, target, color) {
+    const n = 4;
+    const mats = [];
+    const g = new THREE.Group();
+    const arcs = [];
+    for (let i = 0; i < n; i++) {
+      const m = fxMat(color, true, 0.75);
+      mats.push(m);
+      const mesh = new THREE.Mesh(ownGeo('fx-windarc', function () { return new THREE.TorusGeometry(1, 0.045, 6, 20, Math.PI * 0.85); }), m);
+      mesh.position.copy(target);
+      mesh.rotation.y = Math.random() * Math.PI * 2;
+      mesh.castShadow = false;
+      g.add(mesh);
+      arcs.push({ mesh: mesh, mat: m, delay: i * 0.06, dir: (i % 2 === 0) ? 1 : -1, s0: 0.3 + i * 0.15 });
+    }
+    spawnFx({
+      group: g, mats: mats, life: 0.5,
+      update: function (p) {
+        const t = p * 0.5;
+        arcs.forEach(function (q) {
+          const lp = R3.clamp01((t - q.delay) / 0.32);
+          q.mesh.scale.setScalar(q.s0 + lp * 1.1);
+          q.mesh.rotation.z += q.dir * 0.25;
+          q.mat.opacity = 0.75 * (1 - lp);
+        });
+      },
+    });
+    fxSparks(target, 8, color, 1.6);
+  }
+
+  /** rock — des blocs de pierre volent vers la cible puis un nuage de poussière. */
+  function fxRock(origin, target, color) {
+    const n = qCount(8);
+    const mats = [];
+    const g = new THREE.Group();
+    const parts = [];
+    for (let i = 0; i < n; i++) {
+      const m = fxMat(color, false, 1);
+      mats.push(m);
+      const mesh = new THREE.Mesh(R3.geo.box(0.14, 0.14, 0.14), m);
+      mesh.castShadow = false;
+      g.add(mesh);
+      const from = origin.clone();
+      from.x += (Math.random() - 0.5) * 0.6; from.y += Math.random() * 0.4;
+      parts.push({ mesh: mesh, mat: m, from: from, spin: (Math.random() - 0.5) * 10 });
+    }
+    spawnFx({
+      group: g, mats: mats, life: 0.42,
+      update: function (p) {
+        parts.forEach(function (q) {
+          const pos = q.from.clone().lerp(target, R3.easeOut(p));
+          pos.y += Math.sin(p * Math.PI) * 0.6;
+          q.mesh.position.copy(pos);
+          q.mesh.rotation.x += q.spin * 0.02; q.mesh.rotation.y += q.spin * 0.02;
+          q.mat.opacity = 1 - p * p;
+        });
+      },
+      onEnd: function () { fxImpact(target, color); fxSmoke(target, 8); },
+    });
+  }
+
+  // Table des 18 identifiants -> fonction. `heal` n'y figure pas : il est
+  // traité à part dans playFx() car sa cible est l'attaquant lui-même.
+  const FX_TABLE = {
+    slash: fxSlash, beam: fxBeam, ball: fxBall, wave: fxWave, burst: fxBurst,
+    storm: fxStorm, quake: fxQuake, ice: fxIce, star: fxStar, 'void': fxVoid,
+    time: fxTime, leaf: fxLeaf, flame: fxFlame, bubble: fxBubble, bolt: fxBolt,
+    wind: fxWind, rock: fxRock,
+  };
+
+  function dispatchFx(fxId, origin, target, color) {
+    const fn = FX_TABLE[fxId];
+    if (fn) {
+      try { fn(origin, target, color); return; } catch (e) { console.warn('[battle3d] effet en échec :', fxId, e); }
+    }
+    fxImpact(target, color);   // repli : un fx inconnu (ou en échec) reste visible
+  }
+
+  (function selfCheckFx() {
+    try {
+      const REQUIRED = ['slash', 'beam', 'ball', 'wave', 'burst', 'heal', 'storm', 'quake',
+        'ice', 'star', 'void', 'time', 'leaf', 'flame', 'bubble', 'bolt', 'wind', 'rock'];
+      const missing = REQUIRED.filter(function (id) { return id !== 'heal' && !FX_TABLE[id]; });
+      if (missing.length && typeof console !== 'undefined' && console.warn) {
+        console.warn('[battle3d] effets manquants dans FX_TABLE : ' + missing.join(', '));
+      }
+    } catch (e) { /* pas bloquant */ }
+  })();
+
+  // ===========================================================================
+  //  CRÉATURES — construction / reconstruction d'un camp
+  // ===========================================================================
+
+  /** Résout légende, types et couleur d'un Mon via dex3d, avec repli tolérant. */
+  function speciesInfoFor(mon) {
+    let legendary = false, color = null, types = (mon && mon.types) || null;
+    const dex = R3.get('dex');
+    if (dex) {
       try {
-        const g = actors.buildPlayer();
-        if (g) { g.userData.fromActors = true; humanModel = g; return g; }
-      } catch (e) { console.warn('[battle3d] buildPlayer indisponible :', e); }
+        const id = mon && mon.id;
+        legendary = !!dex.isLegendary(id);
+        const sp = dex.get ? dex.get(id) : null;
+        if (sp) { types = sp.types || types; color = sp.color || null; }
+      } catch (e) { /* dex indisponible ou id inconnu : on reste sur le repli */ }
     }
-    humanModel = fallbackHuman();
-    return humanModel;
+    return { legendary: legendary, types: types || [], color: color };
   }
 
   function attachModel(side, model, scale, blobR) {
@@ -871,36 +1498,83 @@
     model.position.set(0, 0, 0);
     model.userData.baseY = 0;
     side.pivot.add(model);
-    side.pivot.scale.setScalar(scale);
+    const br = blobR || 0.45 * scale;
     if (!side.blob) {
-      side.blob = contactBlob(blobR || 0.45 * scale);
+      side.blob = contactBlob(br);
       side.blob.position.set(0, 0.012, 0);
       side.holder.add(side.blob);
+    } else {
+      side.blob.scale.set(br * 2, br * 2, 1);
     }
   }
 
-  function pushHud() {
-    const hud = R3.get('hud');
-    if (!hud || !bs || !bs.isTrainer || typeof hud.setHP !== 'function') return;
-    try {
-      const pc = resolvePlayerCreature(bs);
-      hud.setHP('foe', bs.trainerHp, bs.trainerMaxHp, bs.trainerCreature && bs.trainerCreature.name);
-      hud.setHP('player', bs.playerHp, bs.playerMaxHp, pc && pc.name);
-    } catch (e) { /* le HUD gère ses propres soucis */ }
+  /**
+   * (Re)construit le modèle 3D d'un camp à partir d'un Mon (team3d).
+   * Utilisé à l'entrée en combat ET par swapIn() pour changer de créature.
+   * `opts.skipIntro` : ne relance pas le pop d'apparition (swapIn gère lui-même
+   * sa propre animation d'apparition, voir updateSwap).
+   */
+  function rebuildSide(s, mon, sideKey, opts) {
+    opts = opts || {};
+    if (s.model) { R3.disposeTree(s.model); s.model = null; }
+    if (s.auraGroup) { if (s.auraGroup.parent) s.auraGroup.parent.remove(s.auraGroup); s.auraGroup = null; }
+
+    const info = speciesInfoFor(mon);
+    s.mon = mon || null;
+    s.legendary = info.legendary;
+    s.phase = Math.random() * 6.28;
+
+    const baseScale = sideKey === 'foe' ? FOE_SCALE : PLR_SCALE;
+    const model = R3.buildCreature((mon && mon.id) || 'feuillou');
+    let scaleMult = info.legendary ? LEGEND_SCALE_MULT : 1;
+    // Tant que les 36 légendaires ne sont pas tous modélisés, buildCreature()
+    // renvoie une silhouette de repli minuscule pour ceux qui manquent : on la
+    // gonfle nettement pour que « ça en impose » quand même (voir §4 du contrat).
+    if (info.legendary && model.userData.placeholder) scaleMult *= LEGEND_PLACEHOLDER_BOOST;
+    attachModel(s, model, baseScale * scaleMult, 0.42 * baseScale * scaleMult);
+
+    const plat = sideKey === 'foe' ? foePlat : plrPlat;
+    if (plat) {
+      const pm = info.legendary ? LEGEND_PLAT_MULT : 1;
+      plat.scale.set(pm, 1, pm);   // jamais l'axe Y : la hauteur du plateau ne bouge pas
+    }
+
+    s.introDur = info.legendary ? 2.4 : 1.2;
+
+    if (info.legendary) {
+      const LL = R3.get('llib');
+      const T = R3.get('types');
+      const c = (T && T.color && info.types[0]) ? T.color(info.types[0]) : (info.color || '#ffe066');
+      if (LL && LL.aura) {
+        try {
+          s.auraGroup = LL.aura(c, 0.9, { shape: 'sphere' });
+          s.pivot.add(s.auraGroup);
+        } catch (e) { s.auraGroup = null; }
+      }
+    }
+
+    s.holder.traverse(function (o) { if (o.isMesh && o !== s.blob) { o.castShadow = true; o.receiveShadow = true; } });
+
+    if (opts.skipIntro) {
+      s.introDone = true;
+    } else {
+      s.introDone = false; s.introT = 0; s.introFxDone = false; s.shrink = 0.001;
+    }
   }
+
+  // ===========================================================================
+  //  ENTRÉE / SORTIE
+  // ===========================================================================
 
   function enter(battleState, biome) {
     if (scene) exit();
 
     bs = battleState || null;
-    biomeCur = biome || 'plain';
+    biomeCur = biome || (bs && bs.biome) || 'plain';
     const a = arena(biomeCur);
     const mood = R3.biomeMood(biomeCur);
 
-    time = 0; camShake = 0; wildT = 0; lastShakeIdx = -1;
-    suctionDone = false; resultDone = false; sparkleTimer = 0;
-    explicitMoves = false;
-    evQueue.length = 0;
+    time = 0; camShake = 0; resultDone = false; ballAnim = null;
 
     scene = new THREE.Scene();
     scene.background = new THREE.Color(a.mid);
@@ -947,54 +1621,35 @@
 
     // --- plateformes ---
     const platKind = a.plat;
-    const foePlat = buildPlatform(platKind, FOE_PLAT_R, FOE_PLAT_H);
+    foePlat = buildPlatform(platKind, FOE_PLAT_R, FOE_PLAT_H);
     foePlat.position.set(FOE_POS.x, 0, FOE_POS.z);
     foePlat.traverse(function (o) { if (o.isMesh) o.receiveShadow = true; });
     scene.add(foePlat);
 
-    const plrPlat = buildPlatform(platKind, PLR_PLAT_R, PLR_PLAT_H);
+    plrPlat = buildPlatform(platKind, PLR_PLAT_R, PLR_PLAT_H);
     plrPlat.position.set(PLR_POS.x, 0, PLR_POS.z);
     plrPlat.traverse(function (o) { if (o.isMesh) o.receiveShadow = true; });
     scene.add(plrPlat);
 
-    // --- les deux camps ---
+    // --- les deux camps : TOUJOURS des créatures, jamais le dresseur.
     // L'adversaire regarde vers le joueur (donc à peu près vers la caméra),
-    // le camp du joueur nous tourne le dos.
+    // le camp du joueur nous tourne le dos (« vu de dos », contrat §17).
     foe = makeSide(FOE_POS, FOE_TOP, -0.30);
     plr = makeSide(PLR_POS, PLR_TOP, 2.78);
     scene.add(foe.holder, plr.holder);
 
-    const isTrainer = !!(bs && bs.isTrainer);
-    const foeCreature = bs ? (isTrainer ? bs.trainerCreature : bs.creature) : null;
-    const foeId = foeCreature && foeCreature.id;
-    attachModel(foe, R3.buildCreature(foeId || 'feuillou'), FOE_SCALE, 0.42 * FOE_SCALE);
+    rebuildSide(foe, bs && bs.foe && bs.foe.mon, 'foe');
+    rebuildSide(plr, bs && bs.player && bs.player.mon, 'player');
 
-    if (isTrainer) {
-      const pc = resolvePlayerCreature(bs);
-      attachModel(plr, R3.buildCreature((pc && pc.id) || 'feuillou'), PLR_SCALE, 0.42 * PLR_SCALE);
-    } else {
-      plr.human = true;
-      attachModel(plr, buildHuman(), HUMAN_SCALE, 0.30 * HUMAN_SCALE);
-    }
-    [foe, plr].forEach(function (s) {
-      s.holder.traverse(function (o) {
-        if (o.isMesh && o !== s.blob) { o.castShadow = true; o.receiveShadow = true; }
-      });
-    });
-
-    // --- pokéball (combat sauvage uniquement) ---
+    // --- pokéball (capture pendant le combat) : cachée tant que throwBall()
+    // n'a pas été appelé — rien ne tient de ball en main, il n'y a plus de
+    // personnage humain visible dans cette scène.
     ball = buildPokeball();
     ballRest.set(FOE_POS.x, FOE_TOP + BALL_R, FOE_POS.z);
-    ballHand.set(PLR_POS.x + 0.45, PLR_TOP + 0.95, PLR_POS.z + 0.30);
+    ballHand.set(PLR_POS.x + 0.4, PLR_TOP + 2.1, PLR_POS.z + 0.9);
     ball.position.copy(ballHand);
-    ball.visible = !isTrainer;
+    ball.visible = false;
     scene.add(ball);
-
-    if (isTrainer) {
-      lastFoeHp = bs.trainerHp | 0;
-      lastPlrHp = bs.playerHp | 0;
-      pushHud();
-    }
 
     // Cadrage initial (au cas où onResize ne serait pas encore passé)
     if (typeof window !== 'undefined') onResize(window.innerWidth, window.innerHeight);
@@ -1007,13 +1662,12 @@
     // Tout le décor de l'arène est bâti avec les géométries PARTAGÉES de R3 (ou
     // celles de ownGeo, marquées `shared`) : il n'y a rien à libérer de ce
     // côté-là. Les seules géométries propres au combat sont celles des modèles
-    // de créatures ; R3.disposeTree() sait reconnaître ce qui est partagé.
+    // de créatures et des auras ; R3.disposeTree() sait reconnaître ce qui est
+    // partagé (llib et R3 partagent tous deux le même cache de géométries).
     [foe, plr].forEach(function (s) {
       if (!s) return;
-      // On ne détruit JAMAIS le personnage humain : il est réutilisé d'un combat
-      // à l'autre et partage ses géométries avec le joueur du monde et les PNJ.
-      if (s.model && s.model !== humanModel) R3.disposeTree(s.model);
-      else if (s.model && s.model.parent) s.model.parent.remove(s.model);
+      if (s.model) R3.disposeTree(s.model);
+      if (s.auraGroup) R3.disposeTree(s.auraGroup);
       if (s.blob && s.blob.material) s.blob.material.dispose();
     });
 
@@ -1022,7 +1676,7 @@
     scene = null; camera = null;
     sunLight = rimLight = hemiLight = punchLight = null;
     cloudRing = null; ball = null; foe = null; plr = null; bs = null;
-    evQueue.length = 0;
+    foePlat = null; plrPlat = null; ballAnim = null;
   }
 
   function onResize(w, h) {
@@ -1045,10 +1699,14 @@
 
   function updateCamera(dts) {
     // Travelling : arrivée en douceur puis lente respiration autour de l'arène.
-    const e = R3.easeOut(R3.clamp01(time / 1.2));
+    // Un légendaire (de l'un ou l'autre camp) recule la caméra et allonge
+    // l'entrée en scène : « il doit occuper l'écran ».
+    const introDur = Math.max((foe && foe.introDur) || 1.2, ((plr && plr.introDur) || 1.2) * 0.6, 1.2);
+    const pull = (foe && foe.legendary ? 1.5 : 0) + (plr && plr.legendary ? 0.5 : 0);
+    const e = R3.easeOut(R3.clamp01(time / introDur));
     const ang = R3.lerp(0.34, -0.05, e) + Math.sin(time * 0.155) * 0.10;
-    const rad = R3.lerp(10.6, 7.55, e) + Math.sin(time * 0.11) * 0.18;
-    const hgt = R3.lerp(5.0, 2.72, e) + Math.sin(time * 0.23) * 0.08;
+    const rad = R3.lerp(10.6 + pull, 7.55 + pull, e) + Math.sin(time * 0.11) * 0.18;
+    const hgt = R3.lerp(5.0 + pull * 0.3, 2.72 + pull * 0.35, e) + Math.sin(time * 0.23) * 0.08;
 
     camShake = Math.max(0, camShake - dts * 0.85);
     const sx = (Math.random() - 0.5) * camShake, sy = (Math.random() - 0.5) * camShake;
@@ -1060,25 +1718,94 @@
     if (cloudRing) cloudRing.rotation.y += dts * 0.006;
   }
 
-  /** Animations communes : respiration, attaque, recul, K.O., aspiration. */
+  /** Pop d'apparition à l'entrée en combat (et après un swapIn). */
+  function updateIntro(s, dts) {
+    s.introT += dts;
+    const p = R3.clamp01(s.introT / s.introDur);
+    s.shrink = R3.easeOut(p);
+    if (s.legendary && !s.introFxDone && p > 0.7) {
+      s.introFxDone = true;
+      const c = new THREE.Vector3(s.base.x, s.holder.position.y + 0.8 * s.scale, s.base.z);
+      fxRing(c, '#ffe27a', 2.1, false);
+      fxSparks(c, 16, '#fff3c8', 1.8);
+      camShake = Math.max(camShake, 0.18);
+    }
+    if (p >= 1) { s.shrink = 1; s.introDone = true; }
+  }
+
+  /** Changement de créature (swapIn) : la sortante rentre « dans sa ball »
+   *  (rotation + rétrécissement + gerbe blanche), puis la nouvelle jaillit
+   *  avec une gerbe d'étoiles dorées — reconstruite via rebuildSide(). */
+  function updateSwap(s, dts) {
+    const sw = s.swap;
+    sw.t += dts;
+    if (sw.phase === 'out') {
+      const dur = 0.5;
+      const p = R3.clamp01(sw.t / dur);
+      s.shrink = 1 - R3.easeInOut(p);
+      s.pivot.rotation.y += dts * 10;
+      if (!sw.puffDone && p > 0.08) {
+        sw.puffDone = true;
+        const c = new THREE.Vector3(s.base.x, s.holder.position.y + 0.4 * s.scale, s.base.z);
+        fxRing(c, '#ffffff', 1.1, false);
+        fxSparks(c, 10, '#ffe9b8', 1.2);
+      }
+      if (p >= 1) {
+        rebuildSide(s, sw.nextMon, sideKeyOf(s), { skipIntro: true });
+        sw.phase = 'in'; sw.t = 0; sw.puffDone = false;
+        s.shrink = 0.001;
+      }
+    } else {
+      const dur = 0.55;
+      const p = R3.clamp01(sw.t / dur);
+      s.shrink = R3.easeOut(p);
+      if (!sw.starsDone && p > 0.03) {
+        sw.starsDone = true;
+        const c = new THREE.Vector3(s.base.x, s.holder.position.y + 0.5 * s.scale, s.base.z);
+        fxStars(c, 18);
+        fxRing(c, '#ffe27a', 1.6, false);
+      }
+      if (p >= 1) { s.shrink = 1; s.swap = null; }
+    }
+  }
+
+  /** Animations communes : intro, changement, attaque, recul, K.O., respiration. */
   function updateSide(s, dts) {
     if (!s || !s.model) return;
     const t = R3.clock.t;
 
+    if (s.swap) {
+      updateSwap(s, dts);
+      s.holder.visible = s.visible && s.shrink > 0.02;
+      if (s.blob) s.blob.material.opacity = 0.28 * s.shrink;
+      s.pivot.scale.setScalar(s.scale * s.shrink);
+      if (s.auraGroup) {
+        s.auraGroup.visible = s.shrink > 0.05;
+        const LL = R3.get('llib');
+        if (LL && LL.animateAura) { try { LL.animateAura(s.auraGroup, t); } catch (e) { /* rien de bloquant */ } }
+      }
+      return;
+    }
+
+    if (!s.introDone) updateIntro(s, dts);
+
     s.holder.visible = s.visible && s.shrink > 0.02;
     if (s.blob) s.blob.material.opacity = 0.28 * s.shrink;
 
-    // --- attaque ---
+    // --- attaque (ou soin, déclenchés par notifyMove) ---
     let attacking = false;
     if (s.atkT >= 0) {
       s.atkT += dts;
       const p = R3.clamp01(s.atkT / s.atkDur);
       attacking = true;
-      // élan : on bondit vers l'adversaire puis on revient
-      const push = p < 0.4 ? R3.easeOut(p / 0.4) : 1 - R3.easeInOut((p - 0.4) / 0.6);
-      s.pivot.position.set(0, Math.sin(p * Math.PI) * 0.18, 0);
-      s.holder.position.x = s.base.x + s.atkDir.x * 0.62 * push;
-      s.holder.position.z = s.base.z + s.atkDir.z * 0.62 * push;
+      const isHeal = s.atkIsHeal;
+      // élan : on bondit vers l'adversaire puis on revient (pas de bond pour un soin)
+      const push = isHeal ? 0 : (p < 0.4 ? R3.easeOut(p / 0.4) : 1 - R3.easeInOut((p - 0.4) / 0.6));
+      s.pivot.position.set(0, Math.sin(p * Math.PI) * (isHeal ? 0.10 : 0.18), 0);
+      if (!isHeal) {
+        s.holder.position.x = s.base.x + s.atkDir.x * 0.62 * push;
+        s.holder.position.z = s.base.z + s.atkDir.z * 0.62 * push;
+      }
 
       const model = s.model;
       if (typeof model.userData.attack === 'function') {
@@ -1086,21 +1813,23 @@
         catch (e) { attacking = false; }
       } else {
         // repli générique : la créature se penche en avant et se ramasse
-        model.rotation.x = -Math.sin(p * Math.PI) * 0.45;
-        const sq = 1 + Math.sin(p * Math.PI) * 0.10;
+        model.rotation.x = -Math.sin(p * Math.PI) * (isHeal ? 0.12 : 0.45);
+        const sq = 1 + Math.sin(p * Math.PI) * (isHeal ? 0.06 : 0.10);
         model.scale.set(1 / Math.sqrt(sq), sq, 1 / Math.sqrt(sq));
       }
 
       if (!s.impactDone && p >= 0.40) {
         s.impactDone = true;
-        const D = s.atkTarget;
-        if (D) {
-          const c = new THREE.Vector3(D.base.x, D.holder.position.y + 0.75 * D.scale, D.base.z);
-          fxImpact(c, '#fff0c8');
-          D.hitT = 0;
-          D.hitDir.copy(s.atkDir);
+        if (isHeal) {
+          playFx(sideKeyOf(s), s.atkMove);
+        } else if (s.atkTarget) {
+          playFx(sideKeyOf(s), s.atkMove);
+          s.atkTarget.hitT = 0;
+          s.atkTarget.hitDir.copy(s.atkDir);
         }
       }
+      if (bs && bs.anim && bs.anim.side === sideKeyOf(s)) bs.anim.progress = p;
+
       if (p >= 1) {
         s.atkT = -1;
         s.holder.position.x = s.base.x;
@@ -1109,9 +1838,10 @@
         if (typeof s.model.userData.attack === 'function') {
           try { s.model.userData.attack(s.model, 0); } catch (e) { /* pose de repos */ }
         } else {
-          s.model.rotation.x = 0;
+          s.model.rotation.x = 0; s.model.scale.set(1, 1, 1);
         }
         attacking = false;
+        if (bs && bs.anim && bs.anim.side === sideKeyOf(s)) bs.anim.progress = 1;
       }
     }
 
@@ -1143,130 +1873,117 @@
 
     // --- respiration / flottement (si rien d'autre ne joue) ---
     if (!attacking) {
-      if (s.human) {
-        // Si actors3d est là, on lui laisse animer le personnage (dir 'down' :
-        // c'est le porteur qui l'oriente, on ne veut pas qu'il se retourne).
-        const actors = s.model.userData.fromActors ? R3.get('actors') : null;
-        if (actors && typeof actors.updatePlayer === 'function') {
-          try { actors.updatePlayer(s.model, { moving: false, moveProgress: 0, dir: 'down', t: t }); }
-          catch (e) { s.model.userData.fromActors = false; }
-        } else {
-          // le dresseur respire simplement et se balance à peine
-          const b = 1 + Math.sin(t * 2.0 + s.phase) * 0.025;
-          s.model.scale.set(1 / Math.sqrt(b), b, 1 / Math.sqrt(b));
-          s.model.rotation.z = Math.sin(t * 0.9 + s.phase) * 0.02;
-        }
-      } else {
-        R3.idleCreature(s.model, t, s.phase);
-      }
+      R3.idleCreature(s.model, t, s.phase);
       s.pivot.rotation.z = R3.damp(s.pivot.rotation.z, 0, 0.001, dts);
     }
 
-    // --- aspiration dans la pokéball ---
+    // --- aura d'un légendaire ---
+    if (s.auraGroup) {
+      const LL = R3.get('llib');
+      if (LL && LL.animateAura) { try { LL.animateAura(s.auraGroup, t); } catch (e) { /* rien de bloquant */ } }
+    }
+
+    // --- rétrécissement (fin d'intro / éventuel effet à venir) ---
     s.pivot.scale.setScalar(s.scale * s.shrink);
     if (s.shrink < 1) s.pivot.rotation.y += dts * 9 * (1 - s.shrink);
     else s.pivot.rotation.y = R3.damp(s.pivot.rotation.y, 0, 0.002, dts);
   }
 
   // ---------------------------------------------------------------------------
-  //  COMBAT SAUVAGE — mêmes phases et mêmes durées que le jeu 2D
+  //  CAPTURE PENDANT LE COMBAT — throwBall()
+  //  Timings identiques au jeu 2D et au contrat : lancer 0→600 ms, secousses
+  //  600→1800 ms (3 cycles de 400 ms), résultat à 1800 ms. Le déroulé écrit sa
+  //  progression dans battleState.ball pour que hud3d puisse en tenir compte.
   // ---------------------------------------------------------------------------
-  function updateWild(dts) {
-    const ph = bs.phase;
 
-    if (ph === 'intro' || ph === 'await') {
-      // La ball attend dans la main du joueur, elle tourne doucement.
-      wildT = 0; lastShakeIdx = -1;
-      suctionDone = false; resultDone = false;
-      ball.visible = true;
-      setBallOpen(0);
-      setBallLit(false);
-      ball.position.set(ballHand.x, ballHand.y + Math.sin(R3.clock.t * 2.2) * 0.03, ballHand.z);
-      ball.rotation.set(0.18, R3.clock.t * 0.7, 0);
+  function throwBall(chance, cb) {
+    if (!scene || !foe) { if (cb) cb('escaped'); return; }
+    if (ballAnim && ballAnim.active) return;   // un seul lancer à la fois
+    const c = (typeof chance === 'number' && isFinite(chance)) ? R3.clamp01(chance) : 0.3;
+    ballAnim = {
+      active: true, t: 0, chance: c, cb: cb, result: null,
+      suctionDone: false, resultDone: false, lastShakeIdx: -1, sparkleTimer: 0, done: false,
+    };
+    ball.visible = true;
+    setBallOpen(ball, 0);
+    setBallLit(ball, false);
+    ball.scale.setScalar(1);
+    ball.position.copy(ballHand);
+    ball.rotation.set(0, 0, 0);
+    if (bs) bs.ball = { active: true, progress: 0, shakeIndex: 0, result: null };
+  }
+
+  function updateBall(dts) {
+    if (!ballAnim || !ballAnim.active) return;
+    const A = ballAnim;
+    A.t += dts * 1000;
+    ball.visible = true;
+
+    if (A.t < T_THROW) {
+      // ----- parabole 0 → 600 ms, rotation rapide -----
+      const p = A.t / T_THROW;
+      ball.position.lerpVectors(ballHand, ballRest, p);
+      ball.position.y += Math.sin(p * Math.PI) * 2.15;
+      ball.rotation.x -= dts * 21;
+      ball.rotation.z -= dts * 8;
       foe.shrink = 1;
       foe.visible = true;
-      return;
-    }
-
-    if (ph === 'throw') {
-      wildT += dts * 1000;
-      ball.visible = true;
-
-      if (wildT < T_THROW) {
-        // ----- parabole 0 → 600 ms, rotation rapide -----
-        const p = wildT / T_THROW;
-        ball.position.lerpVectors(ballHand, ballRest, p);
-        ball.position.y += Math.sin(p * Math.PI) * 2.15;
-        ball.rotation.x -= dts * 21;
-        ball.rotation.z -= dts * 8;
-        // le joueur se penche dans son lancer
-        if (plr.human) plr.pivot.rotation.x = -Math.sin(R3.clamp01(p * 2) * Math.PI) * 0.22;
-        foe.shrink = 1;
-        foe.visible = true;
-      } else if (wildT < T_RESULT) {
-        // ----- atterrissage + aspiration + 3 secousses de 400 ms -----
-        if (!suctionDone) {
-          suctionDone = true;
-          const cc = new THREE.Vector3(FOE_POS.x, FOE_TOP + 0.55, FOE_POS.z);
-          fxSuction(cc, ballRest);
-          fxRing(new THREE.Vector3(FOE_POS.x, FOE_TOP + 0.05, FOE_POS.z), '#ffe9b8', 1.9);
-          fxSparks(ballRest, 12, '#ffd9a0', 1.4);
-          camShake = 0.2;
-          if (punchLight) { punchLight.position.copy(ballRest); punchLight.intensity = 2.6; punchLight.color.set('#ffd9a0'); }
-        }
-        if (plr.human) plr.pivot.rotation.x = R3.damp(plr.pivot.rotation.x, 0, 0.002, dts);
-
-        // la créature est happée en 0,22 s
-        const st = wildT - T_THROW;
-        foe.shrink = R3.clamp01(1 - st / 220);
-        if (foe.shrink <= 0.02) foe.visible = false;
-
-        const idx = Math.floor(st / 400);
-        const sp = st % 400;
-        if (idx !== lastShakeIdx) {
-          lastShakeIdx = idx;
-          if (idx > 0) {
-            fxSparks(new THREE.Vector3(ballRest.x, ballRest.y + 0.12, ballRest.z), 5, '#ffe27a', 0.9);
-            setBallLit(true);
-          }
-        }
-        // Secousse : 300 ms de balancement, 100 ms de repos, direction alternée.
-        let tilt = 0, hop = 0;
-        if (sp < 300) {
-          const q = sp / 300;
-          const dir = (idx % 2 === 0) ? -1 : 1;
-          tilt = dir * 0.44 * Math.sin(q * Math.PI);
-          hop = Math.sin(q * Math.PI) * 0.055;
-        } else {
-          setBallLit(false);
-        }
-        ball.position.set(ballRest.x, ballRest.y + hop, ballRest.z);
-        ball.rotation.set(
-          R3.damp(ball.rotation.x, 0.14, 0.0005, dts),
-          R3.damp(ball.rotation.y, 0, 0.0005, dts),
-          tilt
-        );
-      } else {
-        // La logique du jeu (game3d) va basculer en 'result' : on tient la pose.
-        ball.position.copy(ballRest);
-        ball.rotation.set(0.14, 0, 0);
+    } else if (A.t < T_RESULT) {
+      // ----- atterrissage + aspiration + 3 secousses de 400 ms -----
+      if (!A.suctionDone) {
+        A.suctionDone = true;
+        const cc = new THREE.Vector3(FOE_POS.x, FOE_TOP + 0.55, FOE_POS.z);
+        fxSuction(cc, ballRest);
+        fxRing(new THREE.Vector3(FOE_POS.x, FOE_TOP + 0.05, FOE_POS.z), '#ffe9b8', 1.9);
+        fxSparks(ballRest, 12, '#ffd9a0', 1.4);
+        camShake = Math.max(camShake, 0.2);
+        if (punchLight) { punchLight.position.copy(ballRest); punchLight.intensity = 2.6; punchLight.color.set('#ffd9a0'); }
       }
-      return;
-    }
 
-    if (ph === 'result') {
-      wildT = Math.max(wildT, T_RESULT);
-      if (plr.human) plr.pivot.rotation.x = R3.damp(plr.pivot.rotation.x, 0, 0.002, dts);
+      // la créature est happée en 0,22 s
+      const st = A.t - T_THROW;
+      foe.shrink = R3.clamp01(1 - st / 220);
+      if (foe.shrink <= 0.02) foe.visible = false;
 
-      if (!resultDone) {
-        resultDone = true;
-        if (bs.result === 'caught') {
+      const idx = Math.floor(st / 400);
+      const sp = st % 400;
+      if (idx !== A.lastShakeIdx) {
+        A.lastShakeIdx = idx;
+        if (bs && bs.ball) bs.ball.shakeIndex = idx;
+        if (idx > 0) {
+          fxSparks(new THREE.Vector3(ballRest.x, ballRest.y + 0.12, ballRest.z), 5, '#ffe27a', 0.9);
+          setBallLit(ball, true);
+        }
+      }
+      // Secousse : 300 ms de balancement, 100 ms de repos, direction alternée.
+      let tilt = 0, hop = 0;
+      if (sp < 300) {
+        const q = sp / 300;
+        const dir = (idx % 2 === 0) ? -1 : 1;
+        tilt = dir * 0.44 * Math.sin(q * Math.PI);
+        hop = Math.sin(q * Math.PI) * 0.055;
+      } else {
+        setBallLit(ball, false);
+      }
+      ball.position.set(ballRest.x, ballRest.y + hop, ballRest.z);
+      ball.rotation.set(
+        R3.damp(ball.rotation.x, 0.14, 0.0005, dts),
+        R3.damp(ball.rotation.y, 0, 0.0005, dts),
+        tilt
+      );
+      if (bs && bs.ball) bs.ball.progress = R3.clamp01(A.t / T_RESULT);
+    } else {
+      if (!A.resultDone) {
+        A.resultDone = true;
+        A.result = (Math.random() < A.chance) ? 'caught' : 'escaped';
+        if (bs && bs.ball) { bs.ball.result = A.result; bs.ball.progress = 1; }
+        if (A.result === 'caught') {
           // ----- CAPTURE : éclair de lumière + gerbe d'étoiles dorées -----
           fxFlash('#ffffff', 0.5, 0.9);
           fxStars(new THREE.Vector3(ballRest.x, ballRest.y + 0.2, ballRest.z), 20);
           fxRing(new THREE.Vector3(ballRest.x, FOE_TOP + 0.05, ballRest.z), '#ffe27a', 2.4);
-          setBallLit(true);
-          camShake = 0.22;
+          setBallLit(ball, true);
+          camShake = Math.max(camShake, 0.22);
           if (punchLight) { punchLight.position.copy(ballRest); punchLight.intensity = 6; punchLight.color.set('#fff3c8'); }
           foe.visible = false;
           foe.shrink = 0;
@@ -1274,30 +1991,30 @@
           // ----- ÉCHEC : la ball s'ouvre, fumée, la créature ressort -----
           fxSmoke(new THREE.Vector3(ballRest.x, ballRest.y + 0.1, ballRest.z), 14);
           fxRing(new THREE.Vector3(ballRest.x, FOE_TOP + 0.05, ballRest.z), '#e8eef4', 2.0);
-          setBallLit(false);
-          camShake = 0.12;
+          setBallLit(ball, false);
+          camShake = Math.max(camShake, 0.12);
           foe.visible = true;
           foe.shrink = 0.001;
         }
+        if (A.cb) { try { A.cb(A.result); } catch (e) { console.error('[battle3d] callback throwBall :', e); } }
       }
 
-      const rt = (wildT - T_RESULT) / 1000 + 0.0001;   // secondes depuis le résultat
-      wildT += dts * 1000;
-
-      if (bs.result === 'caught') {
+      const rt = (A.t - T_RESULT) / 1000 + 0.0001;   // secondes depuis le résultat
+      if (A.result === 'caught') {
         // la ball s'élève et scintille, comme le drawCaptureSparkles du 2D
         ball.position.set(ballRest.x, ballRest.y + Math.min(0.22, rt * 0.5) + Math.sin(rt * 2.4) * 0.03, ballRest.z);
         ball.rotation.set(0.14, rt * 1.2, 0);
-        sparkleTimer -= dts;
-        if (sparkleTimer <= 0) {
-          sparkleTimer = 0.42;
+        A.sparkleTimer -= dts;
+        if (A.sparkleTimer <= 0) {
+          A.sparkleTimer = 0.42;
           const a = Math.random() * Math.PI * 2, r = 0.5 + Math.random() * 0.5;
           fxSparks(new THREE.Vector3(ballRest.x + Math.sin(a) * r, ballRest.y + 0.1 + Math.random() * 0.7,
             ballRest.z + Math.cos(a) * r), 4, '#ffe27a', 0.5);
         }
+        if (rt > 1.6 && !A.done) { A.done = true; A.active = false; if (bs && bs.ball) bs.ball.active = false; }
       } else {
         // ouverture de la ball, la créature réapparaît avec un petit rebond
-        setBallOpen(R3.clamp01(rt / 0.28));
+        setBallOpen(ball, R3.clamp01(rt / 0.28));
         const pop = R3.clamp01((rt - 0.10) / 0.45);
         foe.visible = true;
         foe.shrink = pop <= 0 ? 0.001 : (1 + Math.sin(pop * Math.PI) * 0.18) * R3.easeOut(pop);
@@ -1309,77 +2026,39 @@
         ball.position.set(ballRest.x, ballRest.y - fall * 0.06, ballRest.z + fall * 0.35);
         ball.rotation.z = fall * 1.2;
         ball.scale.setScalar(Math.max(0.001, 1 - fall));
-        if (fall >= 1) ball.visible = false;
+        if (fall >= 1) {
+          ball.visible = false;
+          if (!A.done) { A.done = true; A.active = false; if (bs && bs.ball) bs.ball.active = false; }
+        }
       }
     }
   }
 
   // ---------------------------------------------------------------------------
-  //  COMBAT DE DRESSEUR
+  //  FIN DE COMBAT — flourish selon bs.result, une seule fois
   // ---------------------------------------------------------------------------
-  function queueEvent(type, side, delay) {
-    evQueue.push({ type: type, side: side, at: time + delay, started: false });
-  }
-
-  function startEvent(ev) {
-    const A = ev.side === 'player' ? plr : foe;
-    const D = ev.side === 'player' ? foe : plr;
-    if (!A || !A.model) return;
-    if (ev.type === 'attack') {
-      A.atkT = 0;
-      A.atkDur = 0.8;
-      A.impactDone = false;
-      A.atkTarget = D;
-      A.atkDir.set(D.base.x - A.base.x, 0, D.base.z - A.base.z).normalize();
-    } else {
-      fxHeal(new THREE.Vector3(A.base.x, A.holder.position.y + 0.05, A.base.z), 1.5 * A.scale);
-    }
-  }
-
-  function updateTrainer(dts) {
-    // Détection des coups : on compare les PV d'une frame à l'autre. game3d peut
-    // aussi nous prévenir explicitement via notifyMove() (plus précis).
-    if (!explicitMoves) {
-      const dFoe = (bs.trainerHp | 0) - lastFoeHp;
-      const dPlr = (bs.playerHp | 0) - lastPlrHp;
-      if (dFoe !== 0 || dPlr !== 0) {
-        if (dFoe < 0) queueEvent('attack', 'player', 0);
-        if (dPlr > 0) queueEvent('heal', 'player', 0);
-        if (dPlr < 0) queueEvent('attack', 'foe', 0.9);
-        if (dFoe > 0) queueEvent('heal', 'foe', 0.9);
-        lastFoeHp = bs.trainerHp | 0;
-        lastPlrHp = bs.playerHp | 0;
-        pushHud();
-      }
-    }
-
-    for (let i = evQueue.length - 1; i >= 0; i--) {
-      const ev = evQueue[i];
-      if (!ev.started && time >= ev.at) {
-        ev.started = true;
-        startEvent(ev);
-        evQueue.splice(i, 1);
-      }
-    }
-
-    // Une fois K.O., la créature reste visible, effondrée : c'est plus lisible
-    // qu'une disparition sèche (le jeu 2D, lui, la faisait disparaître).
-    foe.visible = (foe.faint >= 0) ? true : (bs.creatureVisible !== false);
-
-    if (bs.phase === 'result' && !resultDone) {
-      resultDone = true;
+  function updateResultPhase() {
+    if (resultDone || !bs) return;
+    resultDone = true;
+    if (bs.result === 'win') {
+      foe.faint = 0;
       const c = new THREE.Vector3(foe.base.x, foe.holder.position.y + 0.7 * foe.scale, foe.base.z);
-      if (bs.result === 'win') {
-        foe.faint = 0;
-        fxSmoke(c, 10);
-        fxStars(new THREE.Vector3(foe.base.x, foe.holder.position.y + 0.9, foe.base.z), 20);
-        fxFlash('#ffffff', 0.45, 0.7);
-        camShake = 0.2;
-      } else if (bs.result === 'lose') {
-        plr.faint = 0;
-        fxSmoke(new THREE.Vector3(plr.base.x, plr.holder.position.y + 0.6, plr.base.z), 10);
-        camShake = 0.12;
-      }
+      fxSmoke(c, 10);
+      fxStars(new THREE.Vector3(foe.base.x, foe.holder.position.y + 0.9, foe.base.z), 20);
+      fxFlash('#ffffff', 0.45, 0.7);
+      camShake = Math.max(camShake, 0.2);
+    } else if (bs.result === 'lose') {
+      plr.faint = 0;
+      fxSmoke(new THREE.Vector3(plr.base.x, plr.holder.position.y + 0.6, plr.base.z), 10);
+      camShake = Math.max(camShake, 0.12);
+    } else if (bs.result === 'caught') {
+      // Le ball a déjà tout joué (throwBall) : on s'assure juste que l'adversaire
+      // reste invisible pour la suite de l'écran de fin.
+      foe.visible = false; foe.shrink = 0;
+    } else if (bs.result === 'escaped' || bs.result === 'fled') {
+      // Fuite (du joueur ou de l'adversaire) : un petit nuage de poussière et
+      // rien de plus spectaculaire, le combat se referme vite.
+      fxSmoke(new THREE.Vector3(plr.base.x, plr.holder.position.y + 0.3, plr.base.z), 6);
     }
   }
 
@@ -1395,12 +2074,13 @@
 
     updateCamera(dts);
     updateFx(dts);
+    updateBall(dts);
 
     if (bs) {
       try {
-        if (bs.isTrainer) updateTrainer(dts); else updateWild(dts);
+        if (bs.phase === 'result') updateResultPhase();
       } catch (e) {
-        console.error('[battle3d] erreur d\'animation :', e);
+        console.error('[battle3d] erreur de mise à jour :', e);
       }
     }
 
@@ -1417,26 +2097,93 @@
   }
 
   /**
-   * (optionnel) game3d peut annoncer précisément un coup, ce qui évite de le
-   * deviner à partir des PV. side : 'player' | 'foe'. move : entrée de moves.
+   * game3d annonce qu'un coup vient de partir : c'est CE QUI DÉCLENCHE
+   * l'animation (élan, effet visuel au bon moment, recul de la cible). Écrit
+   * aussi bs.anim pour que hud3d / game3d puissent suivre la progression sans
+   * avoir à deviner les timings internes.
+   *   side : 'player' | 'foe'   (le camp qui AGIT)
+   *   move : entrée de moves3d (peut être absente : on retombe sur un coup neutre)
    */
   function notifyMove(side, move) {
-    if (!scene || !bs || !bs.isTrainer) return;
-    explicitMoves = true;
-    const delay = (side === 'foe') ? 0.9 : 0;
-    queueEvent(move && move.heal ? 'heal' : 'attack', side === 'foe' ? 'foe' : 'player', delay);
-    lastFoeHp = bs.trainerHp | 0;
-    lastPlrHp = bs.playerHp | 0;
-    pushHud();
+    if (!scene || !bs) return;
+    const sk = (side === 'foe') ? 'foe' : 'player';
+    const A = (sk === 'foe') ? foe : plr;
+    const D = (sk === 'foe') ? plr : foe;
+    if (!A || !A.model) return;
+
+    animSeqLocal++;
+    if (!bs.anim) bs.anim = {};
+    bs.anim.seq = animSeqLocal;
+    bs.anim.side = sk;
+    bs.anim.moveId = move && move.id;
+    bs.anim.fx = move && move.fx;
+    bs.anim.progress = 0;
+
+    A.atkMove = move || null;
+    A.atkIsHeal = !!(move && move.heal);
+    A.atkT = 0;
+    A.atkDur = A.atkIsHeal ? 0.9 : 0.85;
+    A.impactDone = false;
+    A.atkTarget = A.atkIsHeal ? null : D;
+    if (!A.atkIsHeal && D) A.atkDir.set(D.base.x - A.base.x, 0, D.base.z - A.base.z).normalize();
+  }
+
+  /**
+   * Change la créature active d'un camp, en scène : la sortante rentre dans
+   * sa ball, la nouvelle en jaillit avec une gerbe d'étoiles (voir updateSwap).
+   *   side : 'player' | 'foe'
+   *   mon  : le nouveau Mon (team3d) à afficher
+   */
+  function swapIn(side, mon) {
+    if (!scene) return;
+    const s = (side === 'foe') ? foe : plr;
+    if (!s) return;
+    s.atkT = -1; s.hitT = -1; s.faint = -1;   // on interrompt toute animation en cours
+    s.swap = { phase: 'out', t: 0, nextMon: mon, puffDone: false, starsDone: false };
+  }
+
+  /**
+   * Joue l'effet visuel d'une capacité. Peut être appelée directement par
+   * game3d (contrôle fin), ou est appelée automatiquement par le déroulé
+   * interne de notifyMove() au moment de l'impact.
+   *   side : 'player' | 'foe'   (celui qui AGIT — la cible est déduite : le
+   *          camp adverse, ou soi-même si `move.heal`)
+   */
+  function playFx(side, move) {
+    if (!scene) return;
+    const sk = (side === 'foe') ? 'foe' : 'player';
+    const A = (sk === 'foe') ? foe : plr;
+    const D = (sk === 'foe') ? plr : foe;
+    if (!A) return;
+    const m = move || {};
+    const T = R3.get('types');
+    const color = (T && T.color) ? T.color(m.type) : NEUTRAL_COLOR;
+    const origin = new THREE.Vector3(A.base.x, A.holder.position.y + 0.6 * A.scale, A.base.z);
+
+    if (m.heal) {
+      const self = new THREE.Vector3(A.base.x, A.holder.position.y + 0.15, A.base.z);
+      fxHeal(self, 1.4 * A.scale, color);
+      return;
+    }
+
+    const target = (D && D.model)
+      ? new THREE.Vector3(D.base.x, D.holder.position.y + 0.7 * D.scale, D.base.z)
+      : origin.clone();
+    camShake = Math.max(camShake, 0.10);
+    dispatchFx(m.fx, origin, target, color);
   }
 
   R3.register('battle', {
     enter: enter,
-    update: update,
-    render: render,
     exit: exit,
     onResize: onResize,
+    update: update,
+    render: render,
     notifyMove: notifyMove,
+    swapIn: swapIn,
+    playFx: playFx,
+    throwBall: throwBall,
+    // Accès pratique pour le débogage / les tests hors contrat.
     get scene() { return scene; },
     get camera() { return camera; },
   });
