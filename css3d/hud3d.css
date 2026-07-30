@@ -542,6 +542,92 @@ html, body {
 }
 
 /* =============================================================================
+   Boussole — la mini-carte toujours affichée (« où suis-je ? »)
+   ----------------------------------------------------------------------------
+   Coin bas-droit : le seul coin libre en jeu (les cartes de PV n'y arrivent
+   qu'en combat, où la boussole se cache d'elle-même).
+   ============================================================================= */
+
+.compass {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  width: 224px;
+  padding: 8px 8px 6px;
+  background: var(--verre);
+  border: 2px solid rgba(168, 186, 207, .22);
+  border-radius: var(--rayon-petit);
+  box-shadow: var(--ombre-douce);
+  pointer-events: auto;
+  cursor: pointer;
+  user-select: none;
+  transition: transform .12s ease, border-color .12s ease;
+}
+
+.compass:hover {
+  transform: translateY(-2px);
+  border-color: rgba(252, 236, 108, .55);
+}
+
+.cp-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 5px;
+  padding: 0 2px;
+}
+
+.cp-region {
+  font-size: 12.5px;
+  font-weight: 800;
+  color: var(--jaune-clair);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cp-coords {
+  font-size: 10.5px;
+  color: var(--gris);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cp-map {
+  position: relative;
+  width: 208px;
+  height: 122px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #10132a;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .5);
+}
+
+.cp-map canvas {
+  display: block;
+  width: 208px;
+  height: 122px;
+  image-rendering: pixelated;
+}
+
+.cp-target {
+  margin-top: 5px;
+  padding: 0 2px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--creme);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 720px) {
+  .compass { width: 150px; }
+  .cp-map, .cp-map canvas { width: 134px; height: 78px; }
+}
+
+/* =============================================================================
    Bouton muet & astuce de commandes
    ============================================================================= */
 
@@ -1084,6 +1170,27 @@ html, body {
 .tdm-pp { color: var(--gris); font-size: 11px; }
 .td-tobox { width: 100%; margin-top: 6px; font-size: 12.5px !important; padding: 9px 12px !important; }
 
+/* Bouton « envoyer au combat » : c'est LE bouton qui change de compagnon. */
+.td-active {
+  width: 100%;
+  margin-top: 10px;
+  font-size: 13.5px !important;
+  font-weight: 800 !important;
+  padding: 11px 12px !important;
+  background: linear-gradient(180deg, #ffd75e, var(--jaune)) !important;
+  color: var(--nuit) !important;
+  border: none !important;
+  border-radius: 14px !important;
+  box-shadow: 0 4px 0 #b9910a, var(--ombre-douce) !important;
+}
+
+.td-active:not(:disabled):hover { transform: translateY(-2px); filter: brightness(1.06); }
+.td-active:disabled { opacity: .45; box-shadow: none !important; cursor: default; }
+
+/* La créature qui combat en ce moment, repérable d'un coup d'œil. */
+.ts-active-tag { font-size: 10px; font-weight: 800; color: var(--jaune-clair); }
+.team-slot.active { border-color: rgba(252, 236, 108, .75); background: rgba(46, 40, 22, .85); }
+
 @media (max-width: 800px) {
   .team-body { grid-template-columns: 1fr; }
   .box-grid { grid-template-columns: repeat(4, 1fr); }
@@ -1278,6 +1385,13 @@ html, body {
 .wn-sub { font-size: 10px; color: var(--gris); }
 
 .world-node:hover { transform: translate(-50%, -50%) translateY(-3px) !important; border-color: var(--rose) !important; }
+
+/* Curseur clavier du menu du dirigeable (←/→ puis Espace). */
+.world-node.focus {
+  border-color: var(--jaune-clair) !important;
+  box-shadow: 0 0 0 4px rgba(252, 236, 108, .28), var(--ombre-douce) !important;
+  transform: translate(-50%, -50%) translateY(-3px) !important;
+}
 .world-node.visited { border-color: rgba(126, 224, 143, .7) !important; }
 .world-node.current { border-color: var(--jaune-clair) !important; box-shadow: 0 0 0 4px rgba(252, 236, 108, .3) !important; }
 .world-node.locked { opacity: .5; filter: grayscale(.5); cursor: not-allowed; }

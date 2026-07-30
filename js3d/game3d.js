@@ -34,7 +34,13 @@
   //  CONSTANTES DE JEU
   // ---------------------------------------------------------------------------
   const MOVE_DURATION_MS = 160;   // durée d'un pas d'une tuile (jeu 2D d'origine)
-  const ENCOUNTER_CHANCE = 0.18;  // 18 % de rencontre en fin de pas sur herbe haute
+  // Rencontres INVISIBLES en hautes herbes : désactivées (0 = jamais).
+  // Robin en avait assez d'être arrêté toutes les cinq secondes par une
+  // créature surgie de nulle part. Désormais on n'affronte QUE les créatures
+  // qu'on voit se balader sur la carte (roamers3d.js) : on les approche, on
+  // leur parle avec Espace ou on leur lance une Ball avec B. Remettre une
+  // valeur > 0 ici suffirait à réactiver l'ancien comportement.
+  const ENCOUNTER_CHANCE = 0;
   // Distance (en tuiles) au-delà de laquelle on cesse d'afficher un PNJ : ils
   // sont articulés (≈ 34 meshes chacun), donc coûteux, et dispersés.
   const DIST_PNJ = 24;
@@ -47,6 +53,15 @@
 
   const FADE_MS = 320;            // durée d'un demi-fondu de transition
   const BALL_RANGE = 3.4;         // portée du lancer de Ball en monde ouvert
+
+  // Vue FPS : ←/→ ne déplacent plus, elles font pivoter sur place. Une touche
+  // maintenue enchaîne un quart de tour toutes les FPS_TURN_MS.
+  const FPS_TURN_MS = 200;
+  const TURN_ORDER = ['up', 'right', 'down', 'left'];   // sens des aiguilles
+  const DIR_STEP = {
+    up: { dx: 0, dz: -1 }, down: { dx: 0, dz: 1 },
+    left: { dx: -1, dz: 0 }, right: { dx: 1, dz: 0 },
+  };
 
   // Caméra de REPLI, utilisée seulement si camera3d.js est absent : 3e
   // personne, orientation fixe (un enfant ne doit jamais se perdre).
@@ -128,6 +143,7 @@
   let fadeEl = null;        // voile noir des transitions de région
   let started = false;
   let lastTime = 0;
+  let fpsTurnT = 0;         // minuterie de rotation sur place (vue FPS)
 
   const camPos = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
   const camAim = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
@@ -185,6 +201,8 @@
     loadGame();                 // peut importer l'ancienne sauvegarde 2D
     applyRegion(state.regionId, { silent: true });
     refreshHudCounters();
+    refreshCompass();
+    call('hud', 'setViewMode', [viewMode()]);
     updateMuteButton(typeof Audio_ !== 'undefined' && Audio_.isMuted && Audio_.isMuted());
 
     // Position de départ de la caméra : déjà en place, sans glissement.
@@ -278,6 +296,9 @@
     bangMarker = buildBangMarker();
     bangMarker.visible = false;
     scene.add(bangMarker);
+
+    // --- Phares des portes, du port et de la ville (repères visibles de loin) ---
+    call('gates', 'build', [scene]);
 
     // --- Créatures qui se baladent sur la carte ---
     call('roamers', 'build', [scene]);
@@ -430,7 +451,11 @@
     // Pendant un vol ou un fondu, c'est le module concerné qui a la main
     // (airship3d capture Espace tout seul pour sauter la cinématique).
     if (state.screen === 'title' || state.screen === 'transition') return;
-    if (state.screen === 'airship') return;
+
+    // --- Menu du dirigeable : il se pilote AUSSI au clavier ------------------
+    // Sans ça, on pouvait rester bloqué dedans (aucune touche ne répondait,
+    // pas même Échap) — c'est ce qui rendait le dirigeable inutilisable.
+    if (state.screen === 'airship') { onAirshipKey(e); return; }
 
     // --- Écran de sélection du compagnon de départ ---------------------------
     if (state.screen === 'starter') {
@@ -495,6 +520,9 @@
         e.preventDefault(); openMapScreen(); break;
       case 'v': case 'V':
         e.preventDefault(); toggleView(); break;
+      case 't': case 'T':
+        // Appeler le dirigeable de n'importe où : c'est LE moyen de voyager.
+        e.preventDefault(); callAirship(); break;
       case 'm': case 'M':
         e.preventDefault(); toggleMute(); break;
       case 'Escape':
@@ -538,12 +566,30 @@
     }
   }
 
+  /** Nom de la vue courante : 'aventure' | 'rpg' | 'fps' (repli : 'aventure'). */
+  function viewMode() {
+    const cam = mod('camera');
+    if (!cam || !cam.frame) return 'aventure';
+    const f = safeCall('camera.frame', function () { return cam.frame(); });
+    return (f && f.mode) || 'aventure';
+  }
+
+  function isFpsView() { return viewMode() === 'fps'; }
+
+  const VIEW_LABEL = {
+    aventure: 'Vue aventure — de dos',
+    rpg: 'Vue RPG — vue de dessus',
+    fps: 'Vue à la première personne — ←/→ pour tourner',
+  };
+
   function toggleView() {
     const cam = mod('camera');
     if (!cam || !cam.toggle) { showToast('Une seule vue disponible.', '🧭'); return; }
     safeCall('camera.toggle', function () { cam.toggle(); });
     state.cameraMode = (cam.mode && cam.mode()) || state.cameraMode;
-    showToast(state.cameraMode === 'rpg' ? 'Vue RPG' : 'Vue aventure', '🧭');
+    fpsTurnT = 0;
+    showToast(VIEW_LABEL[state.cameraMode] || 'Vue changée', '🧭');
+    call('hud', 'setViewMode', [state.cameraMode]);
     saveGame();
   }
 
@@ -564,6 +610,25 @@
 
   function showToast(text, icon) { call('hud', 'toast', [text, icon]); }
 
+  /**
+   * Rafraîchit la mini-carte permanente du HUD (« où suis-je ? »). On ne
+   * l'appelle PAS à chaque image : la position ne change qu'à la fin d'un pas,
+   * d'un demi-tour ou d'un changement de région.
+   */
+  function refreshCompass() {
+    const hud = mod('hud');
+    if (!hud || !hud.setCompass) return;
+    call('hud', 'setCompass', [{
+      regionId: state.regionId,
+      regionName: regionName(state.regionId),
+      x: state.player.tileX,
+      y: state.player.tileY,
+      dir: state.player.dir,
+      biome: state.lastBiome,
+      visible: state.screen === 'world',
+    }]);
+  }
+
   // ===========================================================================
   //  4. BOUCLE PRINCIPALE
   // ===========================================================================
@@ -577,12 +642,26 @@
     lastTime = timestamp;
     const dtMs = Math.min(50, rawMs);   // dt borné, comme dans le jeu 2D
 
+    const tWork0 = performance.now();
+    tickGame(dtMs);
+
+    // On juge la qualité sur le TEMPS DE TRAVAIL réel de la frame, jamais sur
+    // le FPS : celui-ci est plafonné par le vsync et bridé quand la fenêtre
+    // n'est pas au premier plan — s'y fier dégraderait le jeu pour rien.
+    measurePerf(rawMs, performance.now() - tWork0);
+  }
+
+  /**
+   * UNE image de jeu : logique, monde, rendu. Séparée de `frame()` pour être
+   * appelable à la main (`window.GAME3D.tick(16.7)`) — indispensable pour
+   * tester le jeu dans un onglet piloté par l'automatisation, où
+   * `requestAnimationFrame` peut ne JAMAIS se déclencher.
+   */
+  function tickGame(dtMs) {
     R3.tickClock(dtMs);
     const dt = R3.clock.dt;
     const t = R3.clock.t;
     state.tick++;
-
-    const tWork0 = performance.now();
 
     // --- Logique ---
     if (state.screen === 'world') updateWorld(dtMs);
@@ -602,11 +681,6 @@
       rendered = safeCall('battle.render', function () { battle.render(renderer); return true; }) === true;
     }
     if (!rendered) renderer.render(scene, camera);
-
-    // On juge la qualité sur le TEMPS DE TRAVAIL réel de la frame, jamais sur
-    // le FPS : celui-ci est plafonné par le vsync et bridé quand la fenêtre
-    // n'est pas au premier plan — s'y fier dégraderait le jeu pour rien.
-    measurePerf(rawMs, performance.now() - tWork0);
   }
 
   function updateSceneModules(t, dt) {
@@ -617,6 +691,7 @@
     call('sky', 'update', [t, px, pz]);
     call('citybuild', 'update', [t]);
     call('airship', 'update', [t, dt]);
+    call('gates', 'update', [t, px, pz]);
 
     // Les créatures de la carte ne vivent que dans le monde ouvert.
     if (state.screen === 'world' || state.screen === 'title' || state.screen === 'starter') {
@@ -757,8 +832,29 @@
     return 'right';
   }
 
+  /** Vue FPS : ←/→ font pivoter le joueur d'un quart de tour, sur place. */
+  function turnPlayer(sens) {
+    const i = TURN_ORDER.indexOf(state.player.dir);
+    const n = (((i < 0 ? 0 : i) + sens) % 4 + 4) % 4;
+    state.player.dir = TURN_ORDER[n];
+    refreshCompass();     // la boussole affiche vers où l'on regarde
+  }
+
+  /** Rotation continue tant que la touche est maintenue (un tour / 200 ms). */
+  function updateFpsTurn(dtMs) {
+    const l = state.input.left, r = state.input.right;
+    if (l === r) { fpsTurnT = 0; return; }        // rien, ou les deux à la fois
+    if (fpsTurnT <= 0) { turnPlayer(l ? -1 : 1); fpsTurnT = FPS_TURN_MS; }
+    else fpsTurnT -= dtMs;
+  }
+
   function updateWorld(dt) {
     if (state.messages.length > 0) return;   // un message ouvert bloque tout
+
+    const fps = isFpsView();
+    // On pivote AVANT de tester le pas en cours : en vue FPS, on doit pouvoir
+    // tourner la tête même en pleine marche.
+    if (fps) updateFpsTurn(dt);
 
     if (state.player.moving) {
       state.player.moveProgress += dt / MOVE_DURATION_MS;
@@ -772,16 +868,25 @@
       return;
     }
 
-    // Nouveau pas — priorité haut > bas > gauche > droite (comme le jeu 2D).
-    let dx = 0, dz = 0;
-    if (state.input.up)         { dz = -1; }
-    else if (state.input.down)  { dz = 1;  }
-    else if (state.input.left)  { dx = -1; }
-    else if (state.input.right) { dx = 1;  }
-    if (dx === 0 && dz === 0) return;
-
-    const cmd = rotateCommand(dx, dz);
-    state.player.dir = dirOf(cmd.dx, cmd.dz);
+    let cmd;
+    if (fps) {
+      // Première personne : ↑ avance dans la direction du regard, ↓ recule
+      // sans se retourner. Les côtés servent à pivoter (déjà traités).
+      const f = DIR_STEP[state.player.dir] || DIR_STEP.down;
+      if (state.input.up) cmd = { dx: f.dx, dz: f.dz };
+      else if (state.input.down) cmd = { dx: -f.dx, dz: -f.dz };
+      else return;
+    } else {
+      // Nouveau pas — priorité haut > bas > gauche > droite (comme le jeu 2D).
+      let dx = 0, dz = 0;
+      if (state.input.up)         { dz = -1; }
+      else if (state.input.down)  { dz = 1;  }
+      else if (state.input.left)  { dx = -1; }
+      else if (state.input.right) { dx = 1;  }
+      if (dx === 0 && dz === 0) return;
+      cmd = rotateCommand(dx, dz);
+      state.player.dir = dirOf(cmd.dx, cmd.dz);
+    }
 
     const nx = state.player.tileX + cmd.dx;
     const ny = state.player.tileY + cmd.dz;
@@ -799,6 +904,7 @@
   /** Fin d'un pas : biome, tuile spéciale, puis éventuelle rencontre. */
   function onStepFinished() {
     const x = state.player.tileX, y = state.player.tileY;
+    refreshCompass();
 
     const biome = biomeAt(x, y);
     if (biome && biome !== state.lastBiome) {
@@ -810,7 +916,12 @@
     // ne doit pas déclencher un combat au moment où l'écran part au noir.
     if (handleSpecialTile(x, y)) return;
 
-    if (isEncounterTile(x, y) && Math.random() < ENCOUNTER_CHANCE) triggerWildEncounter();
+    // ENCOUNTER_CHANCE vaut 0 : plus aucune créature ne surgit des herbes. On
+    // garde le test pour pouvoir réactiver l'ancien comportement d'une seule
+    // constante (voir en tête de fichier).
+    if (ENCOUNTER_CHANCE > 0 && isEncounterTile(x, y) && Math.random() < ENCOUNTER_CHANCE) {
+      triggerWildEncounter();
+    }
   }
 
   function onBiomeChanged(biome) {
@@ -908,7 +1019,13 @@
 
     if (!playerGroup) return;
     playerGroup.position.set(p.worldX, p.worldY, p.worldZ);
-    playerGroup.visible = (state.screen !== 'battle') || !mod('battle');
+    // En vue FPS on est DANS la tête du joueur : afficher son modèle mettrait
+    // l'intérieur de son crâne plein écran. On attend la fin de la bascule
+    // pour le cacher, sinon il disparaît alors que la caméra est encore loin.
+    const cam = mod('camera');
+    const f = (cam && cam.frame) ? safeCall('camera.frame', function () { return cam.frame(); }) : null;
+    const dansLaTete = !!(f && f.mode === 'fps' && !f.switching);
+    playerGroup.visible = ((state.screen !== 'battle') || !mod('battle')) && !dansLaTete;
 
     const actors = mod('actors');
     if (actors && actors.updatePlayer) {
@@ -953,10 +1070,14 @@
       const sway = (state.screen === 'title' || state.screen === 'starter')
         ? Math.sin(R3.clock.t * 0.25) * 2.2 : 0;
       const ok = safeCall('camera.update', function () {
+        // 3e argument : une FONCTION (x, z) => hauteur, pas une hauteur. On lui
+        // passait un nombre : camera3d l'ignorait silencieusement et croyait
+        // donc le terrain plat à l'altitude 0 — d'où une caméra qui pouvait
+        // s'enfoncer dans une colline, et l'anti-occlusion aveugle au relief.
         cam.update(dt, {
           worldX: p.worldX, worldY: p.worldY, worldZ: p.worldZ,
           dir: p.dir, moving: p.moving, sway: sway,
-        }, groundHeight(p.worldX, p.worldZ));
+        }, groundHeight);
         return true;
       });
       if (ok) return;
@@ -1001,6 +1122,7 @@
     // et ça garantit qu'il travaille bien sur la bonne région.
     call('world', 'setRegion', [id]);
     call('roamers', 'setRegion', [id]);
+    call('gates', 'setRegion', [id]);
     rebuildNPCs(id);
     registerAirshipPort(id);
   }
@@ -1033,6 +1155,7 @@
       const lbl = (R && R.labelOf) ? R.labelOf(state.lastBiome) : state.lastBiome;
       call('hud', 'setBiomeBanner', [lbl]);
     }
+    refreshCompass();
     saveGame();
   }
 
@@ -1050,6 +1173,7 @@
     state.player.worldZ = p.y;
     updatePlayerTransform(0);
     updateCamera(1e9);
+    refreshCompass();
   }
 
   function findWalkableNear(x, y, radius) {
@@ -1096,10 +1220,27 @@
     });
   }
 
+  /**
+   * Déclare les SIX ports au dirigeable, pas seulement celui de la région
+   * chargée. C'était le nœud du problème : `airship.canFly()` refuse toute
+   * destination dont le port lui est inconnu, et un port n'était enregistré
+   * qu'au chargement de sa région — donc au premier lancement, AUCUNE
+   * destination n'était possible et le dirigeable ne servait à rien.
+   * Les coordonnées des ports sont statiques (regions3d §4) : les déclarer
+   * toutes ne coûte rien et ne génère aucune région.
+   */
   function registerAirshipPort(id) {
     const R = regions();
     const airship = mod('airship');
     if (!R || !R.get || !airship) return;
+
+    const tous = (R.list ? safeCall('regions.list', function () { return R.list(); }) : null) || [];
+    for (let i = 0; i < tous.length; i++) {
+      const d = tous[i];
+      if (!d || !d.airship) continue;
+      call('airship', 'registerPort', [d.id, d.airship.x, d.airship.y, d.airship.name]);
+    }
+
     const def = safeCall('regions.get.port', function () { return R.get(id); });
     if (!def || !def.airship) return;
     call('airship', 'registerPort', [id, def.airship.x, def.airship.y, def.airship.name]);
@@ -1158,40 +1299,113 @@
   //  7. DIRIGEABLE (§17 bis)
   // ===========================================================================
 
-  function openAirshipMenu() {
+  /**
+   * Les destinations proposées par le dirigeable : LES SIX RÉGIONS, tout de
+   * suite. Le contrat prévoyait de n'ouvrir que les régions déjà visitées à
+   * pied, mais les portes sont sur les bords d'une carte de 384 × 224 tuiles :
+   * en pratique, Robin ne pouvait aller nulle part et le dirigeable ne servait
+   * jamais. On garde l'information « déjà explorée » en sous-titre, sans
+   * jamais bloquer le voyage.
+   */
+  function airshipOptions() {
+    const R = regions();
     const airship = mod('airship');
+    const ordre = (airship && Array.isArray(airship.ORDER)) ? airship.ORDER
+      : ((R && R.list) ? (safeCall('regions.list.air', function () { return R.list(); }) || [])
+          .map(function (d) { return d.id; })
+        : ['val', 'sylve', 'saphir', 'givre', 'braise', 'aurore']);
+
+    return ordre.map(function (id) {
+      const def = (R && R.get) ? R.get(id) : null;
+      const vu = !!state.visitedRegions[id];
+      const port = (airship && airship.PORTS && airship.PORTS[id]) || (def && def.airship) || null;
+      return {
+        regionId: id,
+        region: (def && def.name) || id,
+        name: (port && port.name) || 'Port aérien',
+        current: id === state.regionId,
+        enabled: id !== state.regionId,
+        reason: (id === state.regionId) ? 'Tu y es'
+          : (vu ? null : 'Région encore inconnue'),
+        visited: vu,
+        level: def && def.recommendedLevel,
+        x: port ? port.x : null,
+        y: port ? port.y : null,
+      };
+    });
+  }
+
+  /** Touche T : le dirigeable vient te chercher, où que tu sois. */
+  function callAirship() {
+    if (state.screen !== 'world' || state.messages.length > 0 || state.throwing) return;
+    openAirshipMenu();
+  }
+
+  function openAirshipMenu() {
     const hud = mod('hud');
     releaseAllKeys();
     sfx('menu');
 
+    const options = airshipOptions();
+
     if (hud && hud.openAirshipMenu) {
-      const options = (airship && airship.travelOptions)
-        ? safeCall('airship.travelOptions', function () {
-            return airship.travelOptions(state.regionId, state.visitedRegions);
-          })
-        : null;
       state.screen = 'airship';
       const ok = safeCall('hud.openAirshipMenu', function () {
-        hud.openAirshipMenu(options || (airship && airship.PORTS) || null, state.regionId,
+        hud.openAirshipMenu(options, state.regionId,
           function (toRegion) { startFlight(toRegion); });
         return true;
       });
+      // Le curseur clavier est posé par hud3d.js sur la première destination
+      // atteignable : on ne le double pas ici (les deux modules n'ordonnent
+      // pas les régions pareil).
       if (ok) return;
     }
 
     // Repli texte : le voyage doit rester possible même sans interface dédiée.
-    const dispo = [];
-    for (const id in state.visitedRegions) {
-      if (state.visitedRegions[id] && id !== state.regionId) dispo.push(id);
-    }
     state.screen = 'world';
-    if (!dispo.length) {
-      showMessage('🎈 Le dirigeable est amarré ici.\nIl faut découvrir d\'autres régions à pied\navant de pouvoir y voler !');
-      return;
-    }
-    const cible = dispo[0];
+    const dispo = options.filter(function (o) { return o.enabled; });
+    if (!dispo.length) { showMessage('🎈 Le dirigeable ne peut aller nulle part.'); return; }
+    const cible = dispo[0].regionId;
     showMessage('🎈 Embarquement immédiat pour ' + regionName(cible) + ' !',
       function () { startFlight(cible); });
+  }
+
+  /** Clavier du menu du dirigeable : ←/→ choisir, Espace valider, Échap sortir. */
+  function onAirshipKey(e) {
+    const airship = mod('airship');
+    // Pendant la cinématique, airship3d.js gère lui-même Espace (« passer »).
+    if (airship && airship.isFlying && airship.isFlying()) return;
+
+    switch (e.key) {
+      case 'Escape': case 'Backspace':
+        e.preventDefault();
+        call('hud', 'closeAirshipMenu', []);
+        state.screen = 'world';
+        releaseAllKeys();
+        refreshCompass();
+        break;
+      case 'ArrowLeft': case 'a': case 'A': case 'q': case 'Q':
+      case 'ArrowUp': case 'w': case 'W': case 'z': case 'Z':
+        e.preventDefault();
+        sfx('menu');
+        call('hud', 'moveAirshipCursor', [-1]);
+        break;
+      case 'ArrowRight': case 'd': case 'D':
+      case 'ArrowDown': case 's': case 'S':
+        e.preventDefault();
+        sfx('menu');
+        call('hud', 'moveAirshipCursor', [1]);
+        break;
+      case ' ': case 'Enter':
+        e.preventDefault();
+        call('hud', 'confirmAirship', []);
+        break;
+      case 't': case 'T':
+        e.preventDefault();
+        call('hud', 'closeAirshipMenu', []);
+        state.screen = 'world';
+        break;
+    }
   }
 
   function regionName(id) {
@@ -1204,6 +1418,20 @@
     if (!toRegion || toRegion === state.regionId) { state.screen = 'world'; return; }
     const airship = mod('airship');
     const from = state.regionId;
+
+    // On peut appeler le dirigeable de n'importe où (touche T) : on se place
+    // d'abord sur l'embarcadère de la région, sinon le décollage se ferait
+    // à un endroit et le joueur reviendrait à un autre.
+    const R = regions();
+    const defFrom = (R && R.get) ? R.get(from) : null;
+    if (defFrom && defFrom.airship) {
+      const dx = (typeof defFrom.airship.dockX === 'number') ? defFrom.airship.dockX : defFrom.airship.x;
+      const dy = (typeof defFrom.airship.dockY === 'number') ? defFrom.airship.dockY : defFrom.airship.y;
+      if (typeof dx === 'number' &&
+          (state.player.tileX !== dx || state.player.tileY !== dy)) {
+        teleport(dx, dy);
+      }
+    }
 
     if (!airship || !airship.fly) {
       // Repli : téléportation simple (le contrat l'autorise explicitement).
@@ -1245,6 +1473,8 @@
     playBiomeMusic(state.lastBiome);
     call('hud', 'setRegionBanner', [(def && def.name) || to]);
     state.screen = 'world';
+    refreshCompass();
+    showToast('Bienvenue à ' + ((def && def.name) || to) + ' !', '🎈');
     saveGame();
   }
 
@@ -1347,10 +1577,21 @@
     if (speciesId) state.seen[speciesId] = true;
   }
 
-  /** Un roamer a touché le joueur : vrai combat sauvage (§16). */
+  /**
+   * Un roamer a touché le joueur. Le contrat (§16) déclenchait ici un combat
+   * d'office — mais avec 8 à 14 créatures qui se baladent autour du joueur, ça
+   * revenait exactement au problème des rencontres surprises : on se faisait
+   * arrêter sans l'avoir voulu. Désormais on se contente de rappeler comment
+   * l'affronter : c'est TOUJOURS le joueur qui décide (Espace ou B).
+   */
+  let dernierRappel = -99;
   function onRoamerTouch(roamer) {
     if (!roamer || state.screen !== 'world' || state.messages.length > 0) return;
-    startRoamerBattle(roamer);
+    if (R3.clock.t - dernierRappel < 12) return;     // pas plus d'un rappel /12 s
+    dernierRappel = R3.clock.t;
+    const dex = mod('dex');
+    const sp = (dex && dex.get) ? dex.get(roamer.speciesId) : null;
+    showToast(((sp && sp.name) || 'Une créature') + ' — Espace pour l\'affronter, B pour une Ball', '❕');
   }
 
   function startRoamerBattle(roamer) {
@@ -1646,10 +1887,10 @@
     if (i === 2) { b.bagCursor = 0; setBattlePhase('bag'); return; }
     // Fuite
     if (b.canFlee === false) { showToast('Impossible de fuir ce combat !', '🚫'); return; }
-    b.phase = 'animating';
+    setBattlePhase('animating');
     if (Math.random() < 0.85) {
       b.result = 'fled';
-      b.phase = 'result';
+      setBattlePhase('result');
       showMessage('Tu prends la fuite !', function () { endBattle(); });
     } else {
       showMessage('Impossible de s\'enfuir !', function () { foeTurn(); });
@@ -1678,7 +1919,7 @@
     const team = teamApi();
     if (team && team.spendPP) safeCall('team.spendPP', function () { team.spendPP(mon, move.id); });
 
-    b.phase = 'animating';
+    setBattlePhase('animating');
     const texte = applyMove('player', mon, b.foe.mon, move);
 
     if (b.foe.mon.hp <= 0) {
@@ -1703,7 +1944,7 @@
     const team = teamApi();
     if (team && team.spendPP) safeCall('team.spendPP.foe', function () { team.spendPP(foe, move.id); });
 
-    b.phase = 'animating';
+    setBattlePhase('animating');
     const texte = applyMove('foe', foe, mine, move);
 
     if (mine.hp <= 0) {
@@ -1725,7 +1966,9 @@
     if (mv && mv.compute) res = safeCall('moves.compute', function () { return mv.compute(attacker, defender, move); });
     if (!res) res = { missed: false, dmg: 8, heal: 0, mult: 1, crit: false, text: null };
 
-    call('battle', 'notifyMove', [side, move]);
+    // On passe `res` : battle3d s'en sert pour rendre le coup plus spectaculaire
+    // quand il est super efficace ou critique, plus sobre quand il est faible.
+    call('battle', 'notifyMove', [side, move, res]);
     if (b && b.anim) b.anim.seq = (b.anim.seq | 0) + 1;
 
     let txt = nom + ' utilise ' + (move.name || move.id) + ' !';
@@ -1761,7 +2004,7 @@
     b.moveCursor = 0;
     call('battle', 'swapIn', ['player', cible]);
     _hudBattle.player = '';
-    b.phase = 'animating';
+    setBattlePhase('animating');
     showMessage('En avant, ' + (cible.nick || cible.id) + ' !', function () { foeTurn(); });
   }
 
@@ -1777,7 +2020,7 @@
       if (!rendu) { showToast('Cette créature est déjà en pleine forme.', '💊'); return; }
       state.items.potion = Math.max(0, state.items.potion - 1);
       call('hud', 'setItems', [state.items]);
-      b.phase = 'animating';
+      setBattlePhase('animating');
       showMessage('Tu utilises une Potion.\n+' + rendu + ' PV pour ' + (mon.nick || mon.id) + ' !',
         function () { foeTurn(); });
       return;
@@ -1821,12 +2064,12 @@
     b.ball.active = false;
     if (result === 'caught') {
       b.result = 'caught';
-      b.phase = 'result';
+      setBattlePhase('result');
       onCaughtInBattle(b.foe.mon);
       return;
     }
     sfx('escape');
-    b.phase = 'animating';
+    setBattlePhase('animating');
     showMessage('Oh non… ' + (b.foe.mon.nick || 'la créature') + ' s\'est libérée !',
       function () { foeTurn(); });
   }
@@ -1892,7 +2135,7 @@
     // Combat sauvage : c'est fini.
     if (b.kind === 'wild') {
       b.result = 'win';
-      b.phase = 'result';
+      setBattlePhase('result');
       showMessage('Victoire ! ✦' + lignes, function () { endBattle(); });
       return;
     }
@@ -1908,7 +2151,7 @@
       b.foe.index = next;
       call('battle', 'swapIn', ['foe', b.foe.mon]);
       _hudBattle.foe = '';
-      b.phase = 'animating';
+      setBattlePhase('animating');
       const tr = b.foe.trainer || {};
       showMessage(lignes.replace(/^\n/, '') + '\n' + (tr.name || 'L\'adversaire') + ' envoie ' +
         (b.foe.mon.nick || 'une autre créature') + ' !', function () { setBattlePhase('choose'); });
@@ -1922,7 +2165,7 @@
     const b = state.battle;
     const tr = b.foe.trainer || {};
     b.result = 'win';
-    b.phase = 'result';
+    setBattlePhase('result');
     sfx('catch');
 
     let texte = 'Victoire ! ' + (tr.name || 'Ton adversaire') + ' est battu ! ✦' + lignes;
@@ -1970,14 +2213,14 @@
       if (team && team.setActive) safeCall('team.setActive.ko', function () { team.setActive(next); });
       call('battle', 'swapIn', ['player', b.player.mon]);
       _hudBattle.player = '';
-      b.phase = 'animating';
+      setBattlePhase('animating');
       showMessage('En avant, ' + (b.player.mon.nick || 'toi') + ' !', function () { setBattlePhase('choose'); });
       return;
     }
 
     // Toute l'équipe est K.O. : on soigne tout le monde. Jamais punitif.
     b.result = 'lose';
-    b.phase = 'result';
+    setBattlePhase('result');
     sfx('escape');
     if (team && team.healAll) safeCall('team.healAll.ko', function () { team.healAll(); });
     saveGame();
@@ -2169,11 +2412,15 @@
     const hint = document.getElementById('controls-hint');
     if (hint) hint.classList.remove('hidden');
 
+    refreshCompass();
+    call('hud', 'setViewMode', [viewMode()]);
     saveGame();
     showMessage('Bienvenue, ' + state.playerName + ' ! ✦\n' +
-      'Flèches pour explorer · Hautes herbes = rencontres.\n' +
-      'B : lancer une Ball sur une créature en vue.\n' +
-      'E : équipe · C : Pokédex · N : carte · V : vue · M : son');
+      'Flèches pour explorer. Les créatures se voient sur la carte :\n' +
+      'approche-toi et lance une Ball avec B.\n' +
+      '🚪 Suis les colonnes de lumière pour changer de région.\n' +
+      'T : appeler le dirigeable · V : changer de vue (dont la vue FPS)\n' +
+      'E : équipe · C : Pokédex · N : carte · M : son');
   }
 
   // ===========================================================================
@@ -2225,6 +2472,7 @@
     if (etait === 'team' || etait === 'dex' || etait === 'map' || etait === 'airship') {
       sfx('menu');
       state.screen = 'world';
+      refreshCompass();
       saveGame();
     }
   }
@@ -2463,13 +2711,27 @@
     saveGame: saveGame,
     loadGame: loadGame,
     setQuality: applyQuality,
+    // Une image de jeu à la main (utile quand requestAnimationFrame est gelé).
+    tick: tickGame,
     teleport: teleport,
     goRegion: function (id, x, y) { applyRegion(id, { x: x, y: y }); },
     encounter: triggerWildEncounter,
     wild: startWildBattle,
     champion: challengeChampion,
     fly: startFlight,
+    airship: openAirshipMenu,
     throwBall: throwBallInWorld,
+    // Vues : 'aventure' | 'rpg' | 'fps'
+    setView: function (id) {
+      call('camera', 'setMode', [id, false]);
+      state.cameraMode = viewMode();
+      call('hud', 'setViewMode', [state.cameraMode]);
+      return state.cameraMode;
+    },
+    view: viewMode,
+    turn: turnPlayer,
+    compass: refreshCompass,
+    gates: function () { return call('gates', 'list', []) || []; },
     heal: function () { call('team', 'healAll', []); },
     giveAll: function () {
       const dex = mod('dex');

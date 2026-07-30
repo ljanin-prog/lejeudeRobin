@@ -444,10 +444,12 @@
     buildDexOverlay();
     buildMapOverlay();
     buildAirshipOverlay();
+    buildCompass();
     buildToastLayer();
     buildQualityPicker();
     wireExistingElements();
     window.addEventListener('keydown', onGlobalKeydown, true);
+    window.addEventListener('resize', placeHpCards);
 
     // Le compteur de FPS peut être demandé par l'URL (index3d.html#fps)
     if (String(location.hash || '').indexOf('fps') >= 0) setFpsVisible(true);
@@ -507,20 +509,189 @@
     b.type = 'button';
     b.title = 'Changer de vue (V)';
     b.setAttribute('aria-label', 'Changer de vue');
-    b.addEventListener('click', function () {
-      const cam = CAMERA();
-      if (cam && typeof cam.toggle === 'function') {
-        cam.toggle();
-        toast(cam.mode && cam.mode() === 'rpg' ? 'Vue RPG' : 'Vue aventure', '🧭');
-      } else {
-        fakeKey('v');
-      }
-      b.blur();
-    });
+    // On passe TOUJOURS par la touche V : c'est game3d.js qui connaît les trois
+    // vues, affiche le bon message et enregistre le choix dans la sauvegarde.
+    b.addEventListener('click', function () { fakeKey('v'); b.blur(); });
     ui.viewToggle = b;
   }
 
+  /** Icône du bouton de vue : 🧭 aventure · 🗺️ RPG · 👁️ première personne. */
+  const VIEW_ICON = { aventure: '🧭', rpg: '🗺️', fps: '👁️' };
+  const VIEW_NAME = { aventure: 'Vue aventure', rpg: 'Vue RPG', fps: 'Vue à la première personne' };
+
+  function setViewMode(mode) {
+    if (!ui.viewToggle) return;
+    const id = VIEW_ICON[mode] ? mode : 'aventure';
+    ui.viewToggle.textContent = VIEW_ICON[id];
+    ui.viewToggle.title = VIEW_NAME[id] + ' — changer (V)';
+    ui.viewToggle.setAttribute('aria-label', VIEW_NAME[id]);
+  }
+
   function buildToastLayer() { ui.toasts = el('div', 'toast-layer', hudRoot); }
+
+  // ===========================================================================
+  //  BOUSSOLE — la mini-carte TOUJOURS affichée (« où suis-je ? »)
+  // ---------------------------------------------------------------------------
+  //  Une région fait 384 × 224 tuiles : sans repère permanent, on ne sait
+  //  jamais où l'on est ni dans quelle direction se trouve la sortie. Ce petit
+  //  panneau montre la région entière, ta position, les portes, le port et la
+  //  ville, plus une flèche vers la porte la plus proche.
+  //
+  //  Il n'est PAS redessiné à chaque image : game3d.js appelle setCompass() à
+  //  la fin de chaque pas, à chaque demi-tour et à chaque changement de région.
+  // ===========================================================================
+
+  const CP_W = 208, CP_H = 122;      // taille du canvas de la boussole
+  const compassBase = Object.create(null);   // regionId -> canvas hors écran
+  let compassInfo = null;
+
+  function buildCompass() {
+    const p = el('div', 'compass hidden', hudRoot);
+    const head = el('div', 'cp-head', p);
+    ui.compassRegion = el('span', 'cp-region', head, '');
+    ui.compassCoords = el('span', 'cp-coords', head, '');
+    const wrap = el('div', 'cp-map', p);
+    ui.compassCanvas = el('canvas', null, wrap);
+    ui.compassCanvas.width = CP_W;
+    ui.compassCanvas.height = CP_H;
+    ui.compassCtx = ui.compassCanvas.getContext('2d');
+    ui.compassTarget = el('div', 'cp-target', p, '');
+    p.title = 'Ta position dans la région — N pour la grande carte';
+    p.addEventListener('click', function () { fakeKey('n'); });
+    ui.compass = p;
+  }
+
+  /** Image de fond de la région, calculée UNE FOIS puis gardée en cache. */
+  function compassBackground(regionId) {
+    if (compassBase[regionId]) return compassBase[regionId];
+    const R = REGIONS();
+    if (!R || typeof R.minimap !== 'function') return null;
+    let cv = null;
+    try {
+      cv = document.createElement('canvas');
+      cv.width = CP_W; cv.height = CP_H;
+      R.minimap(regionId, cv);
+    } catch (e) {
+      console.warn('[hud3d] fond de boussole indisponible :', e);
+      return null;
+    }
+    compassBase[regionId] = cv;
+    return cv;
+  }
+
+  const ARROWS = ['→', '↘', '↓', '↙', '←', '↖', '↑', '↗'];
+
+  function arrowTo(dx, dy) {
+    // atan2(dy, dx) avec y qui descend (repère de la carte).
+    const a = Math.atan2(dy, dx);
+    let i = Math.round(a / (Math.PI / 4));
+    i = ((i % 8) + 8) % 8;
+    return ARROWS[i];
+  }
+
+  /**
+   * @param {object} info { regionId, regionName, x, y, dir, biome, visible }
+   */
+  function setCompass(info) {
+    if (!ui.compass || !info) return;
+    compassInfo = info;
+    if (info.visible === false) { hide(ui.compass); return; }
+    show(ui.compass);
+
+    const R = REGIONS();
+    const W = (R && R.W) || 384, H = (R && R.H) || 224;
+    const px = Number(info.x) || 0, py = Number(info.y) || 0;
+
+    ui.compassRegion.textContent = info.regionName || info.regionId || '';
+    ui.compassCoords.textContent = Math.round(px) + ' · ' + Math.round(py);
+
+    const c = ui.compassCtx;
+    if (!c) return;
+    c.clearRect(0, 0, CP_W, CP_H);
+
+    const fond = compassBackground(info.regionId);
+    if (fond) c.drawImage(fond, 0, 0, CP_W, CP_H);
+    else { c.fillStyle = '#1b2036'; c.fillRect(0, 0, CP_W, CP_H); }
+
+    const sx = function (x) { return (x / W) * CP_W; };
+    const sy = function (y) { return (y / H) * CP_H; };
+
+    // --- les lieux à retenir --------------------------------------------------
+    const def = (R && typeof R.get === 'function') ? R.get(info.regionId) : null;
+    let cible = null, cibleD = Infinity;
+
+    if (def && Array.isArray(def.gates)) {
+      def.gates.forEach(function (g) {
+        marqueur(c, sx(g.x), sy(g.y), '#ffe066');
+        const d = Math.abs(g.x - px) + Math.abs(g.y - py);
+        if (d < cibleD) {
+          cibleD = d;
+          cible = { x: g.x, y: g.y, icon: '🚪', label: g.label || ('Vers ' + regionName(g.toRegion)) };
+        }
+      });
+    }
+    if (def && def.airship && typeof def.airship.x === 'number') {
+      marqueur(c, sx(def.airship.x), sy(def.airship.y), '#41a6f6');
+    }
+    try {
+      const cities = CITIES();
+      const plan = (cities && typeof cities.plan === 'function') ? cities.plan(info.regionId) : null;
+      if (plan) {
+        if (plan.castle) marqueur(c, sx(plan.castle.x), sy(plan.castle.y), '#ffffff');
+        if (plan.arena) marqueur(c, sx(plan.arena.x), sy(plan.arena.y), '#ff6b3d');
+      }
+    } catch (e) { /* cities3d est optionnel */ }
+
+    // --- toi ------------------------------------------------------------------
+    const jx = sx(px), jy = sy(py);
+    c.beginPath();
+    c.arc(jx, jy, 6.5, 0, Math.PI * 2);
+    c.strokeStyle = 'rgba(231, 76, 60, .55)';
+    c.lineWidth = 2;
+    c.stroke();
+    c.beginPath();
+    c.arc(jx, jy, 3.4, 0, Math.PI * 2);
+    c.fillStyle = '#e74c3c';
+    c.fill();
+    c.lineWidth = 1.6;
+    c.strokeStyle = '#fff';
+    c.stroke();
+
+    // Le petit nez qui montre où l'on regarde.
+    const V = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] }[info.dir] || [0, 1];
+    c.beginPath();
+    c.moveTo(jx + V[0] * 5, jy + V[1] * 5);
+    c.lineTo(jx + V[0] * 11 - V[1] * 3.4, jy + V[1] * 11 + V[0] * 3.4);
+    c.lineTo(jx + V[0] * 11 + V[1] * 3.4, jy + V[1] * 11 - V[0] * 3.4);
+    c.closePath();
+    c.fillStyle = '#fff';
+    c.fill();
+
+    // --- la ligne « prochaine porte » ----------------------------------------
+    if (cible) {
+      ui.compassTarget.textContent = cible.icon + ' ' + cible.label + '  ' +
+        arrowTo(cible.x - px, cible.y - py) + ' ' + Math.round(cibleD);
+      show(ui.compassTarget);
+    } else {
+      ui.compassTarget.textContent = '';
+    }
+  }
+
+  function marqueur(c, x, y, couleur) {
+    c.beginPath();
+    c.arc(x, y, 3.6, 0, Math.PI * 2);
+    c.fillStyle = couleur;
+    c.fill();
+    c.lineWidth = 1.4;
+    c.strokeStyle = 'rgba(0,0,0,.65)';
+    c.stroke();
+  }
+
+  function showCompass(v) {
+    if (!ui.compass) return;
+    if (v) { if (compassInfo) show(ui.compass); }
+    else hide(ui.compass);
+  }
 
   function buildQualityPicker() {
     const box = el('div', 'quality-picker clickable', hudRoot);
@@ -743,11 +914,34 @@
       });
     }
 
-    // Le menu de capacités porte déjà les PV du compagnon : pas de doublon.
-    const menuOuvert = ui.moveMenu && !ui.moveMenu.classList.contains('hidden');
-    if (!(side !== 'foe' && menuOuvert)) show(card.root);
+    show(card.root);
     if (ratio < card.last - 0.001) replayAnim(card.root, 'hit');
     card.last = ratio;
+    placeHpCards();
+  }
+
+  /**
+   * Empêche un menu de combat de recouvrir la carte de PV du joueur.
+   * On MESURE les deux boîtes plutôt que de deviner avec des media queries :
+   * si elles se chevauchent, la carte remonte juste au-dessus du menu.
+   */
+  function placeHpCards() {
+    const card = ui.hp && ui.hp.player && ui.hp.player.root;
+    if (!card || card.classList.contains('hidden')) return;
+    card.style.bottom = '';
+    const menus = [ui.mainMenu, ui.moveMenu, ui.monMenu, ui.bagMenu];
+    let menu = null;
+    for (let i = 0; i < menus.length; i++) {
+      if (menus[i] && !menus[i].classList.contains('hidden')) { menu = menus[i]; break; }
+    }
+    if (!menu) return;
+    const m = menu.getBoundingClientRect();
+    const c = card.getBoundingClientRect();
+    if (!m.width || !c.width) return;
+    const seChevauchent = (c.right > m.left - 8) && (c.left < m.right + 8) && (c.bottom > m.top - 4);
+    if (seChevauchent) {
+      card.style.bottom = Math.round(window.innerHeight - m.top + 12) + 'px';
+    }
   }
 
   function hideHP(side) {
@@ -804,9 +998,10 @@
     setMenuCursor(b.menuCursor || 0);
     show(ui.mainMenu);
     replayAnim(ui.mainMenu, 'battle-menu');
+    placeHpCards();
   }
 
-  function hideMainMenu() { hide(ui.mainMenu); }
+  function hideMainMenu() { hide(ui.mainMenu); placeHpCards(); }
 
   function setMenuCursor(i) {
     if (!ui.mainCells) return;
@@ -841,7 +1036,10 @@
     if (!ui.moveMenu) return;
     liveBattle = battle || liveBattle;
     const b = liveBattle || {};
-    if (ui.hp && ui.hp.player) hide(ui.hp.player.root);
+    // On garde la carte de PV du joueur À L'ÉCRAN : c'est elle qui montre les
+    // dégâts encaissés, et la masquer pendant le choix de l'attaque revenait à
+    // choisir à l'aveugle. `placeHpCards()` la décale si le menu la recouvre.
+    if (ui.hp && ui.hp.player) show(ui.hp.player.root);
 
     const mon = (b.player && b.player.mon) || null;
     const slots = movesOfBattle(b).slice(0, 4);
@@ -894,9 +1092,10 @@
     hideMainMenu(); hideMonMenu(); hideBagMenu();
     show(ui.moveMenu);
     replayAnim(ui.moveMenu, 'move-menu');
+    placeHpCards();
   }
 
-  function hideMoveMenu() { hide(ui.moveMenu); }
+  function hideMoveMenu() { hide(ui.moveMenu); placeHpCards(); }
 
   function setMoveCursor(i) {
     if (!ui.moveCells) return;
@@ -963,9 +1162,10 @@
     hideMainMenu(); hideMoveMenu(); hideBagMenu();
     show(ui.monMenu);
     replayAnim(ui.monMenu, 'mon-menu');
+    placeHpCards();
   }
 
-  function hideMonMenu() { hide(ui.monMenu); }
+  function hideMonMenu() { hide(ui.monMenu); placeHpCards(); }
 
   function setMonCursor(i) {
     if (!ui.monCells || !ui.monCells.length) return;
@@ -1037,9 +1237,10 @@
     hideMainMenu(); hideMoveMenu(); hideMonMenu();
     show(ui.bagMenu);
     replayAnim(ui.bagMenu, 'bag-menu');
+    placeHpCards();
   }
 
-  function hideBagMenu() { hide(ui.bagMenu); }
+  function hideBagMenu() { hide(ui.bagMenu); placeHpCards(); }
 
   function setBagCursor(i) {
     if (!ui.bagCells || !ui.bagCells.length) return;
@@ -1108,6 +1309,8 @@
   function setInBattle(v) {
     const e = $('controls-hint');
     if (e) e.classList.toggle('en-combat', !!v);
+    // La boussole n'a rien à faire par-dessus l'écran de combat.
+    showCompass(!v);
   }
 
   // ===========================================================================
@@ -1163,6 +1366,25 @@
     ui.teamDetailThumb = el('div', 'td-thumb', right);
     ui.teamDetailName = el('div', 'td-name', right, '');
     ui.teamDetailTypes = el('div', 'td-types', right);
+
+    // Le bouton qui manquait : désigner la créature qui combat. Sans lui, la
+    // seule façon de changer de compagnon était d'échanger deux emplacements,
+    // ce que personne ne devine. Il est placé HAUT dans le panneau pour rester
+    // visible sans avoir à faire défiler, même sur un écran peu haut.
+    ui.teamActiveBtn = el('button', 'td-active', right, '⚔️ Envoyer au combat');
+    ui.teamActiveBtn.type = 'button';
+    ui.teamActiveBtn.addEventListener('click', function () {
+      const api = TEAM();
+      if (!api || teamZone !== 'team') return;
+      const mon = api.team[teamCursor];
+      if (!mon) return;
+      if ((mon.hp | 0) <= 0) { toast('Elle est K.O. — soigne-la d\'abord !', '🚫'); return; }
+      if (typeof api.setActive === 'function' && api.setActive(teamCursor)) {
+        renderTeamScreen();
+        toast((mon.nick || mon.id) + ' est ton nouveau compagnon !', '⚔️');
+      }
+    });
+
     ui.teamDetailStats = el('div', 'td-stats', right);
     ui.teamDetailMoves = el('div', 'td-moves', right);
     ui.teamToBoxBtn = el('button', 'td-tobox', right, '↓ Renvoyer à la Boîte');
@@ -1177,7 +1399,8 @@
     });
 
     const teamHint = el('p', 'hint', frame);
-    teamHint.innerHTML = 'Flèches : choisir &nbsp;·&nbsp; Espace : saisir/échanger &nbsp;·&nbsp; Échap : fermer';
+    teamHint.innerHTML = 'Flèches : choisir &nbsp;·&nbsp; <strong>A</strong> : envoyer au combat' +
+      ' &nbsp;·&nbsp; Espace : saisir/échanger &nbsp;·&nbsp; Échap : fermer';
 
     ov.addEventListener('click', function (ev) { if (ev.target === ov) closeTeam(); });
     ui.teamOverlay = ov;
@@ -1202,9 +1425,10 @@
     renderTeamScreen();
     show(ui.teamOverlay);
     replayAnim(ui.teamOverlay, 'overlay');
+    showCompass(false);      // un écran plein masque la boussole
   }
 
-  function closeTeam() { hide(ui.teamOverlay); teamSelected = -1; }
+  function closeTeam() { hide(ui.teamOverlay); teamSelected = -1; showCompass(true); }
 
   function setTeamCursor(i) {
     const api = TEAM();
@@ -1227,7 +1451,9 @@
     renderTeamBadgeStrip();
 
     const team = api ? api.team : [];
+    const activeIdx = (api && typeof api.activeIndex === 'number') ? api.activeIndex : 0;
     ui.teamGrid.innerHTML = '';
+    ui.teamCells = [];
     for (let i = 0; i < TEAM_MAX(); i++) {
       const mon = team[i] || null;
       const sp = mon ? teamSlotLabel(mon) : null;
@@ -1247,10 +1473,17 @@
       } else {
         el('div', 'ts-empty-label', cell, 'Place libre');
       }
+      if (i === activeIdx) el('div', 'ts-active-tag', cell, '⚔️ Au combat');
+      cell.classList.toggle('active', i === activeIdx);
       cell.classList.toggle('cursor', teamZone === 'team' && i === teamCursor);
       cell.classList.toggle('held', i === teamSelected);
       cell.addEventListener('click', function () { teamZone = 'team'; teamCursor = i; onTeamSlotActivate(i); });
-      cell.addEventListener('mouseenter', function () { teamZone = 'team'; teamCursor = i; renderTeamScreen(); });
+      // ⚠️ Surtout PAS de renderTeamScreen() ici : reconstruire la grille sous
+      // le curseur détruit l'élément que la souris est en train de cliquer, et
+      // le clic n'arrive jamais (mousedown et mouseup sur deux éléments
+      // différents). C'est ce qui rendait l'écran Équipe inutilisable.
+      cell.addEventListener('mouseenter', function () { moveTeamCursor('team', i); });
+      ui.teamCells.push(cell);
     }
 
     renderBoxGrid();
@@ -1258,6 +1491,28 @@
   }
 
   function TEAM_MAX() { const api = TEAM(); return (api && api.MAX_TEAM) || 6; }
+
+  /**
+   * Déplace le curseur SANS reconstruire la grille : on se contente de bouger
+   * les classes et de rafraîchir le panneau de détail. C'est ce qui permet au
+   * survol de la souris de ne pas casser le clic (voir le commentaire dans
+   * `renderTeamScreen`).
+   */
+  function moveTeamCursor(zone, index) {
+    teamZone = (zone === 'box') ? 'box' : 'team';
+    if (teamZone === 'team') teamCursor = index; else boxCursor = index;
+    if (ui.teamCells) {
+      ui.teamCells.forEach(function (c, k) {
+        c.classList.toggle('cursor', teamZone === 'team' && k === teamCursor);
+      });
+    }
+    if (ui.boxCells) {
+      ui.boxCells.forEach(function (c, k) {
+        c.classList.toggle('cursor', teamZone === 'box' && k === boxCursor);
+      });
+    }
+    renderTeamDetail();
+  }
 
   function onTeamSlotActivate(i) {
     const api = TEAM();
@@ -1285,6 +1540,7 @@
     ui.boxNext.disabled = boxPage >= totalPages - 1;
 
     ui.boxGrid.innerHTML = '';
+    ui.boxCells = [];
     const start = boxPage * BOX_PAGE_SIZE;
     const pageItems = box.slice(start, start + BOX_PAGE_SIZE);
     if (!pageItems.length) {
@@ -1301,7 +1557,8 @@
       el('div', 'bs-level', cell, 'Nv ' + mon.level);
       cell.classList.toggle('cursor', teamZone === 'box' && localIndex === boxCursor);
       cell.addEventListener('click', function () { teamZone = 'box'; boxCursor = localIndex; onBoxSlotActivate(idx); });
-      cell.addEventListener('mouseenter', function () { teamZone = 'box'; boxCursor = localIndex; renderTeamScreen(); });
+      cell.addEventListener('mouseenter', function () { moveTeamCursor('box', localIndex); });
+      ui.boxCells.push(cell);
       ui.boxGrid.appendChild(cell);
     });
   }
@@ -1342,6 +1599,7 @@
       ui.teamDetailStats.innerHTML = '';
       ui.teamDetailMoves.innerHTML = '';
       ui.teamToBoxBtn.disabled = true;
+      if (ui.teamActiveBtn) { ui.teamActiveBtn.disabled = true; ui.teamActiveBtn.textContent = '⚔️ Envoyer au combat'; }
       return;
     }
     ui.teamDetailThumb.appendChild(thumbFor(sp, 116));
@@ -1368,6 +1626,15 @@
     });
 
     ui.teamToBoxBtn.disabled = !(teamZone === 'team' && api && api.team.length > 1);
+
+    if (ui.teamActiveBtn) {
+      const actif = (api && typeof api.activeIndex === 'number') ? api.activeIndex : 0;
+      const dejaActif = (teamZone === 'team' && teamCursor === actif);
+      const ko = (mon.hp | 0) <= 0;
+      ui.teamActiveBtn.disabled = (teamZone !== 'team') || dejaActif || ko;
+      ui.teamActiveBtn.textContent = dejaActif ? '⚔️ Déjà au combat'
+        : (ko ? '💤 K.O. — impossible' : '⚔️ Envoyer au combat');
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1380,6 +1647,11 @@
     if (key === 'Enter' || key === ' ') {
       if (teamZone === 'team') onTeamSlotActivate(teamCursor);
       else onBoxSlotActivate(boxPage * BOX_PAGE_SIZE + boxCursor);
+      return true;
+    }
+    if (key === 'a' || key === 'A') {
+      // Désigner la créature qui combat — même chose que le bouton du panneau.
+      if (teamZone === 'team' && ui.teamActiveBtn && !ui.teamActiveBtn.disabled) ui.teamActiveBtn.click();
       return true;
     }
     if (key === 'Backspace' || key === 'Delete') {
@@ -1481,9 +1753,10 @@
     renderDexGrid();
     show(ui.dexOverlay);
     replayAnim(ui.dexOverlay, 'overlay');
+    showCompass(false);
   }
 
-  function closeDex() { hide(ui.dexOverlay); }
+  function closeDex() { hide(ui.dexOverlay); showCompass(true); }
 
   function setDexFilter(type) {
     dexFilterType = type || null;
@@ -1613,12 +1886,14 @@
     show(ui.mapOverlay);
     replayAnim(ui.mapOverlay, 'overlay');
     if (!mapRaf) mapRaf = requestAnimationFrame(mapLoop);
+    showCompass(false);
   }
 
   function closeMap() {
     if (!ui.mapOverlay) return;
     hide(ui.mapOverlay);
     if (mapRaf) { cancelAnimationFrame(mapRaf); mapRaf = 0; }
+    showCompass(true);
   }
 
   function mapLoop() {
@@ -1734,6 +2009,7 @@
     });
     container.appendChild(svg);
 
+    const nodes = [];
     Object.keys(WORLD_GRID).forEach(function (id) {
       const pos = WORLD_GRID[id];
       const st = (states && states[id]) || {};
@@ -1747,7 +2023,9 @@
       if (st.sub) el('span', 'wn-sub', btn, st.sub);
       if (st.disabled) btn.disabled = true;
       btn.addEventListener('click', function () { if (onClick) onClick(id, st); });
+      nodes.push({ id: id, btn: btn, state: st });
     });
+    return nodes;
   }
 
   // ===========================================================================
@@ -1783,22 +2061,77 @@
 
     const states = {};
     list.forEach(function (p) {
+      const vu = (p.visited !== undefined) ? !!p.visited : !!visited[p.regionId];
       states[p.regionId] = {
-        current: p.current, visited: p.enabled, disabled: !p.enabled && !p.current,
+        current: p.current, visited: vu, disabled: !p.enabled && !p.current,
         label: p.region || regionName(p.regionId),
-        sub: p.current ? 'Tu y es' : (p.enabled ? p.name : (p.reason || 'À découvrir à pied')),
-        icon: p.current ? '🎈' : (p.enabled ? '⚓' : '🔒'),
+        sub: p.current ? 'Tu y es'
+          : (p.enabled ? (vu ? p.name : (p.reason || 'Région à découvrir'))
+            : (p.reason || 'À découvrir à pied')),
+        icon: p.current ? '🎈' : (p.enabled ? (vu ? '⚓' : '✨') : '🔒'),
       };
     });
-    buildWorldGrid(ui.airshipGrid, states, function (id, s) {
+    airshipNodes = buildWorldGrid(ui.airshipGrid, states, function (id, s) {
       if (s.current) { toast('Tu es déjà ici !', '🎈'); return; }
       if (s.disabled) { toast('Il faut y être allé à pied avant !', '🚶'); return; }
       closeAirshipMenu();
       if (onChoose) onChoose(id);
     });
+    // Curseur posé d'emblée sur la première destination atteignable.
+    let start = 0;
+    for (let i = 0; i < airshipNodes.length; i++) {
+      if (selectableNode(airshipNodes[i])) { start = i; break; }
+    }
+    setAirshipCursor(start);
 
     show(ui.airshipOverlay);
     replayAnim(ui.airshipOverlay, 'overlay');
+    showCompass(false);
+  }
+
+  // --- pilotage au CLAVIER du menu du dirigeable -----------------------------
+  // Sans ça, le menu ne répondait qu'à la souris : ni Échap pour sortir, ni
+  // flèches pour choisir — on pouvait s'y retrouver coincé.
+  let airshipNodes = [];
+  let airshipCursor = 0;
+
+  function airshipCount() { return airshipNodes.length; }
+
+  function selectableNode(n) {
+    return !!(n && n.btn && !n.btn.disabled && !(n.state && n.state.current));
+  }
+
+  /** Déplace le curseur d'un cran, en sautant les régions non atteignables. */
+  function moveAirshipCursor(delta) {
+    const n = airshipNodes.length;
+    if (!n) return;
+    const d = (delta < 0) ? -1 : 1;
+    let i = airshipCursor;
+    for (let k = 0; k < n; k++) {
+      i = ((i + d) % n + n) % n;
+      if (selectableNode(airshipNodes[i])) break;
+    }
+    setAirshipCursor(i);
+  }
+
+  function setAirshipCursor(i) {
+    if (!airshipNodes.length) return;
+    airshipCursor = ((i % airshipNodes.length) + airshipNodes.length) % airshipNodes.length;
+    for (let k = 0; k < airshipNodes.length; k++) {
+      airshipNodes[k].btn.classList.toggle('focus', k === airshipCursor);
+    }
+    const n = airshipNodes[airshipCursor];
+    if (n && n.btn && n.btn.scrollIntoView) {
+      try { n.btn.scrollIntoView({ block: 'nearest' }); } catch (e) { /* vieux navigateur */ }
+    }
+  }
+
+  /** Valide la destination sous le curseur (Espace / Entrée). */
+  function confirmAirship() {
+    const n = airshipNodes[airshipCursor];
+    if (!n || !n.btn) return false;
+    n.btn.click();
+    return true;
   }
 
   function normalizePorts(ports, current, visited) {
@@ -1817,7 +2150,7 @@
     });
   }
 
-  function closeAirshipMenu() { hide(ui.airshipOverlay); }
+  function closeAirshipMenu() { hide(ui.airshipOverlay); showCompass(true); }
 
   // ===========================================================================
   //  COLLECTION  (ids historiques conservés : #collection-overlay/-grid)
@@ -2051,6 +2384,15 @@
     // dirigeable (§17 bis)
     openAirshipMenu: openAirshipMenu,
     closeAirshipMenu: closeAirshipMenu,
+    setAirshipCursor: setAirshipCursor,
+    moveAirshipCursor: moveAirshipCursor,
+    confirmAirship: confirmAirship,
+    airshipCount: airshipCount,
+
+    // boussole permanente et vue courante
+    setCompass: setCompass,
+    showCompass: showCompass,
+    setViewMode: setViewMode,
 
     // --- extensions hors contrat, conservées pour la compatibilité et pour
     //     que les écrans titre / starter / collection restent fonctionnels ---

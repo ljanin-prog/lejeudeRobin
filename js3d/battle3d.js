@@ -134,11 +134,53 @@
     });
   }
 
-  /** Nombre de particules ajusté à la qualité choisie. */
+  /** Nombre de particules ajusté à la qualité choisie.
+   *  En qualité haute on est GÉNÉREUX : les combats ne rendent qu'une poignée
+   *  d'objets (deux créatures et deux plateformes), tout le budget peut partir
+   *  dans les effets — c'est là que se joue le spectacle. */
   function qCount(n) {
     if (!R3.quality.particles) return Math.max(3, Math.round(n * 0.25));
-    if (R3.quality.level === 'medium') return Math.max(4, Math.round(n * 0.65));
+    if (R3.quality.level === 'medium') return Math.max(4, Math.round(n * 0.70));
     return n;
+  }
+
+  // ---------------------------------------------------------------------------
+  //  HALO DOUX PARTAGÉ — c'est LA brique qui fait la différence entre un effet
+  //  « géométrique » et un effet lumineux : un dégradé radial dessiné au canvas,
+  //  affiché en sprite additif. Une seule texture pour tout le jeu.
+  // ---------------------------------------------------------------------------
+  let _glowTex = null;
+  function glowTexture() {
+    if (_glowTex) return _glowTex;
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = 128;
+    const c = cv.getContext('2d');
+    const g = c.createRadialGradient(64, 64, 0, 64, 64, 64);
+    g.addColorStop(0.00, 'rgba(255,255,255,1)');
+    g.addColorStop(0.18, 'rgba(255,255,255,0.85)');
+    g.addColorStop(0.42, 'rgba(255,255,255,0.34)');
+    g.addColorStop(0.72, 'rgba(255,255,255,0.08)');
+    g.addColorStop(1.00, 'rgba(255,255,255,0)');
+    c.fillStyle = g;
+    c.fillRect(0, 0, 128, 128);
+    _glowTex = new THREE.CanvasTexture(cv);
+    return _glowTex;
+  }
+
+  /** Sprite lumineux additif (toujours face caméra, jamais d'ombre). */
+  function glowSprite(color, size, opacity) {
+    const m = new THREE.SpriteMaterial({
+      map: glowTexture(),
+      color: new THREE.Color(color),
+      transparent: true,
+      opacity: (opacity === undefined) ? 1 : opacity,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      fog: false,
+    });
+    const s = new THREE.Sprite(m);
+    s.scale.set(size, size, 1);
+    return s;
   }
 
   // ---------------------------------------------------------------------------
@@ -162,6 +204,18 @@
 
   let foe = null, plr = null;  // les deux camps (voir makeSide)
   const fxList = [];           // effets en cours
+
+  // Ressenti de l'impact : un très court arrêt sur image + un coup de zoom.
+  // Ce sont les deux astuces qui font qu'un coup « se sent » au lieu d'être
+  // simplement affiché.
+  let hitStop = 0;             // secondes de quasi-gel restantes
+  let zoomPunch = 0;           // amplitude du coup de zoom (0 = repos)
+  const CAM_FOV = 42;          // fov de repos de la caméra de combat
+
+  // Puissance du coup en cours (1 = normal, ~1,8 = super efficace + critique).
+  // Posée par playFx() le temps d'un dispatchFx : les 18 effets appellent
+  // fxImpact() sans paramètre, elle leur sert d'amplificateur commun.
+  let fxForce = 1;
 
   let resultDone = false;      // le flourish de fin de combat n'a joué qu'une fois
   let animSeqLocal = 0;        // compteur local pour bs.anim.seq
@@ -613,31 +667,87 @@
   //  de capacité (plus bas) puisent.
   // ===========================================================================
 
+  const FX_MAX = 60;
+
   function spawnFx(e) {
+    // Garde-fou anti-avalanche : au-delà de FX_MAX effets vivants, on retire
+    // les plus anciens. Une explosion en compte une dizaine ; dépasser 60
+    // signifie qu'un enchaînement inattendu s'emballe.
+    while (fxList.length >= FX_MAX) {
+      const vieux = fxList.shift();
+      if (vieux && !vieux.mort) { vieux.mort = true; killFx(vieux, true); }
+    }
     e.age = 0;
+    // `delay` : l'effet existe mais reste invisible et figé le temps voulu.
+    // Indispensable pour mettre en scène en trois actes (charge → frappe →
+    // explosion) sans dépendre de setTimeout, qui ignorerait l'arrêt sur image.
+    if (e.delay > 0 && e.group) e.group.visible = false;
     if (e.group) scene.add(e.group);
     fxList.push(e);
     return e;
   }
 
-  function killFx(e) {
+  /**
+   * @param {boolean} [avorte] true = l'effet est interrompu (fin de combat,
+   *        garde-fou anti-avalanche) : on nettoie, mais on n'enchaîne PAS sur
+   *        la suite (onEnd), sinon on rallume des effets dans une scène qui
+   *        disparaît. onKill, lui, est toujours appelé : c'est le ménage
+   *        (retirer un voile accroché à la caméra, par exemple).
+   */
+  function killFx(e, avorte) {
     if (e.group && e.group.parent) e.group.parent.remove(e.group);
     if (e.mats) e.mats.forEach(function (m) { m.dispose(); });
-    if (e.onEnd) e.onEnd();
+    if (e.onKill) e.onKill();
+    // Les géométries CRÉÉES pour l'effet (tubes d'éclair, lames…) doivent être
+    // libérées ici : contrairement à celles de R3/ownGeo, elles ne resservent pas.
+    if (e.geos) e.geos.forEach(function (g) { if (g && g.dispose) g.dispose(); });
+    if (e.onEnd && !avorte) e.onEnd();
   }
 
+  function retirerFx(e) {
+    const i = fxList.indexOf(e);
+    if (i >= 0) fxList.splice(i, 1);
+  }
+
+  // On parcourt un INSTANTANÉ de la liste : la fin d'un effet peut en créer
+  // d'autres (mise en scène en trois actes) et le garde-fou peut en supprimer.
+  // Boucler sur des index vivants faisait alors sauter un effet de la liste
+  // sans jamais retirer son groupe de la scène — une fuite silencieuse.
+  const _fxSnap = [];
+
   function updateFx(dts) {
-    for (let i = fxList.length - 1; i >= 0; i--) {
-      const e = fxList[i];
+    _fxSnap.length = 0;
+    for (let i = 0; i < fxList.length; i++) _fxSnap.push(fxList[i]);
+    for (let i = 0; i < _fxSnap.length; i++) {
+      const e = _fxSnap[i];
+      if (e.mort) continue;
+      if (e.delay > 0) {
+        e.delay -= dts;
+        if (e.delay > 0) continue;
+        if (e.group) e.group.visible = true;
+      }
       e.age += dts;
       const p = e.age / e.life;
-      if (p >= 1) { killFx(e); fxList.splice(i, 1); continue; }
+      if (p >= 1) { e.mort = true; retirerFx(e); killFx(e); continue; }
       if (e.update) e.update(p, e);
     }
   }
 
+  /**
+   * Minuterie du combat : rappelle `fn` dans `delai` secondes de TEMPS DE JEU.
+   * On n'utilise jamais `setTimeout` ici — il continuerait à tourner pendant un
+   * arrêt sur image, une pause ou un changement d'écran, et ferait exploser des
+   * effets dans une scène déjà détruite.
+   */
+  function setTimeoutFx(delai, fn) {
+    spawnFx({ group: null, mats: null, life: Math.max(0.001, delai), onEnd: fn });
+  }
+
   function clearFx() {
-    while (fxList.length) killFx(fxList.pop());
+    while (fxList.length) {
+      const e = fxList.pop();
+      if (e && !e.mort) { e.mort = true; killFx(e, true); }
+    }
   }
 
   /** Gerbe d'étoiles dorées (capture réussie / victoire / créature qui jaillit). */
@@ -684,34 +794,46 @@
     });
   }
 
-  /** Petites étincelles rapides. */
+  /** Étincelles : des braises lumineuses (un seul sprite additif chacune, donc
+   *  bon marché) qui s'étirent dans le sens de leur vitesse — c'est cette
+   *  traînée qui les fait « filer » au lieu de flotter. */
   function fxSparks(pos, n, color, spread) {
     n = qCount(n || 10);
-    const m = fxMat(color || '#fff0c8', true, 1);
+    const col = color || '#fff0c8';
+    const halo = new THREE.SpriteMaterial({
+      map: glowTexture(), color: new THREE.Color(col), transparent: true,
+      opacity: 1, depthWrite: false, blending: THREE.AdditiveBlending, fog: false,
+    });
     const g = new THREE.Group();
     const parts = [];
     const sp = spread || 1.6;
     for (let i = 0; i < n; i++) {
-      const s = new THREE.Mesh(R3.geo.sphere(1, 8), m);
-      s.position.copy(pos);
-      s.scale.setScalar(0.035 + Math.random() * 0.045);
-      s.castShadow = false;
-      g.add(s);
+      const q = new THREE.Sprite(halo);
+      q.position.copy(pos);
+      const taille = 0.22 + Math.random() * 0.22;
+      q.scale.set(taille, taille, 1);
+      g.add(q);
       const a = Math.random() * Math.PI * 2, b = Math.random() * Math.PI - Math.PI / 2;
       parts.push({
-        mesh: s, p0: pos.clone(),
+        halo: q, t0: taille, p0: pos.clone(),
         v: new THREE.Vector3(Math.cos(b) * Math.sin(a), Math.sin(b) * 0.8 + 0.6, Math.cos(b) * Math.cos(a))
           .multiplyScalar(sp * (0.5 + Math.random())),
       });
     }
     spawnFx({
-      group: g, mats: [m], life: 0.6,
+      group: g, mats: [halo], life: 0.62,
       update: function (p) {
-        const t = p * 0.6;
+        const t = p * 0.62;
         parts.forEach(function (q) {
-          q.mesh.position.set(q.p0.x + q.v.x * t, q.p0.y + q.v.y * t - 1.6 * t * t, q.p0.z + q.v.z * t);
+          q.halo.position.set(
+            q.p0.x + q.v.x * t,
+            q.p0.y + q.v.y * t - 1.6 * t * t,
+            q.p0.z + q.v.z * t
+          );
+          const vit = 1 + Math.min(1.7, q.v.length() * (1 - p) * 0.25);
+          q.halo.scale.set(q.t0 * (1 - p * 0.45), q.t0 * vit * (1 - p * 0.45), 1);
         });
-        m.opacity = 1 - p * p;
+        halo.opacity = (1 - p) * (1 - p * 0.4);
       },
     });
   }
@@ -811,31 +933,132 @@
     });
   }
 
-  /** Éclat d'impact tinté par type : halo + anneau + étincelles + petite secousse.
-   *  C'est la « confirmation de coup » commune à la plupart des 18 effets — ce
-   *  qui les distingue reste la forme bespoke que chacun ajoute par-dessus. */
-  function fxImpact(pos, color) {
-    const m = fxMat(color || '#fff0c8', true, 0.95);
-    const halo = new THREE.Mesh(R3.geo.sphere(1, 12), m);
-    halo.position.copy(pos);
-    halo.castShadow = false;
+  /** Halo lumineux qui enfle puis s'éteint — la brique de base du spectacle. */
+  function fxGlow(pos, color, size, life, opacity) {
+    const s = glowSprite(color || '#ffffff', size || 2, opacity === undefined ? 1 : opacity);
+    s.position.copy(pos);
     const g = new THREE.Group();
-    g.add(halo);
+    g.add(s);
+    const o0 = (opacity === undefined) ? 1 : opacity;
     spawnFx({
-      group: g, mats: [m], life: 0.32,
+      group: g, mats: [s.material], life: life || 0.35,
       update: function (p) {
-        halo.scale.setScalar(0.2 + p * 0.85);
-        m.opacity = 0.95 * (1 - p);
+        const k = 0.35 + R3.easeOut(p) * 1.05;
+        s.scale.set((size || 2) * k, (size || 2) * k, 1);
+        s.material.opacity = o0 * (1 - p) * (1 - p);
       },
     });
-    fxRing(pos, color || '#ffffff', 1.5, false);
-    fxSparks(pos, 14, color || '#fff0c8', 2.2);
-    camShake = Math.max(camShake, 0.16);
-    if (punchLight) {
-      punchLight.position.copy(pos);
-      punchLight.intensity = 3.2;
-      punchLight.color.set(color || '#fff0c8');
+  }
+
+  /** Rayons de lumière radiaux, toujours face caméra : la signature « anime »
+   *  d'un coup puissant. */
+  function fxRays(pos, color, n, len) {
+    n = Math.max(5, Math.round(qCount(n || 7) * 0.5));
+    const m = fxMat(color || '#ffffff', true, 0.9);
+    const geo = ownGeo('fx-ray', function () { return new THREE.PlaneGeometry(0.06, 1); });
+    const g = new THREE.Group();
+    g.position.copy(pos);
+    const parts = [];
+    for (let i = 0; i < n; i++) {
+      const mesh = new THREE.Mesh(geo, m);
+      const a = (i / n) * Math.PI * 2 + Math.random() * 0.3;
+      mesh.rotation.z = -a;
+      mesh.castShadow = false;
+      g.add(mesh);
+      parts.push({ mesh: mesh, a: a, l: (len || 1.6) * (0.6 + Math.random() * 0.8) });
     }
+    spawnFx({
+      group: g, mats: [m], life: 0.34,
+      update: function (p) {
+        if (camera) g.quaternion.copy(camera.quaternion);   // billboard
+        const e = R3.easeOut(p);
+        parts.forEach(function (q) {
+          const L = q.l * (0.25 + e * 1.0);
+          q.mesh.scale.set(1 - p * 0.6, L, 1);
+          q.mesh.position.set(Math.sin(q.a) * L * 0.5, Math.cos(q.a) * L * 0.5, 0);
+        });
+        m.opacity = 0.9 * (1 - p) * (1 - p);
+      },
+    });
+  }
+
+  /** Éclats projetés par le choc : petits fragments qui retombent en tournant. */
+  function fxDebris(pos, color, n) {
+    n = qCount(n || 9);
+    const m = fxMat(color || '#ffffff', false, 1);
+    const geo = ownGeo('fx-shard', function () { return new THREE.TetrahedronGeometry(0.11, 0); });
+    const g = new THREE.Group();
+    const parts = [];
+    for (let i = 0; i < n; i++) {
+      const mesh = new THREE.Mesh(geo, m);
+      mesh.position.copy(pos);
+      mesh.castShadow = false;
+      mesh.scale.setScalar(0.5 + Math.random() * 0.9);
+      g.add(mesh);
+      const a = Math.random() * Math.PI * 2, b = Math.random() * 0.9;
+      parts.push({
+        mesh: mesh,
+        v: new THREE.Vector3(Math.sin(a) * Math.cos(b), Math.sin(b) + 0.55, Math.cos(a) * Math.cos(b))
+          .multiplyScalar(2.0 + Math.random() * 2.2),
+        sx: (Math.random() - 0.5) * 22, sy: (Math.random() - 0.5) * 22,
+      });
+    }
+    spawnFx({
+      group: g, mats: [m], life: 0.75,
+      update: function (p) {
+        const t = p * 0.75;
+        parts.forEach(function (q) {
+          q.mesh.position.set(pos.x + q.v.x * t, pos.y + q.v.y * t - 4.6 * t * t, pos.z + q.v.z * t);
+          q.mesh.rotation.x += q.sx * 0.016;
+          q.mesh.rotation.y += q.sy * 0.016;
+        });
+        m.opacity = 1 - p * p;
+      },
+    });
+  }
+
+  /** Dôme de choc : la bulle d'énergie qui se propage au point d'impact. */
+  function fxShockDome(pos, color, rMax) {
+    const m = fxMat(color || '#ffffff', true, 0.5);
+    const geo = ownGeo('fx-dome', function () { return new THREE.SphereGeometry(1, 18, 10); });
+    const mesh = new THREE.Mesh(geo, m);
+    mesh.position.copy(pos);
+    mesh.castShadow = false;
+    const g = new THREE.Group();
+    g.add(mesh);
+    spawnFx({
+      group: g, mats: [m], life: 0.42,
+      update: function (p) {
+        const s = 0.15 + R3.easeOut(p) * (rMax || 1.9);
+        mesh.scale.set(s, s * 0.78, s);
+        m.opacity = 0.5 * (1 - p) * (1 - p);
+      },
+    });
+  }
+
+  /**
+   * Éclat d'impact — la « confirmation de coup » commune aux 18 effets.
+   * Version spectacle : cœur blanc incandescent, halo teinté, deux anneaux de
+   * choc, dôme d'énergie, rayons, éclats, étincelles, voile d'écran teinté,
+   * secousse de caméra, arrêt sur image et coup de zoom.
+   * @param {number} [force] 1 = coup normal ; 1,4 = coup super efficace.
+   */
+  function fxImpact(pos, color, force) {
+    const f = force || fxForce || 1;
+    const col = color || '#fff0c8';
+
+    // Coup RATÉ : pas de gerbe d'impact, juste un souffle qui passe à côté —
+    // sinon l'écran explose alors que le message annonce « Raté… ».
+    if (f <= 0.5) {
+      fxGlow(pos, col, 1.5, 0.28, 0.45);
+      camShake = Math.max(camShake, 0.06);
+      return;
+    }
+
+    // Tout le spectacle est dans fxExplosion() : fxImpact n'est plus qu'un
+    // raccourci, pour que les rares appels qui ne passent pas par une capacité
+    // (projectile générique, effets de secours) aient le même rendu.
+    fxExplosion(pos, col, 0.85 * f);
   }
 
   /** Spirale de particules montantes + croix blanche : un soin a été utilisé.
@@ -891,557 +1114,1262 @@
     spawnFx({
       group: null, mats: [m], life: life || 0.45,
       update: function (p) { m.opacity = (strength || 0.85) * (1 - R3.easeOut(p)); },
-      onEnd: function () { if (quad.parent) quad.parent.remove(quad); },
+      onKill: function () { if (quad.parent) quad.parent.remove(quad); },
     });
   }
 
   // ===========================================================================
-  //  LES 18 EFFETS DE CAPACITÉ (playFx) — chacun doit se reconnaître d'un coup
-  //  d'œil. `origin` = position de l'attaquant, `target` = position de la
-  //  cible (le défenseur, ou l'attaquant lui-même pour un soin), `color` =
-  //  couleur du type de la capacité (R3.get('types').color(move.type)).
+  //  LES EFFETS DE CAPACITÉ — VERSION SPECTACLE
+  // ---------------------------------------------------------------------------
+  //  Demande de Robin : « des attaques spectaculaires, de la vraie 3D ».
+  //  Chaque capacité se joue donc en TROIS ACTES, comme dans un dessin animé :
+  //
+  //     1. LA CHARGE   — l'énergie s'accumule sur l'attaquant (particules qui
+  //                      convergent, orbe qui grossit, anneaux qui montent) ;
+  //     2. LA FRAPPE   — quelque chose de VOLUMIQUE traverse l'arène : colonne
+  //                      de feu, éclair en tube 3D, mur d'eau, blocs de pierre,
+  //                      lames géantes… avec sa traînée et sa lumière ;
+  //     3. L'EXPLOSION — `fxExplosion()`, commune à tous : flash, boule de feu
+  //                      volumétrique, double onde de choc, éclats 3D, rayons,
+  //                      fumée qui monte, braises, trace au sol, secousse,
+  //                      arrêt sur image et coup de zoom.
+  //
+  //  `origin` = position de l'attaquant, `target` = position de la cible,
+  //  `color` = couleur du type de la capacité. Tout est mis à l'échelle par
+  //  `fxForce` (raté 0,45 → super efficace + critique ≈ 1,8).
   // ===========================================================================
 
-  /** slash — deux ou trois lames rapides qui balafrent la cible. */
-  function fxSlash(origin, target, color) {
-    const n = 3;
+  // --- Textures dessinées au canvas (aucun fichier : le jeu doit rester
+  //     jouable par simple double-clic) ---------------------------------------
+
+  function makeTex(dessin, taille) {
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = taille || 128;
+    dessin(cv.getContext('2d'), cv.width);
+    const t = new THREE.CanvasTexture(cv);
+    if ('colorSpace' in t && THREE.SRGBColorSpace) t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  }
+
+  let _flameTex = null, _smokeTex = null, _ringTex = null;
+
+  /** Boule de feu : cœur blanc, corps saturé, bords déchiquetés. */
+  function flameTexture() {
+    if (_flameTex) return _flameTex;
+    _flameTex = makeTex(function (c, S) {
+      const h = S / 2;
+      const g = c.createRadialGradient(h, h, 0, h, h, h);
+      // Volontairement PEU opaque : en fondu additif, une dizaine de sprites
+      // qui se recouvrent saturent tout de suite en blanc et la couleur du
+      // type disparaît. Mieux vaut un dégradé discret, très étalé.
+      g.addColorStop(0.00, 'rgba(255,255,255,0.80)');
+      g.addColorStop(0.20, 'rgba(255,246,222,0.52)');
+      g.addColorStop(0.48, 'rgba(255,255,255,0.26)');
+      g.addColorStop(0.78, 'rgba(255,255,255,0.07)');
+      g.addColorStop(1.00, 'rgba(255,255,255,0)');
+      c.fillStyle = g;
+      c.fillRect(0, 0, S, S);
+      // langues de flamme : quelques pointes claires vers l'extérieur
+      c.globalCompositeOperation = 'lighter';
+      for (let i = 0; i < 9; i++) {
+        const a = (i / 9) * Math.PI * 2 + 0.4;
+        const r = h * (0.45 + (i % 3) * 0.16);
+        const gg = c.createRadialGradient(h + Math.cos(a) * r, h + Math.sin(a) * r, 0,
+          h + Math.cos(a) * r, h + Math.sin(a) * r, h * 0.30);
+        gg.addColorStop(0, 'rgba(255,255,255,0.22)');
+        gg.addColorStop(1, 'rgba(255,255,255,0)');
+        c.fillStyle = gg;
+        c.fillRect(0, 0, S, S);
+      }
+    }, 128);
+    return _flameTex;
+  }
+
+  /** Fumée : gros flocon mou et irrégulier. */
+  function smokeTexture() {
+    if (_smokeTex) return _smokeTex;
+    _smokeTex = makeTex(function (c, S) {
+      const h = S / 2;
+      for (let i = 0; i < 7; i++) {
+        const a = (i / 7) * Math.PI * 2;
+        const r = (i === 0) ? 0 : h * 0.36;
+        const x = h + Math.cos(a) * r, y = h + Math.sin(a) * r;
+        const rad = h * (i === 0 ? 0.62 : 0.42);
+        const g = c.createRadialGradient(x, y, 0, x, y, rad);
+        g.addColorStop(0.0, 'rgba(255,255,255,0.55)');
+        g.addColorStop(0.6, 'rgba(255,255,255,0.22)');
+        g.addColorStop(1.0, 'rgba(255,255,255,0)');
+        c.fillStyle = g;
+        c.fillRect(0, 0, S, S);
+      }
+    }, 128);
+    return _smokeTex;
+  }
+
+  /** Anneau de choc plein écran (sprite accroché à la caméra). */
+  function ringTexture() {
+    if (_ringTex) return _ringTex;
+    _ringTex = makeTex(function (c, S) {
+      const h = S / 2;
+      const g = c.createRadialGradient(h, h, h * 0.62, h, h, h * 0.99);
+      g.addColorStop(0.00, 'rgba(255,255,255,0)');
+      g.addColorStop(0.45, 'rgba(255,255,255,0.85)');
+      g.addColorStop(0.75, 'rgba(255,255,255,0.35)');
+      g.addColorStop(1.00, 'rgba(255,255,255,0)');
+      c.fillStyle = g;
+      c.beginPath();
+      c.arc(h, h, h, 0, Math.PI * 2);
+      c.fill();
+    }, 256);
+    return _ringTex;
+  }
+
+  /** Matériau de sprite jetable (libéré avec l'effet). */
+  function sprMat(tex, color, opacity, additive) {
+    return new THREE.SpriteMaterial({
+      map: tex,
+      color: new THREE.Color(color || '#ffffff'),
+      transparent: true,
+      opacity: (opacity === undefined) ? 1 : opacity,
+      depthWrite: false,
+      blending: (additive === false) ? THREE.NormalBlending : THREE.AdditiveBlending,
+      fog: false,
+    });
+  }
+
+  /** Point de lumière qui accompagne un effet (une seule à la fois). */
+  function setPunch(pos, color, intensity) {
+    if (!punchLight) return;
+    punchLight.position.copy(pos);
+    punchLight.color.set(color || '#fff0c8');
+    punchLight.intensity = Math.max(punchLight.intensity, intensity);
+  }
+
+  // ---------------------------------------------------------------------------
+  //  NUAGE VOLUMÉTRIQUE — la brique du feu, de la fumée, de la poussière et des
+  //  boules de feu. Des dizaines de sprites qui se dispersent, tournent et
+  //  grossissent : de loin, ça se lit comme un volume, pas comme des pastilles.
+  // ---------------------------------------------------------------------------
+  function fxCloud(pos, o) {
+    o = o || {};
+    const n = qCount(o.n || 14);
+    const tex = o.tex || flameTexture();
+    const m = sprMat(tex, o.color || '#ffffff', o.opacity === undefined ? 1 : o.opacity, o.additive !== false);
+    const g = new THREE.Group();
+    const parts = [];
+    const spread = (o.spread === undefined) ? 1.2 : o.spread;
+    const size = o.size || 1;
+    for (let i = 0; i < n; i++) {
+      const s = new THREE.Sprite(m);
+      const a = Math.random() * Math.PI * 2;
+      const b = (Math.random() - 0.5) * Math.PI;
+      const v = new THREE.Vector3(Math.cos(b) * Math.cos(a), Math.sin(b) * 0.7 + (o.rise || 0), Math.cos(b) * Math.sin(a))
+        .multiplyScalar(spread * (0.35 + Math.random()));
+      if (o.vel) v.add(o.vel);
+      const s0 = size * (0.55 + Math.random() * 0.9);
+      s.position.copy(pos);
+      s.scale.set(s0, s0, 1);
+      s.material.rotation = Math.random() * Math.PI * 2;
+      g.add(s);
+      parts.push({ s: s, v: v, s0: s0, d: (Math.random() - 0.5) * 2.4, ph: Math.random() * 6.28 });
+    }
+    const life = o.life || 0.9;
+    const grav = (o.gravity === undefined) ? 0 : o.gravity;
+    const grow = (o.grow === undefined) ? 1.5 : o.grow;
+    const op0 = (o.opacity === undefined) ? 1 : o.opacity;
+    spawnFx({
+      group: g, mats: [m], life: life, delay: o.delay || 0,
+      update: function (p) {
+        const t = p * life;
+        for (let i = 0; i < parts.length; i++) {
+          const q = parts[i];
+          q.s.position.set(
+            pos.x + q.v.x * t + Math.sin(q.ph + t * 3) * 0.06,
+            pos.y + q.v.y * t - grav * t * t,
+            pos.z + q.v.z * t + Math.cos(q.ph + t * 3) * 0.06
+          );
+          const k = q.s0 * (1 + p * grow);
+          q.s.scale.set(k, k, 1);
+          q.s.material.rotation += q.d * 0.012;
+        }
+        m.opacity = op0 * (o.fadeIn && p < 0.15 ? p / 0.15 : (1 - p) * (1 - p * 0.4));
+      },
+    });
+    return m;
+  }
+
+  // ---------------------------------------------------------------------------
+  //  L'EXPLOSION — le clou du spectacle, commune à toutes les capacités.
+  // ---------------------------------------------------------------------------
+  function fxExplosion(pos, color, scale, o) {
+    o = o || {};
+    const col = color || '#fff0c8';
+
+    // Ce qui coûte cher dans une explosion, ce n'est pas le nombre d'objets
+    // mais la SURFACE d'écran repeinte (des dizaines de sprites translucides
+    // superposés). On réduit donc la taille — pas seulement le nombre — dès
+    // que la qualité descend, et on coupe les fioritures plein écran.
+    const riche = R3.quality.particles !== false;
+    const moyen = R3.quality.level === 'medium';
+    const S = (scale || 1) * (riche ? (moyen ? 0.85 : 1) : 0.7);
+
+    // 1. Flash blanc : très gros, très court. C'est lui qui « claque ».
+    const flashM = sprMat(flameTexture(), '#ffffff', 1, true);
+    const flash = new THREE.Sprite(flashM);
+    flash.position.copy(pos);
+    const gF = new THREE.Group(); gF.add(flash);
+    spawnFx({
+      group: gF, mats: [flashM], life: 0.18,
+      update: function (p) {
+        const k = (1.2 + R3.easeOut(p) * 3.0) * S;
+        flash.scale.set(k, k, 1);
+        flashM.opacity = 0.8 * (1 - p) * (1 - p);
+      },
+    });
+
+    // 2. Noyau plein : une sphère qui enfle et se teinte.
+    const coreM = fxMat('#ffffff', true, 1);
+    const core = new THREE.Mesh(R3.geo.sphere(1, 16), coreM);
+    core.position.copy(pos);
+    core.castShadow = false;
+    const gC = new THREE.Group(); gC.add(core);
+    spawnFx({
+      group: gC, mats: [coreM], life: 0.34,
+      update: function (p) {
+        core.scale.setScalar((0.25 + R3.easeOut(p) * 1.5) * S);
+        coreM.color.lerpColors(new THREE.Color('#ffffff'), new THREE.Color(col), Math.min(1, p * 2.2));
+        coreM.opacity = (1 - p) * (1 - p);
+      },
+    });
+
+    // 3. La boule de feu, en DEUX COUCHES.
+    //    Le corps est en fondu NORMAL : sur le ciel très clair d'une arène, le
+    //    fondu additif vire immédiatement au blanc et la couleur du type
+    //    disparaît. Seul le cœur, plus petit, reste additif — c'est lui qui
+    //    donne l'incandescence sans laver l'image.
+    fxCloud(pos, {
+      n: o.fireballs || 16, tex: flameTexture(), color: col, size: 1.0 * S,
+      spread: 2.6 * S, rise: 0.55, life: 0.70, grow: 1.1, opacity: 0.92,
+      additive: false,
+    });
+    if (riche) {
+      fxCloud(pos, {
+        n: 7, tex: flameTexture(),
+        color: o.heart || '#fff0c0', size: 0.75 * S,
+        spread: 1.4 * S, rise: 0.4, life: 0.44, grow: 1.0, opacity: 0.75,
+      });
+    }
+
+    // 4. Deux ondes de choc : une au sol qui court loin, une verticale.
+    fxRing(new THREE.Vector3(pos.x, 0.06, pos.z), col, 4.6 * S, true);
+    fxRing(pos, '#ffffff', 2.0 * S, false);
+    fxShockDome(pos, col, 2.6 * S);
+
+    // 5. Éclats 3D et braises.
+    fxDebris(pos, col, o.debris === undefined ? 12 : o.debris);
+    fxSparks(pos, 16, col, 3.4 * S);
+    fxRays(pos, col, 10, 2.4 * S);
+
+    // 6. La fumée monte APRÈS le feu — c'est ce décalage qui donne le volume.
+    if (riche) fxCloud(pos, {
+      n: 8, tex: smokeTexture(), color: o.smoke || '#d8d3cc', size: 1.1 * S,
+      spread: 1.0 * S, rise: 1.5, life: 1.35, grow: 1.6, opacity: 0.5,
+      additive: false, delay: 0.10, fadeIn: true,
+    });
+
+    // 7. La trace au sol : un disque sombre qui s'efface.
+    if (o.scorch !== false) {
+      const scM = fxMat('#000000', false, 0.34);
+      scM.blending = THREE.NormalBlending;
+      const sc = new THREE.Mesh(R3.geo.cyl(1, 1, 0.02, 20), scM);
+      sc.position.set(pos.x, 0.045, pos.z);
+      sc.castShadow = false;
+      const gS = new THREE.Group(); gS.add(sc);
+      spawnFx({
+        group: gS, mats: [scM], life: 1.6,
+        update: function (p) {
+          const k = (0.9 + R3.easeOut(Math.min(1, p * 4)) * 0.9) * S;
+          sc.scale.set(k, 1, k);
+          scM.opacity = 0.34 * (1 - p);
+        },
+      });
+    }
+
+    // 8. L'onde de choc PLEIN ÉCRAN, accrochée à la caméra (qualité haute).
+    if (riche && !moyen) fxScreenRing(col, 0.5 + 0.5 * S);
+
+    // 9. Le ressenti.
+    setPunch(pos, col, 7.5 * S);
+    camShake = Math.max(camShake, 0.34 * S);
+    hitStop = Math.max(hitStop, 0.075 * S);
+    zoomPunch = Math.max(zoomPunch, 1.25 * S);
+    fxFlash(col, 0.26, 0.16 * S);
+  }
+
+  /** Anneau de choc en surimpression, accroché à la caméra : très « cinéma ». */
+  function fxScreenRing(color, force) {
+    if (!camera) return;
+    const m = sprMat(ringTexture(), color || '#ffffff', 0.8, true);
+    const s = new THREE.Sprite(m);
+    s.position.set(0, 0, -2.2);
+    s.renderOrder = 998;
+    camera.add(s);
+    spawnFx({
+      group: null, mats: [m], life: 0.42,
+      update: function (p) {
+        const k = (0.25 + R3.easeOut(p) * 4.6) * (force || 1);
+        s.scale.set(k, k, 1);
+        m.opacity = 0.8 * (1 - p) * (1 - p);
+      },
+      onKill: function () { if (s.parent) s.parent.remove(s); },
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  //  CHARGE — l'énergie s'accumule avant le tir. C'est ce temps d'attente qui
+  //  rend la frappe impressionnante.
+  // ---------------------------------------------------------------------------
+  function fxCharge(pos, color, duree, taille) {
+    const dur = duree || 0.30;
+    const T = taille || 1;
+    const m = sprMat(glowTexture(), color, 0.95, true);
+    const orbe = new THREE.Sprite(m);
+    orbe.position.copy(pos);
+    const g = new THREE.Group();
+    g.add(orbe);
+
+    // particules qui convergent vers l'orbe
+    const n = qCount(12);
+    const pm = sprMat(glowTexture(), color, 0.9, true);
+    const parts = [];
+    for (let i = 0; i < n; i++) {
+      const s = new THREE.Sprite(pm);
+      const k = 0.16 + Math.random() * 0.12;
+      s.scale.set(k, k, 1);
+      g.add(s);
+      parts.push({ s: s, a: Math.random() * 6.28, b: (Math.random() - 0.5) * 2, r: 1.4 + Math.random() * 1.5, off: Math.random() * 0.4 });
+    }
+    // anneau qui se resserre
+    const rm = fxMat(color, true, 0.7);
+    const anneau = new THREE.Mesh(ownGeo('fx-ring', function () { return new THREE.TorusGeometry(1, 0.06, 8, 30); }), rm);
+    anneau.position.copy(pos);
+    anneau.rotation.x = -Math.PI / 2;
+    anneau.castShadow = false;
+    g.add(anneau);
+
+    spawnFx({
+      group: g, mats: [m, pm, rm], life: dur,
+      update: function (p) {
+        const k = (0.5 + R3.easeOut(p) * 1.5) * T;
+        orbe.scale.set(k, k, 1);
+        m.opacity = 0.55 + p * 0.45;
+        parts.forEach(function (q) {
+          const u = R3.clamp01((p - q.off) / (1 - q.off));
+          const r = q.r * (1 - u) * T;
+          const a = q.a + u * 7;
+          q.s.position.set(pos.x + Math.cos(a) * r, pos.y + q.b * (1 - u) * T, pos.z + Math.sin(a) * r);
+          q.s.material.opacity = 0.9 * (1 - u * 0.4);
+        });
+        const ra = (2.4 - p * 1.9) * T;
+        anneau.scale.set(ra, ra, ra);
+        anneau.rotation.z += 0.06;
+        rm.opacity = 0.7 * (1 - p * 0.5);
+      },
+    });
+    setPunch(pos, color, 2.6);
+  }
+
+  // ---------------------------------------------------------------------------
+  //  PROJECTILE — un corps volumique qui traverse l'arène en laissant une
+  //  traînée continue, puis explose. Utilisé par la moitié des capacités.
+  // ---------------------------------------------------------------------------
+  function fxProjectile(origin, target, color, o) {
+    o = o || {};
+    const arc = (o.arc === undefined) ? 1.1 : o.arc;
+    const dur = o.dur || 0.42;
+    const taille = o.size || 1;
+
+    const g = new THREE.Group();
     const mats = [];
+    const geos = [];
+
+    // Le corps : une sphère lumineuse, doublée d'un halo et d'une queue conique.
+    const coreM = fxMat('#ffffff', true, 1);
+    const core = new THREE.Mesh(R3.geo.sphere(1, 12), coreM);
+    core.scale.setScalar(0.22 * taille);
+    core.castShadow = false;
+    const haloM = sprMat(flameTexture(), color, 0.95, false);
+    const halo = new THREE.Sprite(haloM);
+    halo.scale.set(1.5 * taille, 1.5 * taille, 1);
+    const queueM = fxMat(color, true, 0.55);
+    const queue = new THREE.Mesh(R3.geo.cone(0.3, 1.4, 10), queueM);
+    queue.castShadow = false;
+    mats.push(coreM, haloM, queueM);
+    g.add(core, halo, queue);
+
+    const pos = new THREE.Vector3();
+    const prev = origin.clone();
+    let trainee = 0;
+
+    spawnFx({
+      group: g, mats: mats, geos: geos, life: dur,
+      update: function (p) {
+        pos.copy(origin).lerp(target, R3.easeInOut(p));
+        pos.y += Math.sin(p * Math.PI) * arc;
+        core.position.copy(pos);
+        halo.position.copy(pos);
+        const s = 1 + Math.sin(p * 18) * 0.12;
+        halo.scale.set(1.5 * taille * s, 1.5 * taille * s, 1);
+
+        // La queue s'oriente selon le déplacement réel.
+        const d = pos.clone().sub(prev);
+        const l = d.length();
+        if (l > 0.001) {
+          queue.position.copy(pos).addScaledVector(d.normalize(), -0.5 * taille);
+          queue.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.clone().multiplyScalar(-1));
+          queue.scale.set(taille * 0.8, taille * (0.8 + l * 6), taille * 0.8);
+        }
+        prev.copy(pos);
+
+        // Traînée : on sème des braises derrière soi.
+        trainee += 1;
+        if (trainee % 2 === 0 && R3.quality.particles) {
+          fxCloud(pos.clone(), {
+            n: 2, tex: flameTexture(), color: color, size: 0.6 * taille,
+            spread: 0.35, life: 0.4, grow: 0.7, opacity: 0.8, additive: false,
+          });
+        }
+        setPunch(pos, color, 3.2);
+      },
+      onEnd: function () {
+        if (o.onArrive) o.onArrive();
+        else fxImpact(target, color);
+      },
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  //  ÉCLAIR 3D — une vraie géométrie en tube, brisée en zigzag. C'est ce qui
+  //  distingue un éclair d'un simple trait.
+  // ---------------------------------------------------------------------------
+  function boltMesh(from, to, mat, jag, rayon) {
+    const seg = 9;
+    const pts = [];
+    const axe = to.clone().sub(from);
+    const long = axe.length() || 1;
+    const perp1 = new THREE.Vector3(-axe.z, 0, axe.x).normalize();
+    const perp2 = axe.clone().normalize().cross(perp1).normalize();
+    for (let i = 0; i <= seg; i++) {
+      const t = i / seg;
+      const p = from.clone().lerp(to, t);
+      if (i > 0 && i < seg) {
+        const amp = (jag || 0.35) * long * 0.25 * Math.sin(t * Math.PI);
+        p.addScaledVector(perp1, (Math.random() - 0.5) * amp);
+        p.addScaledVector(perp2, (Math.random() - 0.5) * amp);
+      }
+      pts.push(p);
+    }
+    const courbe = new THREE.CatmullRomCurve3(pts);
+    const geo = new THREE.TubeGeometry(courbe, seg * 2, rayon || 0.07, 5, false);
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.castShadow = false;
+    return mesh;
+  }
+
+  /** Une décharge complète : tronc + ramifications + halo, qui clignote. */
+  function fxLightning(from, to, color, o) {
+    o = o || {};
+    const g = new THREE.Group();
+    const mats = [];
+    const geos = [];
+    const mCore = fxMat('#ffffff', true, 1);
+    const mGlow = fxMat(color, true, 0.55);
+    mats.push(mCore, mGlow);
+
+    const tronc = boltMesh(from, to, mCore, o.jag, 0.055 * (o.size || 1));
+    const halo = boltMesh(from, to, mGlow, o.jag, 0.17 * (o.size || 1));
+    geos.push(tronc.geometry, halo.geometry);
+    g.add(halo, tronc);
+
+    // ramifications : elles partent du tronc et meurent dans le vide
+    const nb = qCount(o.branches === undefined ? 3 : o.branches);
+    for (let i = 0; i < nb; i++) {
+      const t = 0.25 + Math.random() * 0.55;
+      const a = from.clone().lerp(to, t);
+      const b = a.clone().add(new THREE.Vector3(
+        (Math.random() - 0.5) * 2.6, (Math.random() - 0.5) * 1.6, (Math.random() - 0.5) * 2.6));
+      const br = boltMesh(a, b, mCore, 0.6, 0.03);
+      geos.push(br.geometry);
+      g.add(br);
+    }
+
+    spawnFx({
+      group: g, mats: mats, geos: geos, life: o.life || 0.34,
+      update: function (p) {
+        // clignotement : trois éclats francs plutôt qu'un fondu mou
+        const f = (p < 0.12) ? 1 : (p < 0.24 ? 0.35 : (p < 0.4 ? 1 : (p < 0.55 ? 0.5 : 1 - (p - 0.55) / 0.45)));
+        mCore.opacity = f;
+        mGlow.opacity = 0.55 * f;
+      },
+    });
+    setPunch(to, color, 6);
+  }
+
+  // ---------------------------------------------------------------------------
+  //  AUTRES BRIQUES VOLUMIQUES
+  // ---------------------------------------------------------------------------
+
+  /** Colonne montante (feu, lumière, glace…) : des anneaux empilés qui montent. */
+  function fxColumn(pos, color, hauteur, o) {
+    o = o || {};
+    const H = hauteur || 3.2;
+    const n = qCount(o.n || 10);
+    const m = sprMat(o.tex || flameTexture(), color, 0.95, o.additive === true);
     const g = new THREE.Group();
     const parts = [];
     for (let i = 0; i < n; i++) {
-      const m = fxMat(color, true, 1);
-      mats.push(m);
-      const mesh = new THREE.Mesh(R3.geo.plane(1, 0.15), m);
-      mesh.position.copy(target);
-      mesh.rotation.z = -0.7 + i * 0.55;
-      mesh.rotation.y = 0.3;
-      mesh.castShadow = false;
-      g.add(mesh);
-      parts.push({ mesh: mesh, mat: m, delay: i * 0.05 });
+      const s = new THREE.Sprite(m);
+      const k = (o.size || 1.1) * (1 - (i / n) * 0.45);
+      s.scale.set(k, k, 1);
+      g.add(s);
+      parts.push({ s: s, off: i / n, a: Math.random() * 6.28, r: (o.rayon || 0.42) * (0.4 + Math.random()) });
     }
     spawnFx({
-      group: g, mats: mats, life: 0.38,
+      group: g, mats: [m], life: o.life || 0.75,
       update: function (p) {
-        const t = p * 0.38;
         parts.forEach(function (q) {
-          const lp = R3.clamp01((t - q.delay) / 0.16);
-          q.mesh.scale.set(0.15 + lp * 1.05, 1, 1);
-          q.mat.opacity = lp <= 0 ? 0 : Math.max(0, 1 - Math.max(0, (lp - 0.5) / 0.5));
+          const u = (p * 1.5 + q.off) % 1;
+          const a = q.a + u * 5;
+          q.s.position.set(pos.x + Math.cos(a) * q.r * (1 - u * 0.4),
+            pos.y + u * H,
+            pos.z + Math.sin(a) * q.r * (1 - u * 0.4));
+          const k = (o.size || 1.1) * (1 - u * 0.55);
+          q.s.scale.set(k, k, 1);
+        });
+        m.opacity = 0.95 * (1 - p * p);
+      },
+    });
+  }
+
+  /** Fissures qui courent au sol depuis un point : le sol se déchire. */
+  function fxCracks(pos, color, n, longueur) {
+    n = qCount(n || 6);
+    const m = fxMat(color || '#3a2a1e', false, 0.9);
+    m.blending = THREE.NormalBlending;
+    const geo = ownGeo('fx-crack', function () { return new THREE.PlaneGeometry(0.22, 1); });
+    const g = new THREE.Group();
+    const parts = [];
+    for (let i = 0; i < n; i++) {
+      const mesh = new THREE.Mesh(geo, m);
+      const a = (i / n) * Math.PI * 2 + Math.random() * 0.4;
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.rotation.z = -a;
+      mesh.castShadow = false;
+      g.add(mesh);
+      parts.push({ mesh: mesh, a: a, L: (longueur || 3.4) * (0.55 + Math.random() * 0.8) });
+    }
+    spawnFx({
+      group: g, mats: [m], life: 0.9,
+      update: function (p) {
+        const e = R3.easeOut(Math.min(1, p * 2.2));
+        parts.forEach(function (q) {
+          const L = q.L * e;
+          q.mesh.scale.set(1 + p * 0.6, L, 1);
+          q.mesh.position.set(pos.x + Math.sin(q.a) * L * 0.5, 0.05, pos.z + Math.cos(q.a) * L * 0.5);
+        });
+        m.opacity = 0.9 * (1 - Math.max(0, (p - 0.5) / 0.5));
+      },
+    });
+  }
+
+  /** Vrai rocher : un bloc irrégulier, pas un cube. */
+  function rockMesh(mat, taille) {
+    const geo = ownGeo('fx-rock', function () { return new THREE.DodecahedronGeometry(0.5, 0); });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.scale.set(taille * (0.7 + Math.random() * 0.6), taille * (0.7 + Math.random() * 0.6), taille * (0.7 + Math.random() * 0.6));
+    mesh.rotation.set(Math.random() * 6, Math.random() * 6, Math.random() * 6);
+    mesh.castShadow = false;
+    return mesh;
+  }
+
+  // ===========================================================================
+  //  LES 17 CAPACITÉS OFFENSIVES
+  // ===========================================================================
+
+  /** slash — trois lames géantes qui balaient la cible en croix. */
+  function fxSlash(origin, target, color) {
+    fxCharge(origin, color, 0.16, 0.7);
+    const n = 3;
+    const mats = [];
+    const geos = [];
+    const g = new THREE.Group();
+    const parts = [];
+    const geo = new THREE.TorusGeometry(1, 0.075, 8, 26, Math.PI * 0.62);
+    geos.push(geo);
+    for (let i = 0; i < n; i++) {
+      const m = fxMat(i === 1 ? '#ffffff' : color, true, 0);
+      mats.push(m);
+      const mesh = new THREE.Mesh(geo, m);
+      mesh.position.copy(target);
+      mesh.rotation.z = (-0.7 + i * 0.7) + (Math.random() - 0.5) * 0.3;
+      mesh.rotation.y = 0.35;
+      mesh.castShadow = false;
+      g.add(mesh);
+      parts.push({ mesh: mesh, mat: m, off: i * 0.10, sens: i % 2 ? 1 : -1 });
+    }
+    spawnFx({
+      group: g, mats: mats, geos: geos, life: 0.55,
+      update: function (p) {
+        if (camera) g.quaternion.copy(camera.quaternion);
+        parts.forEach(function (q) {
+          const u = R3.clamp01((p - q.off) / 0.30);
+          const s = (0.4 + u * 2.4);
+          q.mesh.scale.set(s, s, 1);
+          q.mesh.rotation.z += 0.04 * q.sens;
+          q.mat.opacity = (u <= 0 || u >= 1) ? 0 : Math.sin(u * Math.PI);
         });
       },
     });
-    fxImpact(target, color);
+    fxExplosion(target, color, 0.85 * fxForce, { debris: 8, scorch: false });
   }
 
-  /** beam — un rayon net qui s'étire de l'attaquant à la cible. */
+  /** beam — un rayon massif : charge, tir continu, anneaux qui filent dessus. */
   function fxBeam(origin, target, color) {
+    fxCharge(origin, color, 0.26, 1.2);
     const dir = target.clone().sub(origin);
-    const dist = Math.max(0.4, dir.length());
+    const dist = Math.max(0.6, dir.length());
     const dirN = dir.clone().normalize();
     const mid = origin.clone().addScaledVector(dir, 0.5);
-    const mOuter = fxMat(color, true, 0.55);
-    const mInner = fxMat('#ffffff', true, 0.9);
-    const outer = new THREE.Mesh(R3.geo.cyl(0.16, 0.16, 1, 10), mOuter);
-    const inner = new THREE.Mesh(R3.geo.cyl(0.06, 0.06, 1, 8), mInner);
+
+    const mOuter = fxMat(color, true, 0.5);
+    const mInner = fxMat('#ffffff', true, 0.95);
+    const outer = new THREE.Mesh(R3.geo.cyl(0.42, 0.42, 1, 14), mOuter);
+    const inner = new THREE.Mesh(R3.geo.cyl(0.14, 0.14, 1, 10), mInner);
     [outer, inner].forEach(function (c) {
       c.position.copy(mid);
       c.castShadow = false;
       c.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dirN);
     });
+
+    // anneaux qui remontent le long du rayon : c'est ce qui donne la vitesse
+    const mRing = fxMat(color, true, 0.85);
+    const geoRing = ownGeo('fx-ring', function () { return new THREE.TorusGeometry(1, 0.06, 8, 30); });
+    const anneaux = [];
+    for (let i = 0; i < 5; i++) {
+      const r = new THREE.Mesh(geoRing, mRing);
+      r.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dirN);
+      r.castShadow = false;
+      anneaux.push({ mesh: r, off: i / 5 });
+      // on l'ajoute plus bas
+    }
+
     const g = new THREE.Group();
     g.add(outer, inner);
+    anneaux.forEach(function (a) { g.add(a.mesh); });
+
     spawnFx({
-      group: g, mats: [mOuter, mInner], life: 0.4,
+      group: g, mats: [mOuter, mInner, mRing], life: 0.55, delay: 0.22,
       update: function (p) {
-        const grow = R3.easeOut(Math.min(1, p / 0.35));
-        const shrink = p > 0.6 ? (p - 0.6) / 0.4 : 0;
-        outer.scale.set(1, dist * grow, 1);
-        inner.scale.set(1, dist * grow, 1);
-        mOuter.opacity = 0.55 * (1 - shrink);
-        mInner.opacity = 0.9 * (1 - shrink);
+        const grow = R3.easeOut(Math.min(1, p / 0.22));
+        const fin = p > 0.62 ? (p - 0.62) / 0.38 : 0;
+        const L = dist * grow;
+        outer.scale.set(1 + Math.sin(p * 40) * 0.08, L, 1 + Math.sin(p * 40) * 0.08);
+        inner.scale.set(1, L, 1);
+        mOuter.opacity = 0.5 * (1 - fin);
+        mInner.opacity = 0.95 * (1 - fin);
+        anneaux.forEach(function (a) {
+          const u = (p * 2.2 + a.off) % 1;
+          a.mesh.position.copy(origin).addScaledVector(dirN, u * L);
+          const s = 0.55 + Math.sin(u * Math.PI) * 0.35;
+          a.mesh.scale.set(s, s, s);
+        });
+        mRing.opacity = 0.85 * (1 - fin);
+        setPunch(origin, color, 4);
       },
     });
-    fxImpact(target, color);
+    setTimeoutFx(0.30, function () { fxExplosion(target, color, 1.15 * fxForce); });
   }
 
-  /** ball — un orbe lumineux arqué comme un projectile. */
+  /** ball — un orbe chargé qui traverse l'arène en laissant une traînée. */
   function fxBall(origin, target, color) {
-    const m = fxMat(color, true, 1);
-    const glow = fxMat('#ffffff', true, 0.55);
-    const core = new THREE.Mesh(R3.geo.sphere(1, 12), m);
-    const halo = new THREE.Mesh(R3.geo.sphere(1, 10), glow);
-    core.scale.setScalar(0.13); halo.scale.setScalar(0.22);
-    core.castShadow = false; halo.castShadow = false;
-    const g = new THREE.Group();
-    g.add(halo, core);
-    spawnFx({
-      group: g, mats: [m, glow], life: 0.5,
-      update: function (p) {
-        const pos = origin.clone().lerp(target, p);
-        pos.y += Math.sin(p * Math.PI) * 0.85;
-        core.position.copy(pos); halo.position.copy(pos);
-        core.rotation.x += 0.3; core.rotation.y += 0.22;
-      },
-      onEnd: function () { fxImpact(target, color); },
+    fxCharge(origin, color, 0.22, 1);
+    fxProjectile(origin, target, color, {
+      dur: 0.42, arc: 1.2, size: 1.25, delay: 0.20,
+      onArrive: function () { fxExplosion(target, color, 1.1 * fxForce); },
     });
   }
 
-  /** wave — une vague en demi-anneau qui déferle du lanceur vers la cible. */
+  /** wave — un mur d'eau qui déferle, gouttes comprises. */
   function fxWave(origin, target, color) {
     const dir = target.clone().sub(origin); dir.y = 0;
-    const dist = Math.max(0.5, dir.length());
+    const dist = Math.max(0.6, dir.length());
     const dirN = dir.clone().normalize();
-    const m = fxMat(color, true, 0.85);
-    const geo = ownGeo('fx-wave', function () { return new THREE.TorusGeometry(1, 0.10, 8, 26, Math.PI); });
-    const mesh = new THREE.Mesh(geo, m);
-    mesh.position.copy(origin); mesh.position.y = 0.05;
-    mesh.rotation.x = -Math.PI / 2;
-    mesh.rotation.z = Math.atan2(dirN.x, dirN.z);
-    mesh.castShadow = false;
-    const g = new THREE.Group(); g.add(mesh);
+
+    const m = fxMat(color, true, 0.9);
+    const geo = ownGeo('fx-wave', function () { return new THREE.TorusGeometry(1, 0.16, 10, 30, Math.PI); });
+    const mur = new THREE.Mesh(geo, m);
+    mur.position.copy(origin); mur.position.y = 0.05;
+    mur.rotation.x = -Math.PI / 2;
+    mur.rotation.z = Math.atan2(dirN.x, dirN.z);
+    mur.castShadow = false;
+
+    // la crête : des gouttes qui roulent sur le mur
+    const dm = sprMat(glowTexture(), color, 0.9, true);
+    const gouttes = [];
+    const g = new THREE.Group();
+    g.add(mur);
+    const nd = qCount(16);
+    for (let i = 0; i < nd; i++) {
+      const s = new THREE.Sprite(dm);
+      const k = 0.28 + Math.random() * 0.3;
+      s.scale.set(k, k, 1);
+      g.add(s);
+      gouttes.push({ s: s, a: (Math.random() - 0.5) * 2.6, h: 0.4 + Math.random() * 1.5, ph: Math.random() });
+    }
+
     spawnFx({
-      group: g, mats: [m], life: 0.55,
+      group: g, mats: [m, dm], life: 0.6,
       update: function (p) {
         const trav = R3.easeOut(p);
-        mesh.position.set(origin.x + dir.x * trav, 0.05, origin.z + dir.z * trav);
-        const s = 0.3 + trav * (dist * 0.55);
-        mesh.scale.set(s, s, 1);
-        m.opacity = 0.85 * (1 - p);
+        const cx = origin.x + dir.x * trav, cz = origin.z + dir.z * trav;
+        mur.position.set(cx, 0.05, cz);
+        const s = 0.4 + trav * (dist * 0.62);
+        mur.scale.set(s, s, 1 + trav * 2.2);
+        m.opacity = 0.9 * (1 - p * 0.7);
+        gouttes.forEach(function (q) {
+          const u = (p * 1.6 + q.ph) % 1;
+          q.s.position.set(cx + Math.cos(q.a) * s * 0.9, 0.2 + Math.sin(u * Math.PI) * q.h, cz + Math.sin(q.a) * s * 0.9);
+        });
+        dm.opacity = 0.9 * (1 - p);
       },
     });
-    fxImpact(target, color);
+    fxExplosion(target, color, 1.0 * fxForce, { smoke: '#cfe6f5', scorch: false });
+    fxColumn(target, color, 3.4, { n: 12, size: 0.9, rayon: 0.6, tex: glowTexture(), life: 0.7 , additive: true });
   }
 
-  /** burst — explosion radiale soudaine sur la cible. */
+  /** burst — l'explosion pure, en plus gros. */
   function fxBurst(origin, target, color) {
-    const n = qCount(10);
-    const mats = [];
-    const g = new THREE.Group();
-    const parts = [];
-    for (let i = 0; i < n; i++) {
-      const m = fxMat(color, true, 1);
-      mats.push(m);
-      const mesh = new THREE.Mesh(R3.geo.box(0.16, 0.16, 0.02), m);
-      mesh.position.copy(target);
-      mesh.castShadow = false;
-      g.add(mesh);
-      const a = (i / n) * Math.PI * 2, b = (Math.random() - 0.5) * 1.2;
-      parts.push({
-        mesh: mesh, mat: m,
-        v: new THREE.Vector3(Math.sin(a) * Math.cos(b), Math.sin(b) + 0.3, Math.cos(a) * Math.cos(b))
-          .multiplyScalar(2.4 + Math.random()),
-      });
-    }
-    spawnFx({
-      group: g, mats: mats, life: 0.5,
-      update: function (p) {
-        const t = p * 0.5;
-        parts.forEach(function (q) {
-          q.mesh.position.set(target.x + q.v.x * t, target.y + q.v.y * t - 2.6 * t * t, target.z + q.v.z * t);
-          q.mesh.rotation.x += 0.4; q.mesh.rotation.y += 0.3;
-          q.mat.opacity = 1 - p * p;
-        });
-      },
-    });
-    fxImpact(target, color);
-    fxRing(target, color, 2.0, false);
+    fxCharge(target, color, 0.18, 1.3);
+    fxExplosion(target, color, 1.4 * fxForce, { fireballs: 24, debris: 16 });
   }
 
-  /** storm — nuage sombre au-dessus de la cible, pluie de traits colorés. */
+  /** storm — un orage : nuage noir, éclairs multiples, pluie oblique. */
   function fxStorm(origin, target, color) {
-    const cloudM = fxMat('#2c3244', false, 0.75);
-    const cloud = new THREE.Mesh(R3.geo.sphere(1, 12), cloudM);
-    cloud.scale.set(1.3, 0.5, 1.3);
-    cloud.position.set(target.x, target.y + 1.6, target.z);
-    cloud.castShadow = false;
-    const g = new THREE.Group(); g.add(cloud);
-
-    const n = qCount(10);
-    const mats = [cloudM];
-    const drops = [];
-    for (let i = 0; i < n; i++) {
-      const m = fxMat(color, true, 0.9);
-      mats.push(m);
-      const mesh = new THREE.Mesh(R3.geo.box(0.03, 0.28, 0.03), m);
-      mesh.castShadow = false;
-      g.add(mesh);
-      drops.push({ mesh: mesh, mat: m, x: (Math.random() - 0.5) * 0.9, z: (Math.random() - 0.5) * 0.9, off: Math.random() });
-    }
-    spawnFx({
-      group: g, mats: mats, life: 0.95,
-      update: function (p) {
-        cloud.scale.set(1.3 + p * 0.4, 0.5, 1.3 + p * 0.4);
-        cloudM.opacity = 0.75 * (p < 0.8 ? 1 : (1 - p) / 0.2);
-        drops.forEach(function (q) {
-          const u = (p * 2.2 + q.off) % 1;
-          q.mesh.position.set(target.x + q.x, target.y + 1.5 - u * 1.6, target.z + q.z);
-          q.mat.opacity = 0.9 * (1 - u);
-        });
-      },
-      onEnd: function () { fxImpact(target, color); },
-    });
-  }
-
-  /** quake — le sol se fissure, des blocs sautent, la caméra tremble fort. */
-  function fxQuake(origin, target, color) {
-    fxRing(new THREE.Vector3(target.x, 0.03, target.z), color, 2.6);
-    const n = qCount(9);
-    const mats = [];
+    const cloudM = sprMat(smokeTexture(), '#1e2434', 0.9, false);
     const g = new THREE.Group();
-    const parts = [];
-    for (let i = 0; i < n; i++) {
-      const m = fxMat('#7a5c3a', false, 1);
-      mats.push(m);
-      const mesh = new THREE.Mesh(R3.geo.box(0.16, 0.16, 0.16), m);
-      const a = Math.random() * Math.PI * 2, r = 0.2 + Math.random() * 1.1;
-      mesh.position.set(target.x + Math.sin(a) * r, 0.05, target.z + Math.cos(a) * r);
-      mesh.castShadow = false;
-      g.add(mesh);
-      parts.push({ mesh: mesh, mat: m, up: 1.2 + Math.random() * 1.4, spin: (Math.random() - 0.5) * 8 });
-    }
-    spawnFx({
-      group: g, mats: mats, life: 0.6,
-      update: function (p) {
-        const t = p * 0.6;
-        parts.forEach(function (q) {
-          q.mesh.position.y = Math.max(0.05, q.up * t - 2.8 * t * t);
-          q.mesh.rotation.x += q.spin * 0.02; q.mesh.rotation.z += q.spin * 0.02;
-          q.mat.opacity = 1 - p;
-        });
-      },
-    });
-    camShake = Math.max(camShake, 0.32);
-    if (punchLight) { punchLight.position.copy(target); punchLight.intensity = 2.4; punchLight.color.set(color); }
-  }
-
-  /** ice — des pics de glace jaillissent tout autour de la cible. */
-  function fxIce(origin, target, color) {
-    const n = 6;
-    const mats = [];
-    const g = new THREE.Group();
-    const parts = [];
-    for (let i = 0; i < n; i++) {
-      const m = fxMat(color, false, 0.95);
-      mats.push(m);
-      const mesh = new THREE.Mesh(R3.geo.cone(0.09, 0.55, 6), m);
-      const a = (i / n) * Math.PI * 2 + Math.random() * 0.3;
-      const r = 0.15 + Math.random() * 0.35;
-      const y0 = target.y - 0.5;
-      mesh.position.set(target.x + Math.sin(a) * r, y0, target.z + Math.cos(a) * r);
-      mesh.castShadow = false;
-      g.add(mesh);
-      parts.push({ mesh: mesh, mat: m, y0: y0, yT: y0 + 0.35 + Math.random() * 0.15 });
-    }
-    spawnFx({
-      group: g, mats: mats, life: 0.55,
-      update: function (p) {
-        const grow = R3.easeOut(Math.min(1, p / 0.35));
-        parts.forEach(function (q) {
-          q.mesh.position.y = R3.lerp(q.y0, q.yT, grow);
-          q.mesh.scale.set(1, grow, 1);
-          q.mat.opacity = 0.95 * (p < 0.7 ? 1 : (1 - p) / 0.3);
-        });
-      },
-    });
-    fxSparks(target, 10, '#eaf7ff', 1.2);
-    fxImpact(target, color);
-  }
-
-  /** star — une pluie d'étoiles converge sur la cible puis éclate. */
-  function fxStar(origin, target, color) {
-    const n = qCount(14);
-    const mats = [];
-    const g = new THREE.Group();
-    const parts = [];
-    for (let i = 0; i < n; i++) {
-      const m = fxMat(color, true, 1);
-      mats.push(m);
-      const s = R3.star(5, 0.08, 0.035, 0.03, color, 0, 0, 0);
-      s.material = m; s.castShadow = false;
+    const nuages = [];
+    const nc = qCount(9);
+    for (let i = 0; i < nc; i++) {
+      const s = new THREE.Sprite(cloudM);
+      const a = (i / nc) * Math.PI * 2;
+      const r = 0.4 + Math.random() * 1.5;
+      s.position.set(target.x + Math.cos(a) * r, target.y + 2.6 + Math.random() * 0.5, target.z + Math.sin(a) * r);
+      const k = 1.9 + Math.random();
+      s.scale.set(k, k * 0.8, 1);
       g.add(s);
-      const a = Math.random() * Math.PI * 2, r = 1.4 + Math.random() * 0.8;
+      nuages.push({ s: s, a: a, r: r });
+    }
+    const pluieM = fxMat(color, true, 0.8);
+    const gouttes = [];
+    const np = qCount(22);
+    for (let i = 0; i < np; i++) {
+      const mesh = new THREE.Mesh(R3.geo.box(0.035, 0.5, 0.035), pluieM);
+      mesh.castShadow = false;
+      g.add(mesh);
+      gouttes.push({ mesh: mesh, x: (Math.random() - 0.5) * 3.4, z: (Math.random() - 0.5) * 3.4, off: Math.random() });
+    }
+    spawnFx({
+      group: g, mats: [cloudM, pluieM], life: 1.15,
+      update: function (p) {
+        cloudM.opacity = 0.9 * (p < 0.18 ? p / 0.18 : (p > 0.75 ? (1 - p) / 0.25 : 1));
+        nuages.forEach(function (q, i) {
+          q.s.position.x = target.x + Math.cos(q.a + p * 1.2) * q.r;
+          q.s.position.z = target.z + Math.sin(q.a + p * 1.2) * q.r;
+        });
+        gouttes.forEach(function (q) {
+          const u = (p * 2.4 + q.off) % 1;
+          q.mesh.position.set(target.x + q.x, target.y + 2.6 - u * 3.4, target.z + q.z);
+          q.mesh.rotation.z = 0.35;
+        });
+        pluieM.opacity = 0.8 * (p < 0.2 ? p / 0.2 : 1 - p);
+      },
+    });
+    // trois éclairs successifs
+    const haut = new THREE.Vector3(target.x, target.y + 2.6, target.z);
+    fxLightning(haut, target, color, { size: 1.2, branches: 4 });
+    setTimeoutFx(0.22, function () { fxLightning(haut.clone().add(new THREE.Vector3(0.5, 0, 0.3)), target, color, { size: 0.9, branches: 2 }); });
+    setTimeoutFx(0.42, function () {
+      fxLightning(haut.clone().add(new THREE.Vector3(-0.6, 0, -0.2)), target, color, { size: 1.1, branches: 3 });
+      fxExplosion(target, color, 1.15 * fxForce);
+    });
+  }
+
+  /** quake — le sol se soulève, se fissure, et des blocs jaillissent. */
+  function fxQuake(origin, target, color) {
+    fxCracks(target, '#3a2a1e', 8, 4.4);
+    fxRing(new THREE.Vector3(target.x, 0.06, target.z), color, 5.5, true);
+
+    // blocs qui jaillissent du sol
+    const m = fxMat(color, false, 1);
+    const g = new THREE.Group();
+    const parts = [];
+    const n = qCount(9);
+    for (let i = 0; i < n; i++) {
+      const mesh = rockMesh(m, 0.34 + Math.random() * 0.3);
+      const a = (i / n) * Math.PI * 2;
+      const r = 0.6 + Math.random() * 1.7;
+      g.add(mesh);
       parts.push({
-        mesh: s, mat: m,
-        p0: new THREE.Vector3(target.x + Math.sin(a) * r, target.y + (Math.random() - 0.2) * 1.2, target.z + Math.cos(a) * r),
-        spin: (Math.random() - 0.5) * 12,
+        mesh: mesh, x: target.x + Math.cos(a) * r, z: target.z + Math.sin(a) * r,
+        h: 1.1 + Math.random() * 1.6, sx: (Math.random() - 0.5) * 12, sy: (Math.random() - 0.5) * 12,
+        off: Math.random() * 0.25,
       });
     }
     spawnFx({
-      group: g, mats: mats, life: 0.55,
+      group: g, mats: [m], life: 1.0,
       update: function (p) {
-        const conv = R3.easeInOut(Math.min(1, p / 0.75));
         parts.forEach(function (q) {
-          q.mesh.position.lerpVectors(q.p0, target, conv);
-          q.mesh.rotation.z += q.spin * 0.02;
-          q.mat.opacity = p > 0.75 ? 1 - (p - 0.75) / 0.25 : 1;
+          const u = R3.clamp01((p - q.off) / (1 - q.off));
+          const y = Math.sin(u * Math.PI) * q.h;
+          q.mesh.position.set(q.x, Math.max(0, y), q.z);
+          q.mesh.rotation.x += q.sx * 0.008;
+          q.mesh.rotation.z += q.sy * 0.008;
         });
-      },
-      onEnd: function () { fxImpact(target, color); },
-    });
-  }
-
-  /** void — un noyau sombre avale des fragments puis relâche une onde. */
-  function fxVoid(origin, target, color) {
-    const core = fxMat('#0d0e16', true, 0.9);
-    const rim = fxMat(color, true, 0.8);
-    const orb = new THREE.Mesh(R3.geo.sphere(1, 14), core);
-    orb.castShadow = false;
-    const g = new THREE.Group(); g.add(orb);
-    const n = qCount(12);
-    const mats = [core, rim];
-    const parts = [];
-    for (let i = 0; i < n; i++) {
-      const mesh = new THREE.Mesh(R3.geo.sphere(1, 6), rim);
-      mesh.castShadow = false;
-      g.add(mesh);
-      const a = Math.random() * Math.PI * 2, r = 0.9 + Math.random() * 0.6;
-      parts.push({ mesh: mesh, a0: new THREE.Vector3(target.x + Math.sin(a) * r, target.y + (Math.random() - 0.5) * 0.8, target.z + Math.cos(a) * r) });
-    }
-    spawnFx({
-      group: g, mats: mats, life: 0.6,
-      update: function (p) {
-        const suck = R3.easeInOut(Math.min(1, p / 0.55));
-        orb.position.copy(target);
-        orb.scale.setScalar(p < 0.55 ? R3.lerp(0.05, 0.5, suck) : R3.lerp(0.5, 1.6, (p - 0.55) / 0.45));
-        core.opacity = p < 0.55 ? 0.9 : Math.max(0, 0.9 * (1 - (p - 0.55) / 0.45));
-        parts.forEach(function (q) {
-          q.mesh.position.lerpVectors(q.a0, target, suck);
-          q.mesh.scale.setScalar(R3.lerp(0.05, 0.015, suck));
-        });
-        rim.opacity = p < 0.55 ? 0.8 * suck : Math.max(0, 0.8 * (1 - (p - 0.55) / 0.45));
+        m.opacity = p < 0.7 ? 1 : (1 - p) / 0.3;
       },
     });
-    fxRing(target, color, 1.7, false);
-  }
-
-  /** time — des anneaux translucides pulsent en écho, une aiguille tourne. */
-  function fxTime(origin, target, color) {
-    const n = 3;
-    const mats = [];
-    const g = new THREE.Group();
-    const rings = [];
-    for (let i = 0; i < n; i++) {
-      const m = fxMat(color, true, 0.6);
-      mats.push(m);
-      const mesh = new THREE.Mesh(ownGeo('fx-ring-thin', function () { return new THREE.TorusGeometry(1, 0.035, 6, 28); }), m);
-      mesh.rotation.x = Math.PI / 2 + (Math.random() - 0.5) * 0.5;
-      mesh.position.copy(target);
-      mesh.castShadow = false;
-      g.add(mesh);
-      rings.push({ mesh: mesh, mat: m, delay: i * 0.14 });
-    }
-    const handM = fxMat('#ffffff', true, 0.9);
-    mats.push(handM);
-    const hand = new THREE.Mesh(R3.geo.box(0.42, 0.03, 0.03), handM);
-    hand.position.copy(target);
-    hand.castShadow = false;
-    g.add(hand);
-    spawnFx({
-      group: g, mats: mats, life: 0.75,
-      update: function (p) {
-        const t = p * 0.75;
-        rings.forEach(function (q) {
-          const lp = R3.clamp01((t - q.delay) / 0.5);
-          q.mesh.scale.setScalar(0.15 + lp * 1.3);
-          q.mat.opacity = 0.6 * (1 - lp);
-        });
-        hand.rotation.z = p * 18;
-        handM.opacity = 0.9 * (1 - p);
-      },
+    fxCloud(new THREE.Vector3(target.x, 0.2, target.z), {
+      n: 14, tex: smokeTexture(), color: '#c9bda8', size: 1.5,
+      spread: 2.2, rise: 0.5, life: 1.2, grow: 2.0, opacity: 0.55, additive: false,
     });
-    fxImpact(target, color);
+    camShake = Math.max(camShake, 0.55);
+    fxExplosion(target, color, 1.2 * fxForce, { scorch: true, smoke: '#c9bda8' });
   }
 
-  /** leaf — une bourrasque de feuilles tourbillonne autour de la cible. */
-  function fxLeaf(origin, target, color) {
-    const n = qCount(12);
-    const mats = [];
+  /** ice — des lames de glace se forment en l'air puis s'abattent. */
+  function fxIce(origin, target, color) {
+    const m = fxMat(color, true, 0.9);
+    const mCore = fxMat('#ffffff', true, 0.95);
+    const geo = ownGeo('fx-shard-long', function () { return new THREE.ConeGeometry(0.22, 1.5, 6); });
     const g = new THREE.Group();
     const parts = [];
-    for (let i = 0; i < n; i++) {
-      const m = fxMat(color, false, 1);
-      mats.push(m);
-      const mesh = new THREE.Mesh(R3.geo.plane(0.16, 0.09), m);
-      mesh.castShadow = false;
-      g.add(mesh);
-      const a0 = Math.random() * Math.PI * 2;
-      parts.push({ mesh: mesh, mat: m, a0: a0, r: 0.5 + Math.random() * 0.6, y0: Math.random() * 1.1, sp: 3 + Math.random() * 3 });
-    }
-    spawnFx({
-      group: g, mats: mats, life: 0.75,
-      update: function (p) {
-        const t = p * 0.75;
-        parts.forEach(function (q) {
-          const a = q.a0 + t * q.sp;
-          q.mesh.position.set(
-            target.x + Math.sin(a) * q.r * (1 - p * 0.3),
-            target.y + q.y0 - p * 0.4,
-            target.z + Math.cos(a) * q.r * (1 - p * 0.3)
-          );
-          q.mesh.rotation.set(a, a * 1.3, a * 0.6);
-          q.mat.opacity = 1 - p * p;
-        });
-      },
-    });
-    fxImpact(target, color);
-  }
-
-  /** flame — un jet de flammes court de l'attaquant à la cible. */
-  function fxFlame(origin, target, color) {
-    const n = qCount(14);
-    const mats = [];
-    const g = new THREE.Group();
-    const parts = [];
-    for (let i = 0; i < n; i++) {
-      const m = fxMat(i % 3 === 0 ? '#ffe27a' : color, true, 1);
-      mats.push(m);
-      const mesh = new THREE.Mesh(R3.geo.sphere(1, 8), m);
-      mesh.castShadow = false;
-      g.add(mesh);
-      parts.push({ mesh: mesh, mat: m, u: i / n, off: (Math.random() - 0.5) * 0.3 });
-    }
-    spawnFx({
-      group: g, mats: mats, life: 0.45,
-      update: function (p) {
-        parts.forEach(function (q) {
-          const along = R3.clamp01(p * 1.6 - q.u * 0.5);
-          const pos = origin.clone().lerp(target, Math.min(1, q.u + p * 0.8));
-          pos.x += q.off; pos.y += Math.sin(p * 8 + q.u * 6) * 0.08 + along * 0.15;
-          q.mesh.position.copy(pos);
-          q.mesh.scale.setScalar(0.09 + along * 0.1);
-          q.mat.opacity = along * (1 - p * 0.6);
-        });
-      },
-    });
-    fxImpact(target, color);
-  }
-
-  /** bubble — un chapelet de bulles flotte jusqu'à la cible puis éclate. */
-  function fxBubble(origin, target, color) {
-    const n = qCount(12);
-    const mats = [];
-    const g = new THREE.Group();
-    const parts = [];
-    for (let i = 0; i < n; i++) {
-      const m = fxMat(color, false, 0.55);
-      mats.push(m);
-      const mesh = new THREE.Mesh(R3.geo.sphere(1, 10), m);
-      mesh.castShadow = false;
-      g.add(mesh);
-      parts.push({ mesh: mesh, mat: m, u: i / n, r: 0.05 + Math.random() * 0.05, side: (Math.random() - 0.5) * 0.5 });
-    }
-    spawnFx({
-      group: g, mats: mats, life: 0.65,
-      update: function (p) {
-        parts.forEach(function (q) {
-          const t = R3.clamp01(p * 1.3 - q.u * 0.3);
-          const pos = origin.clone().lerp(target, t);
-          pos.y += Math.sin(t * Math.PI) * 0.5 + q.side * t;
-          q.mesh.position.copy(pos);
-          q.mesh.scale.setScalar(q.r * (1 + Math.sin(p * 20 + q.u * 5) * 0.06));
-          q.mat.opacity = 0.55 * (1 - p * p);
-        });
-      },
-    });
-    fxRing(target, color, 1.1, false);
-  }
-
-  /** bolt — un éclair en zigzag, instantané, avec un double flash. */
-  function fxBolt(origin, target, color) {
-    const segs = 6;
-    const pts = [];
-    for (let i = 0; i <= segs; i++) {
-      const u = i / segs;
-      const p = origin.clone().lerp(target, u);
-      if (i > 0 && i < segs) {
-        p.x += (Math.random() - 0.5) * 0.35;
-        p.y += (Math.random() - 0.5) * 0.35;
-      }
-      pts.push(p);
-    }
-    const m = fxMat(color, true, 1);
-    const g = new THREE.Group();
-    const meshes = [];
-    for (let i = 0; i < segs; i++) {
-      const a = pts[i], b = pts[i + 1];
-      const len = Math.max(0.02, a.distanceTo(b));
-      const mesh = new THREE.Mesh(R3.geo.cyl(0.028, 0.028, 1, 5), m);
-      mesh.scale.set(1, len, 1);
-      mesh.position.copy(a).lerp(b, 0.5);
-      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
-      mesh.castShadow = false;
-      g.add(mesh); meshes.push(mesh);
-    }
-    spawnFx({
-      group: g, mats: [m], life: 0.28,
-      update: function (p) {
-        const flick = (p < 0.12 || (p > 0.35 && p < 0.45)) ? 1 : 0.35;
-        m.opacity = flick * (1 - Math.max(0, (p - 0.5) / 0.5));
-        meshes.forEach(function (mesh) { mesh.visible = m.opacity > 0.03; });
-      },
-      onEnd: function () { fxImpact(target, color); },
-    });
-  }
-
-  /** wind — des arcs de vent balaient la cible, quelques étincelles emportées. */
-  function fxWind(origin, target, color) {
-    const n = 4;
-    const mats = [];
-    const g = new THREE.Group();
-    const arcs = [];
-    for (let i = 0; i < n; i++) {
-      const m = fxMat(color, true, 0.75);
-      mats.push(m);
-      const mesh = new THREE.Mesh(ownGeo('fx-windarc', function () { return new THREE.TorusGeometry(1, 0.045, 6, 20, Math.PI * 0.85); }), m);
-      mesh.position.copy(target);
-      mesh.rotation.y = Math.random() * Math.PI * 2;
-      mesh.castShadow = false;
-      g.add(mesh);
-      arcs.push({ mesh: mesh, mat: m, delay: i * 0.06, dir: (i % 2 === 0) ? 1 : -1, s0: 0.3 + i * 0.15 });
-    }
-    spawnFx({
-      group: g, mats: mats, life: 0.5,
-      update: function (p) {
-        const t = p * 0.5;
-        arcs.forEach(function (q) {
-          const lp = R3.clamp01((t - q.delay) / 0.32);
-          q.mesh.scale.setScalar(q.s0 + lp * 1.1);
-          q.mesh.rotation.z += q.dir * 0.25;
-          q.mat.opacity = 0.75 * (1 - lp);
-        });
-      },
-    });
-    fxSparks(target, 8, color, 1.6);
-  }
-
-  /** rock — des blocs de pierre volent vers la cible puis un nuage de poussière. */
-  function fxRock(origin, target, color) {
     const n = qCount(8);
-    const mats = [];
+    for (let i = 0; i < n; i++) {
+      const mesh = new THREE.Mesh(geo, i % 3 === 0 ? mCore : m);
+      mesh.castShadow = false;
+      g.add(mesh);
+      const a = (i / n) * Math.PI * 2;
+      parts.push({
+        mesh: mesh, a: a, r: 1.5 + Math.random() * 0.8,
+        h: 2.4 + Math.random() * 1.2, off: i * 0.045,
+      });
+    }
+    spawnFx({
+      group: g, mats: [m, mCore], life: 0.85,
+      update: function (p) {
+        parts.forEach(function (q) {
+          const u = R3.clamp01((p - q.off) / 0.55);
+          // 1re moitié : la lame se forme en tournant ; 2e : elle plonge
+          const desc = u < 0.45 ? 0 : R3.easeInOut((u - 0.45) / 0.55);
+          const r = q.r * (1 - desc * 0.85);
+          const y = q.h * (1 - desc) + 0.4;
+          q.mesh.position.set(target.x + Math.cos(q.a + p * 2) * r, y, target.z + Math.sin(q.a + p * 2) * r);
+          q.mesh.rotation.set(Math.PI, p * 6 + q.a, 0);
+          const s = Math.min(1, u * 3) * (1 + desc * 0.4);
+          q.mesh.scale.setScalar(s);
+        });
+        m.opacity = 0.9 * (1 - Math.max(0, (p - 0.7) / 0.3));
+        mCore.opacity = 0.95 * (1 - Math.max(0, (p - 0.7) / 0.3));
+      },
+    });
+    setTimeoutFx(0.42, function () {
+      fxExplosion(target, color, 1.05 * fxForce, { smoke: '#e8f6ff', scorch: false });
+      fxColumn(target, '#ffffff', 2.6, { n: 10, size: 0.8, tex: glowTexture(), life: 0.6 , additive: true });
+    });
+  }
+
+  /** star — une pluie d'étoiles filantes converge, puis grande déflagration. */
+  function fxStar(origin, target, color) {
+    const n = qCount(9);
+    const m = fxMat(color, true, 1);
+    const halo = sprMat(glowTexture(), '#ffffff', 0.9, true);
     const g = new THREE.Group();
     const parts = [];
     for (let i = 0; i < n; i++) {
-      const m = fxMat(color, false, 1);
+      const etoile = R3.star(5, 0.26, 0.11, 0.05, color, 0, 0, 0);
+      etoile.material = m;
+      etoile.castShadow = false;
+      g.add(etoile);
+      const q = new THREE.Sprite(halo);
+      q.scale.set(0.9, 0.9, 1);
+      g.add(q);
+      const a = (i / n) * Math.PI * 2;
+      parts.push({
+        mesh: etoile, halo: q, a: a,
+        from: new THREE.Vector3(target.x + Math.cos(a) * 6, target.y + 3.5 + Math.random() * 2, target.z + Math.sin(a) * 6),
+        off: i * 0.035,
+      });
+    }
+    spawnFx({
+      group: g, mats: [m, halo], life: 0.7,
+      update: function (p) {
+        parts.forEach(function (q) {
+          const u = R3.clamp01((p - q.off) / 0.5);
+          const pos = q.from.clone().lerp(target, R3.easeInOut(u));
+          q.mesh.position.copy(pos);
+          q.halo.position.copy(pos);
+          q.mesh.rotation.z += 0.25;
+          q.mesh.rotation.y += 0.12;
+          const k = 1 - u * 0.4;
+          q.halo.scale.set(k, k, 1);
+        });
+        m.opacity = 1 - Math.max(0, (p - 0.5) / 0.5);
+        halo.opacity = 0.9 * (1 - Math.max(0, (p - 0.5) / 0.5));
+      },
+    });
+    setTimeoutFx(0.42, function () {
+      fxExplosion(target, color, 1.35 * fxForce, { fireballs: 22, scorch: false });
+      fxStars(target, 26);
+    });
+  }
+
+  /** void — un trou noir aspire tout, puis implose en onde de choc. */
+  function fxVoid(origin, target, color) {
+    const mTrou = fxMat('#0a0713', false, 0.98);
+    mTrou.blending = THREE.NormalBlending;
+    const trou = new THREE.Mesh(R3.geo.sphere(1, 16), mTrou);
+    trou.position.copy(target);
+    trou.castShadow = false;
+
+    const mDisque = fxMat(color, true, 0.9);
+    const disque = new THREE.Mesh(
+      ownGeo('fx-disc', function () { return new THREE.TorusGeometry(1, 0.22, 10, 34); }), mDisque);
+    disque.position.copy(target);
+    disque.rotation.x = 1.15;
+    disque.castShadow = false;
+
+    const pm = sprMat(glowTexture(), color, 0.9, true);
+    const g = new THREE.Group();
+    g.add(trou, disque);
+    const parts = [];
+    const n = qCount(20);
+    for (let i = 0; i < n; i++) {
+      const s = new THREE.Sprite(pm);
+      const k = 0.2 + Math.random() * 0.22;
+      s.scale.set(k, k, 1);
+      g.add(s);
+      parts.push({ s: s, a: Math.random() * 6.28, r: 2.2 + Math.random() * 2.4, y: (Math.random() - 0.5) * 2.4, off: Math.random() * 0.3 });
+    }
+    spawnFx({
+      group: g, mats: [mTrou, mDisque, pm], life: 0.85,
+      update: function (p) {
+        const enfle = p < 0.7 ? R3.easeOut(p / 0.7) : 1 - (p - 0.7) / 0.3;
+        trou.scale.setScalar(0.15 + enfle * 0.85);
+        disque.scale.setScalar(0.5 + enfle * 1.5);
+        disque.rotation.z += 0.09;
+        parts.forEach(function (q) {
+          const u = R3.clamp01((p - q.off) / 0.7);
+          const r = q.r * (1 - u);
+          const a = q.a + u * 12;
+          q.s.position.set(target.x + Math.cos(a) * r, target.y + q.y * (1 - u), target.z + Math.sin(a) * r);
+          const k = 0.22 * (1 - u * 0.5);
+          q.s.scale.set(k, k, 1);
+        });
+        pm.opacity = 0.9 * (1 - Math.max(0, (p - 0.6) / 0.4));
+        mTrou.opacity = 0.98 * (1 - Math.max(0, (p - 0.75) / 0.25));
+        mDisque.opacity = 0.9 * (1 - Math.max(0, (p - 0.75) / 0.25));
+      },
+    });
+    setTimeoutFx(0.62, function () {
+      fxExplosion(target, color, 1.45 * fxForce, { fireballs: 22, smoke: '#2a2340' });
+    });
+  }
+
+  /** time — des cadrans concentriques tournent, le temps se déchire. */
+  function fxTime(origin, target, color) {
+    const g = new THREE.Group();
+    const mats = [];
+    const geoR = ownGeo('fx-ring', function () { return new THREE.TorusGeometry(1, 0.06, 8, 30); });
+    const anneaux = [];
+    for (let i = 0; i < 4; i++) {
+      const m = fxMat(i === 0 ? '#ffffff' : color, true, 0.9);
       mats.push(m);
-      const mesh = new THREE.Mesh(R3.geo.box(0.14, 0.14, 0.14), m);
+      const mesh = new THREE.Mesh(geoR, m);
+      mesh.position.copy(target);
+      mesh.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
       mesh.castShadow = false;
+      g.add(mesh);
+      anneaux.push({ mesh: mesh, mat: m, s: 0.8 + i * 0.55, v: (i % 2 ? 1 : -1) * (0.03 + i * 0.02) });
+    }
+    // aiguilles
+    const mA = fxMat('#ffffff', true, 0.95);
+    mats.push(mA);
+    for (let i = 0; i < 2; i++) {
+      const a = new THREE.Mesh(R3.geo.box(0.06, i ? 1.5 : 1.0, 0.06), mA);
+      a.position.copy(target);
+      a.castShadow = false;
+      g.add(a);
+      anneaux.push({ mesh: a, mat: mA, s: 1, v: (i ? 0.22 : 0.06), aiguille: true, len: i ? 1.5 : 1.0 });
+    }
+    spawnFx({
+      group: g, mats: mats, life: 0.8,
+      update: function (p) {
+        if (camera) g.quaternion.copy(camera.quaternion);
+        anneaux.forEach(function (q) {
+          if (q.aiguille) {
+            q.mesh.rotation.z += q.v;
+            const s = R3.easeOut(Math.min(1, p * 3));
+            q.mesh.scale.set(1, s, 1);
+            q.mesh.position.set(
+              target.x + Math.sin(q.mesh.rotation.z) * -q.len * 0.5 * s,
+              target.y + Math.cos(q.mesh.rotation.z) * q.len * 0.5 * s,
+              target.z);
+          } else {
+            const s = q.s * (0.4 + R3.easeOut(Math.min(1, p * 2)) * 1.1);
+            q.mesh.scale.set(s, s, s);
+            q.mesh.rotation.z += q.v;
+          }
+          q.mat.opacity = 0.9 * (1 - Math.max(0, (p - 0.55) / 0.45));
+        });
+      },
+    });
+    setTimeoutFx(0.42, function () { fxExplosion(target, color, 1.2 * fxForce, { scorch: false }); });
+  }
+
+  /** leaf — une tornade de feuilles enveloppe la cible. */
+  function fxLeaf(origin, target, color) {
+    const m = fxMat(color, false, 1);
+    m.side = THREE.DoubleSide;
+    const geo = ownGeo('fx-leaf', function () { return new THREE.PlaneGeometry(0.32, 0.5); });
+    const g = new THREE.Group();
+    const parts = [];
+    const n = qCount(26);
+    for (let i = 0; i < n; i++) {
+      const mesh = new THREE.Mesh(geo, m);
+      mesh.castShadow = false;
+      g.add(mesh);
+      parts.push({
+        mesh: mesh, a: Math.random() * 6.28, r: 0.5 + Math.random() * 1.5,
+        y0: Math.random() * 2.6, v: 2 + Math.random() * 3, sp: (Math.random() - 0.5) * 14,
+      });
+    }
+    spawnFx({
+      group: g, mats: [m], life: 0.95,
+      update: function (p) {
+        parts.forEach(function (q) {
+          const a = q.a + p * q.v * 2.4;
+          const r = q.r * (1 + Math.sin(p * 3) * 0.25);
+          q.mesh.position.set(target.x + Math.cos(a) * r, ((q.y0 + p * 2.6) % 3.2), target.z + Math.sin(a) * r);
+          q.mesh.rotation.set(p * q.sp * 0.4, a, p * q.sp * 0.3);
+        });
+        m.opacity = 1 - Math.max(0, (p - 0.55) / 0.45);
+      },
+    });
+    setTimeoutFx(0.38, function () {
+      fxExplosion(target, color, 1.0 * fxForce, { smoke: '#9fd08a', scorch: false });
+    });
+  }
+
+  /** flame — un lance-flammes : un torrent de feu, puis un brasier. */
+  function fxFlame(origin, target, color) {
+    fxCharge(origin, color, 0.18, 0.9);
+    const dir = target.clone().sub(origin);
+    const dist = Math.max(0.6, dir.length());
+    const dirN = dir.clone().normalize();
+    // Corps du jet en fondu normal (la couleur reste lisible), cœur additif.
+    const m = sprMat(flameTexture(), color, 0.95, false);
+    const mC = sprMat(flameTexture(), '#fff3c8', 0.8, true);
+    const g = new THREE.Group();
+    const parts = [];
+    const n = qCount(22);
+    for (let i = 0; i < n; i++) {
+      const s = new THREE.Sprite(i % 4 === 0 ? mC : m);
+      g.add(s);
+      parts.push({
+        s: s, off: i / n, lat: (Math.random() - 0.5) * 0.55, ver: (Math.random() - 0.5) * 0.5,
+        k: 0.55 + Math.random() * 0.7, ph: Math.random() * 6.28,
+      });
+    }
+    spawnFx({
+      group: g, mats: [m, mC], life: 0.72, delay: 0.14,
+      update: function (p) {
+        parts.forEach(function (q) {
+          const u = (p * 1.9 + q.off) % 1;
+          const d = u * dist;
+          // le jet s'évase en avançant
+          const evase = 0.25 + u * 1.5;
+          q.s.position.set(
+            origin.x + dirN.x * d + q.lat * evase + Math.sin(q.ph + p * 14) * 0.1,
+            origin.y + q.ver * evase + Math.sin(u * 2.2) * 0.35,
+            origin.z + dirN.z * d + q.lat * evase + Math.cos(q.ph + p * 14) * 0.1
+          );
+          const k = q.k * (0.5 + u * 1.5);
+          q.s.scale.set(k, k, 1);
+          q.s.material.rotation += 0.03;
+        });
+        const f = 1 - Math.max(0, (p - 0.6) / 0.4);
+        m.opacity = 0.95 * f;
+        mC.opacity = 0.9 * f;
+        setPunch(origin.clone().lerp(target, 0.5), color, 4.5);
+      },
+    });
+    setTimeoutFx(0.34, function () {
+      fxExplosion(target, color, 1.25 * fxForce, { fireballs: 22 });
+      fxColumn(target, color, 4.0, { n: 14, size: 1.3, rayon: 0.7, life: 0.9 });
+    });
+  }
+
+  /** bubble — un torrent de bulles, puis une gerbe d'eau. */
+  function fxBubble(origin, target, color) {
+    const m = fxMat(color, true, 0.65);
+    const mB = fxMat('#ffffff', true, 0.5);
+    const g = new THREE.Group();
+    const parts = [];
+    const n = qCount(20);
+    for (let i = 0; i < n; i++) {
+      const mesh = new THREE.Mesh(R3.geo.sphere(1, 10), i % 3 ? m : mB);
+      mesh.castShadow = false;
+      g.add(mesh);
+      parts.push({
+        mesh: mesh, off: i / n, k: 0.16 + Math.random() * 0.2,
+        lat: (Math.random() - 0.5) * 0.8, ver: (Math.random() - 0.5) * 0.7, ph: Math.random() * 6.28,
+      });
+    }
+    spawnFx({
+      group: g, mats: [m, mB], life: 0.7,
+      update: function (p) {
+        parts.forEach(function (q) {
+          const u = (p * 1.7 + q.off) % 1;
+          const pos = origin.clone().lerp(target, u);
+          pos.x += q.lat + Math.sin(q.ph + u * 9) * 0.18;
+          pos.y += q.ver + Math.sin(u * Math.PI) * 0.9;
+          pos.z += Math.cos(q.ph + u * 9) * 0.18;
+          q.mesh.position.copy(pos);
+          q.mesh.scale.setScalar(q.k * (0.6 + u));
+        });
+        const f = 1 - Math.max(0, (p - 0.6) / 0.4);
+        m.opacity = 0.65 * f; mB.opacity = 0.5 * f;
+      },
+    });
+    setTimeoutFx(0.36, function () {
+      fxExplosion(target, color, 1.05 * fxForce, { smoke: '#cfe6f5', scorch: false });
+      fxColumn(target, color, 3.6, { n: 14, size: 1.0, rayon: 0.55, tex: glowTexture(), life: 0.8 , additive: true });
+    });
+  }
+
+  /** bolt — LA foudre : un éclair 3D tombe du ciel, puis remonte du sol. */
+  function fxBolt(origin, target, color) {
+    const ciel = new THREE.Vector3(target.x + (Math.random() - 0.5), target.y + 7.5, target.z + (Math.random() - 0.5));
+    fxLightning(ciel, target, color, { size: 1.5, branches: 5, life: 0.4, jag: 0.5 });
+    fxScreenRing(color, 0.7);
+    camShake = Math.max(camShake, 0.4);
+
+    // arcs qui rampent sur la cible
+    setTimeoutFx(0.10, function () {
+      for (let i = 0; i < 3; i++) {
+        const a = target.clone().add(new THREE.Vector3((Math.random() - 0.5) * 1.4, Math.random() * 1.2, (Math.random() - 0.5) * 1.4));
+        const b = target.clone().add(new THREE.Vector3((Math.random() - 0.5) * 1.4, Math.random() * 1.2, (Math.random() - 0.5) * 1.4));
+        fxLightning(a, b, color, { size: 0.7, branches: 1, life: 0.22, jag: 0.9 });
+      }
+      fxExplosion(target, color, 1.3 * fxForce, { fireballs: 18, smoke: '#dfe6ff' });
+    });
+  }
+
+  /** wind — un vortex visible, avec ses lames d'air. */
+  function fxWind(origin, target, color) {
+    const m = fxMat(color, true, 0.55);
+    m.side = THREE.DoubleSide;
+    const geo = ownGeo('fx-arc', function () { return new THREE.TorusGeometry(1, 0.045, 6, 22, Math.PI * 1.5); });
+    const g = new THREE.Group();
+    const parts = [];
+    const n = qCount(12);
+    for (let i = 0; i < n; i++) {
+      const mesh = new THREE.Mesh(geo, m);
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.castShadow = false;
+      g.add(mesh);
+      parts.push({ mesh: mesh, off: i / n, r: 0.5 + Math.random() * 0.9 });
+    }
+    const pm = sprMat(glowTexture(), '#ffffff', 0.5, true);
+    const poussiere = [];
+    const np = qCount(14);
+    for (let i = 0; i < np; i++) {
+      const s = new THREE.Sprite(pm);
+      const k = 0.2 + Math.random() * 0.25;
+      s.scale.set(k, k, 1);
+      g.add(s);
+      poussiere.push({ s: s, a: Math.random() * 6.28, r: 0.6 + Math.random() * 1.4, y: Math.random() * 3 });
+    }
+    spawnFx({
+      group: g, mats: [m, pm], life: 0.85,
+      update: function (p) {
+        parts.forEach(function (q) {
+          const u = (p * 1.4 + q.off) % 1;
+          q.mesh.position.set(target.x, 0.2 + u * 3.4, target.z);
+          const s = q.r * (1.6 - u * 0.8);
+          q.mesh.scale.set(s, s, 1);
+          q.mesh.rotation.z = u * 14;
+        });
+        poussiere.forEach(function (q) {
+          const a = q.a + p * 13;
+          const y = (q.y + p * 3.2) % 3.4;
+          q.s.position.set(target.x + Math.cos(a) * q.r * (1.2 - y * 0.2), 0.2 + y, target.z + Math.sin(a) * q.r * (1.2 - y * 0.2));
+        });
+        const f = 1 - Math.max(0, (p - 0.6) / 0.4);
+        m.opacity = 0.55 * f; pm.opacity = 0.5 * f;
+      },
+    });
+    setTimeoutFx(0.4, function () {
+      fxExplosion(target, color, 1.0 * fxForce, { scorch: false, smoke: '#e6f2ff' });
+    });
+  }
+
+  /** rock — de vrais blocs arrachés au sol et projetés sur la cible. */
+  function fxRock(origin, target, color) {
+    const m = fxMat(color, false, 1);
+    const g = new THREE.Group();
+    const parts = [];
+    const n = qCount(7);
+    for (let i = 0; i < n; i++) {
+      const mesh = rockMesh(m, 0.42 + Math.random() * 0.34);
       g.add(mesh);
       const from = origin.clone();
-      from.x += (Math.random() - 0.5) * 0.6; from.y += Math.random() * 0.4;
-      parts.push({ mesh: mesh, mat: m, from: from, spin: (Math.random() - 0.5) * 10 });
+      from.x += (Math.random() - 0.5) * 1.5;
+      from.z += (Math.random() - 0.5) * 1.0;
+      from.y = 0.2;
+      parts.push({
+        mesh: mesh, from: from, off: i * 0.045,
+        sx: (Math.random() - 0.5) * 16, sy: (Math.random() - 0.5) * 16,
+        arc: 1.4 + Math.random() * 1.1,
+      });
     }
     spawnFx({
-      group: g, mats: mats, life: 0.42,
+      group: g, mats: [m], life: 0.72,
       update: function (p) {
         parts.forEach(function (q) {
-          const pos = q.from.clone().lerp(target, R3.easeOut(p));
-          pos.y += Math.sin(p * Math.PI) * 0.6;
-          q.mesh.position.copy(pos);
-          q.mesh.rotation.x += q.spin * 0.02; q.mesh.rotation.y += q.spin * 0.02;
-          q.mat.opacity = 1 - p * p;
+          const u = R3.clamp01((p - q.off) / 0.55);
+          // 1er tiers : le bloc s'arrache du sol ; ensuite il file vers la cible
+          if (u < 0.3) {
+            const k = u / 0.3;
+            q.mesh.position.set(q.from.x, q.from.y + k * 1.1, q.from.z);
+          } else {
+            const k = (u - 0.3) / 0.7;
+            const pos = q.from.clone().setY(q.from.y + 1.1).lerp(target, R3.easeIn ? R3.easeIn(k) : k * k);
+            pos.y += Math.sin(k * Math.PI) * q.arc;
+            q.mesh.position.copy(pos);
+          }
+          q.mesh.rotation.x += q.sx * 0.012;
+          q.mesh.rotation.y += q.sy * 0.012;
         });
+        m.opacity = 1 - Math.max(0, (p - 0.75) / 0.25);
       },
-      onEnd: function () { fxImpact(target, color); fxSmoke(target, 8); },
+    });
+    fxCloud(new THREE.Vector3(origin.x, 0.15, origin.z), {
+      n: 8, tex: smokeTexture(), color: '#c9bda8', size: 1.1,
+      spread: 1.2, rise: 0.3, life: 0.8, grow: 1.8, opacity: 0.5, additive: false,
+    });
+    setTimeoutFx(0.5, function () {
+      fxExplosion(target, color, 1.2 * fxForce, { smoke: '#c9bda8', debris: 16 });
     });
   }
 
@@ -1575,6 +2503,7 @@
     const mood = R3.biomeMood(biomeCur);
 
     time = 0; camShake = 0; resultDone = false; ballAnim = null;
+    hitStop = 0; zoomPunch = 0; fxForce = 1;
 
     scene = new THREE.Scene();
     scene.background = new THREE.Color(a.mid);
@@ -1713,6 +2642,16 @@
 
     camera.position.set(Math.sin(ang) * rad + sx, hgt + sy, Math.cos(ang) * rad - 0.55);
     camera.lookAt(CAM_LOOK.x, CAM_LOOK.y + Math.sin(time * 0.19) * 0.05, CAM_LOOK.z);
+
+    // Coup de zoom à l'impact : le champ se resserre d'un coup puis se rouvre.
+    if (zoomPunch > 0.001) {
+      zoomPunch = Math.max(0, zoomPunch - dts * 4.2);
+      const f = CAM_FOV - zoomPunch * 3.4;
+      if (Math.abs(camera.fov - f) > 0.01) { camera.fov = f; camera.updateProjectionMatrix(); }
+    } else if (Math.abs(camera.fov - CAM_FOV) > 0.01) {
+      camera.fov = CAM_FOV;
+      camera.updateProjectionMatrix();
+    }
 
     if (punchLight) punchLight.intensity = Math.max(0, punchLight.intensity - dts * 14);
     if (cloudRing) cloudRing.rotation.y += dts * 0.006;
@@ -2068,7 +3007,16 @@
 
   function update(dt, battleState) {
     if (!scene) return;
-    const dts = normDt(dt);
+    let dts = normDt(dt);
+
+    // ARRÊT SUR IMAGE : pendant les ~65 ms qui suivent un impact, le temps du
+    // combat est ralenti à 15 %. La minuterie, elle, s'écoule en temps RÉEL —
+    // sinon le gel durerait indéfiniment.
+    if (hitStop > 0) {
+      hitStop = Math.max(0, hitStop - dts);
+      dts *= 0.15;
+    }
+
     time += dts;
     if (battleState) bs = battleState;
 
@@ -2104,12 +3052,28 @@
    *   side : 'player' | 'foe'   (le camp qui AGIT)
    *   move : entrée de moves3d (peut être absente : on retombe sur un coup neutre)
    */
-  function notifyMove(side, move) {
+  /**
+   * @param {object} [res] résultat du calcul de dégâts (moves3d.compute) :
+   *        { mult, crit, missed }. Facultatif — sert seulement à savoir si le
+   *        coup doit être SPECTACULAIRE (super efficace / critique) ou sobre.
+   */
+  function notifyMove(side, move, res) {
     if (!scene || !bs) return;
     const sk = (side === 'foe') ? 'foe' : 'player';
     const A = (sk === 'foe') ? foe : plr;
     const D = (sk === 'foe') ? plr : foe;
     if (!A || !A.model) return;
+
+    let force = 1;
+    if (res) {
+      if (res.missed) force = 0.45;
+      else {
+        if (res.mult > 1.05) force += 0.45;
+        else if (res.mult < 0.95) force -= 0.25;
+        if (res.crit) force += 0.35;
+      }
+    }
+    A.atkForce = force;
 
     animSeqLocal++;
     if (!bs.anim) bs.anim = {};
@@ -2169,7 +3133,14 @@
     const target = (D && D.model)
       ? new THREE.Vector3(D.base.x, D.holder.position.y + 0.7 * D.scale, D.base.z)
       : origin.clone();
+
+    // Départ du coup : une lueur de charge sur l'attaquant, pour que l'œil
+    // parte de lui avant de suivre l'effet.
+    fxGlow(origin, color, 2.2, 0.30, 0.8);
     camShake = Math.max(camShake, 0.10);
+    // `fxForce` reste posée jusqu'au prochain coup : certains effets (le
+    // projectile, par exemple) n'appellent fxImpact() qu'à la fin de leur vol.
+    fxForce = (typeof A.atkForce === 'number') ? A.atkForce : 1;
     dispatchFx(m.fx, origin, target, color);
   }
 
