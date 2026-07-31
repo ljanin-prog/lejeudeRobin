@@ -31,7 +31,7 @@ Robin (10 ans) a testé le jeu. Onze demandes en sont sorties. Les voici, telles
 Décisions prises avec le parent de Robin, elles ne se rediscutent pas :
 
 - **Types** : on **fusionne** — les 12 types actuels sont conservés, 7 nouveaux sont ajoutés
-  (→ 18). Aucune créature n'est retypée de force.
+  (→ 19). Aucune créature n'est retypée de force.
 - **Légendaires** : silhouettes **reconnaissables** (posture, couleurs, attributs), mais les
   **noms restent ceux du jeu de Robin**. On s'inspire, on ne copie pas.
 - **Évolutions** : chaînes par niveau, plus quelques pierres achetables au Centre.
@@ -66,7 +66,7 @@ lisible, généreux, jamais punitif.
 
 ---
 
-## 2. LES 18 TYPES ÉLÉMENTAIRES — `types3d.js` *(remplace le §2 de v2)*
+## 2. LES 19 TYPES ÉLÉMENTAIRES — `types3d.js` *(remplace le §2 de v2)*
 
 La table v2 est **étendue, pas refaite**. Deux types sont **renommés**, sept sont **ajoutés**,
 aucune relation existante n'est retirée.
@@ -89,7 +89,7 @@ const ALIAS = { foudre: 'electrique', ombre: 'spectre' };
 
 `normalize(id)` est exportée. Un ancien id doit se comporter **exactement** comme le nouveau.
 
-### 2.2 La table cible (18 entrées)
+### 2.2 La table cible (19 entrées)
 
 | id           | label       | couleur   | icône | fort contre                     | faible contre               |
 |--------------|-------------|-----------|-------|---------------------------------|-----------------------------|
@@ -113,7 +113,7 @@ const ALIAS = { foudre: 'electrique', ombre: 'spectre' };
 | `combat`     | Combat      | `#e8622c` | 🥊    | normal, roche, acier, glace     | air, psy, fee               |
 | `normal`     | Normal      | `#d8d0c4` | ◻️    | *(aucun)*                       | roche, acier, spectre       |
 
-`ORDER` contient les 18 ids dans **cet ordre exact** (c'est l'ordre d'affichage partout :
+`ORDER` contient les 19 ids dans **cet ordre exact** (c'est l'ordre d'affichage partout :
 filtre du Pokédex, légende de la carte, sélecteur de type Téra).
 
 Multiplicateurs inchangés : `fort ×1.6`, `faible ×0.6`, sinon `×1.0`. Deux types en défense :
@@ -127,7 +127,7 @@ l'ambiguïté. Il ne donne toujours ni bonus ni malus et n'entre pas dans `ORDER
 
 ### 2.4 Auto-vérification
 
-Le `selfCheck()` existant est conservé et **étendu** : 18 entrées dans `ORDER`, chaque alias
+Le `selfCheck()` existant est conservé et **étendu** : 19 entrées dans `ORDER`, chaque alias
 pointe vers un type réel, aucun type ne se cite lui-même, aucun type n'est à la fois fort et
 faible contre le même. Il `console.warn` — il ne lève jamais.
 
@@ -330,7 +330,7 @@ Règles du jeu :
 - **Une seule activation par combat**, sur une seule créature. Se recharge au Centre Pokémon
   ou après un repos, jamais au milieu d'un combat.
 - Le **type Téra par défaut** est le premier type de la créature. À l'Académie, le joueur
-  peut le **changer** pour n'importe lequel des 18 types, une fois par créature et par visite.
+  peut le **changer** pour n'importe lequel des 19 types, une fois par créature et par visite.
 - Effet : la créature **prend le type Téra** (défense et STAB), les attaques de ce type
   passent à **×1.5**, et elle reçoit **+20 % de défense** jusqu'à la fin du combat.
 - Visuel obligatoire : une **couronne de cristal flottante** au-dessus de la tête, aux
@@ -537,7 +537,7 @@ Un agent n'écrit **que** dans ses fichiers. Tout le reste est en lecture seule.
 | **A** | Réactions PNJ | `js3d/actors3d.js` | 11 |
 | **I** | Intégration | `js3d/game3d.js`, `js3d/hud3d.js`, `js3d/battle3d.js`, `css3d/hud3d.css`, `index3d.html`, `js3d/tiles3d.js`, `js3d/CONTRACT3.md` | 1, 9 + branchements |
 
-Le lot **T** passe **avant tous les autres** : les 18 types sont la fondation.
+Le lot **T** passe **avant tous les autres** : les 19 types sont la fondation.
 Le lot **I** passe **après tous les autres** : il branche ce qui a été produit.
 
 ---
