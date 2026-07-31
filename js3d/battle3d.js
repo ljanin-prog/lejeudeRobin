@@ -26,10 +26,22 @@
 //  caméra recule vers +z.
 //
 //  DÉPENDANCES — TOUTES FACULTATIVES (dégradation gracieuse obligatoire) :
-//    R3.get('dex')   -> savoir qui est légendaire, ses types, sa couleur
-//    R3.get('types') -> couleur d'un type (sinon gris neutre)
-//    R3.get('llib')  -> aura des légendaires (sinon pas d'aura, juste plus grand)
+//    R3.get('dex')    -> savoir qui est légendaire, ses types, sa couleur
+//    R3.get('types')  -> couleur d'un type (sinon gris neutre)
+//    R3.get('llib')   -> aura de repli d'un légendaire qui n'en porte pas
+//    R3.get('evolve') -> quel MODÈLE construire pour une forme évoluée
+//    R3.get('tera')   -> Téracristallisation : bonus de dégâts + couronne
 //    R3.buildCreature(id) -> toujours défini par core3d, jamais null
+//
+//  INTÉGRATION FINALE DU 2026-07-31 (lot I-C) — quatre corrections :
+//    1. l'aura de combat des légendaires n'est plus construite en double : ils
+//       portent déjà la leur depuis les lots L1/L2/L3 (−8 draw calls) ;
+//    2. la Téracristallisation multiplie les dégâts (`notifyMove`) et retombe
+//       en fin de combat (`exit`) — voir la grande section « TÉRACRISTALLISATION » ;
+//    3. les formes évoluées passent par `evolve.fallbackModel()` : plus jamais
+//       de silhouette grise quand le modèle de la forme évoluée manque ;
+//    4. les légendaires lévitants ne se posent plus au sol : `baseY` n'est
+//       écrasée que pour les modèles qui ne flottent pas.
 // =============================================================================
 
 (function () {
@@ -2420,11 +2432,39 @@
     return { legendary: legendary, types: types || [], color: color };
   }
 
+  /**
+   * L'id de MODÈLE 3D à construire réellement pour une espèce.
+   * Les 29 formes évoluées (`evolve3d.js`) sont modélisées par un autre lot :
+   * tant qu'un modèle manque, `evolve.fallbackModel()` renvoie l'id de la forme
+   * de base — bien plus lisible pour Robin que la silhouette grise de repli.
+   * Repli complet si `evolve3d` est absent : on garde l'id demandé.
+   */
+  function modelIdFor(speciesId) {
+    const EV = R3.get('evolve');
+    if (EV && EV.fallbackModel) {
+      try {
+        const id = EV.fallbackModel(speciesId);
+        if (typeof id === 'string' && id) return id;
+      } catch (e) { /* module absent ou id inconnu : on garde l'id demandé */ }
+    }
+    return speciesId;
+  }
+
   function attachModel(side, model, scale, blobR) {
     side.model = model;
     side.scale = scale;
     model.position.set(0, 0, 0);
-    model.userData.baseY = 0;
+    // `baseY` est la hauteur de REPOS de l'idle flottant (R3.idleCreature :
+    // `y = baseY + sin(...)` quand `anim.float` est vrai). La remettre à 0 sans
+    // condition posait au sol, en combat, les légendaires conçus pour LÉVITER
+    // (Cryonix, Zéphyrion, Aélune, Monolithe…) : ils ne touchent jamais terre
+    // sur la carte, ils ne doivent pas non plus s'asseoir sur la plateforme.
+    // On ne réinitialise donc que les modèles qui ne flottent pas — pour eux
+    // `baseY` n'a de toute façon aucun effet, mais le camp reste propre entre
+    // deux créatures.
+    const ud = model.userData || (model.userData = {});
+    const flotte = !!(ud.anim && ud.anim.float);
+    if (!flotte || typeof ud.baseY !== 'number') ud.baseY = 0;
     side.pivot.add(model);
     const br = blobR || 0.45 * scale;
     if (!side.blob) {
@@ -2444,7 +2484,9 @@
    */
   function rebuildSide(s, mon, sideKey, opts) {
     opts = opts || {};
-    if (s.model) { R3.disposeTree(s.model); s.model = null; }
+    // La couronne de cristal est un ENFANT du modèle : il faut la déposer avant
+    // de libérer l'arbre, sinon tera3d continuerait d'animer un groupe mort.
+    if (s.model) { teraDetach(s.model); R3.disposeTree(s.model); s.model = null; }
     if (s.auraGroup) { if (s.auraGroup.parent) s.auraGroup.parent.remove(s.auraGroup); s.auraGroup = null; }
 
     const info = speciesInfoFor(mon);
@@ -2453,7 +2495,7 @@
     s.phase = Math.random() * 6.28;
 
     const baseScale = sideKey === 'foe' ? FOE_SCALE : PLR_SCALE;
-    const model = R3.buildCreature((mon && mon.id) || 'feuillou');
+    const model = R3.buildCreature(modelIdFor((mon && mon.id) || 'feuillou'));
     let scaleMult = info.legendary ? LEGEND_SCALE_MULT : 1;
     // Tant que les 36 légendaires ne sont pas tous modélisés, buildCreature()
     // renvoie une silhouette de repli minuscule pour ceux qui manquent : on la
@@ -2473,15 +2515,35 @@
       const LL = R3.get('llib');
       const T = R3.get('types');
       const c = (T && T.color && info.types[0]) ? T.color(info.types[0]) : (info.color || '#ffe066');
-      if (LL && LL.aura) {
+      // L'AURA PAYÉE DEUX FOIS — correction du 2026-07-31.
+      // Depuis la refonte des lots L1/L2/L3, chaque légendaire porte DÉJÀ son
+      // aura et la marque en posant `userData.auraColor`. En ajouter une
+      // seconde ici coûtait 8 draw calls (2 coques + 1 tache au sol + 1 anneau
+      // + 4 lucioles, les valeurs par défaut de `llib.aura`) pour un halo qu'on
+      // ne distinguait même pas du premier. On ne double donc plus la mise ;
+      // et pour les rares légendaires sans aura propre (modèle de repli), on
+      // prend la version économe : pas de lucioles orbitales, invisibles à la
+      // distance de la caméra de combat.
+      const dejaUneAura = !!(model.userData && model.userData.auraColor);
+      if (LL && LL.aura && !dejaUneAura) {
         try {
-          s.auraGroup = LL.aura(c, 0.9, { shape: 'sphere' });
+          s.auraGroup = LL.aura(c, 0.9, { shape: 'sphere', rings: 1, particles: 0 });
           s.pivot.add(s.auraGroup);
         } catch (e) { s.auraGroup = null; }
       }
     }
 
     s.holder.traverse(function (o) { if (o.isMesh && o !== s.blob) { o.castShadow = true; o.receiveShadow = true; } });
+
+    // Téracristallisation : si CETTE créature est déjà cristallisée (retour en
+    // scène après un changement d'équipe), sa couronne de cristal doit revenir
+    // avec elle — sinon l'effet disparaîtrait alors que le bonus, lui, dure
+    // jusqu'à la fin du combat.
+    const TE = R3.get('tera');
+    if (TE && mon && TE.isActive && TE.attach) {
+      try { if (TE.isActive(mon)) TE.attach(model, mon); }
+      catch (e) { /* la couronne est un bonus visuel, jamais un blocage */ }
+    }
 
     if (opts.skipIntro) {
       s.introDone = true;
@@ -2585,6 +2647,10 @@
   }
 
   function exit() {
+    // AVANT le garde-fou : même si la scène 3D n'a jamais été construite, la
+    // Téracristallisation doit retomber — sinon la créature garderait
+    // `types = [typeTéra]` d'un combat sur l'autre (voir teraEndBattle).
+    teraEndBattle();
     if (!scene) { bs = null; return; }
     clearFx();
 
@@ -3001,6 +3067,153 @@
     }
   }
 
+  // ===========================================================================
+  //  TÉRACRISTALLISATION  (CONTRAT3 §7) — le branchement côté combat
+  // ===========================================================================
+  //
+  //  COMMENT ÇA MARCHE, ET POURQUOI ÇA A L'AIR TORDU
+  //  -----------------------------------------------
+  //  `tera.activate(mon)` RÉÉCRIT `mon.types = [typeTéra]`. C'est ce qui donne
+  //  à la créature la DÉFENSE du type Téra sans que `moves3d.js` ait la moindre
+  //  ligne à changer. Effet de bord : le STAB que `moves3d` calcule tout seul
+  //  (×1.25) suit ces nouveaux types. `tera.bonus()` corrige donc le compte :
+  //    · attaque du type Téra          -> ×1.2  (1.25 × 1.2 = 1.5 tout rond)
+  //    · attaque d'un type D'ORIGINE   -> ×1.25 (on lui REND son STAB : perdre
+  //      ses attaques habituelles en se cristallisant serait une punition)
+  //    · le reste                      -> ×1
+  //  C'est un MULTIPLICATEUR, jamais un remplacement du calcul de moves3d.
+  //
+  //  OÙ ON L'APPLIQUE
+  //  ----------------
+  //  Les dégâts sont calculés par `game3d.js` (`moves.compute`), qui nous passe
+  //  l'objet `res` à `notifyMove()` AVANT d'appliquer `res.dmg` à la cible.
+  //  On corrige donc `res.dmg` sur place : aucune ligne à changer dans game3d.
+  // ---------------------------------------------------------------------------
+
+  function teraApi() { return R3.get('tera'); }
+
+  function sideObj(sk) { return (sk === 'foe') ? foe : plr; }
+
+  /** Le Mon du camp demandé, tel que game3d le tient dans battleState. */
+  function monOfSide(sk) {
+    if (!bs) return null;
+    const camp = (sk === 'foe') ? bs.foe : bs.player;
+    return (camp && camp.mon) || null;
+  }
+
+  /** Applique le multiplicateur Téra à `res.dmg`. MUTE `res`, volontairement. */
+  function applyTeraDamage(sk, move, res) {
+    if (!res || res.missed) return;
+    if (!(typeof res.dmg === 'number' && res.dmg > 0)) return;   // soin ou raté
+    const T = teraApi();
+    if (!T || !T.bonus) return;
+    const mon = monOfSide(sk);
+    if (!mon) return;
+    try {
+      const k = T.bonus(mon, move);
+      if (typeof k === 'number' && isFinite(k) && k > 0 && k !== 1) {
+        res.dmg = Math.max(1, Math.round(res.dmg * k));
+        res.teraBonus = k;   // pour le HUD, s'il veut le dire à Robin
+      }
+    } catch (e) { /* tera3d absent ou en défaut : les dégâts restent ceux de moves3d */ }
+  }
+
+  /** Retire proprement la couronne d'un modèle (sans exiger tera3d). */
+  function teraDetach(model) {
+    const T = teraApi();
+    if (!T || !T.detach || !model) return;
+    try { T.detach(model); } catch (e) { /* rien de bloquant */ }
+  }
+
+  /** Le bouton Téra du menu de combat doit-il être actif ? (lu par hud3d) */
+  function canTera(side) {
+    const T = teraApi();
+    if (!T || !T.canUse) return false;
+    const mon = monOfSide((side === 'foe') ? 'foe' : 'player');
+    if (!mon) return false;
+    try {
+      if (T.isActive && T.isActive(mon)) return false;
+      return !!T.canUse(bs);
+    } catch (e) { return false; }
+  }
+
+  /** Le texte qui explique pourquoi le bouton est grisé (jamais vide). */
+  function teraStatus() {
+    const T = teraApi();
+    if (!T || !T.statusText) return 'La Téracristallisation n’est pas disponible.';
+    try { return T.statusText(bs) || ''; }
+    catch (e) { return 'La Téracristallisation n’est pas disponible.'; }
+  }
+
+  /** Le type Téra de la créature d'un camp — pour l'afficher sur le bouton. */
+  function teraTypeOf(side) {
+    const T = teraApi();
+    if (!T || !T.teraTypeOf) return null;
+    try { return T.teraTypeOf(monOfSide((side === 'foe') ? 'foe' : 'player')); }
+    catch (e) { return null; }
+  }
+
+  /** La mise en scène : éclat de cristaux au sol, puis couronne sur la tête. */
+  function teraShow(sk, typeId) {
+    const T = teraApi();
+    const s = sideObj(sk);
+    if (!T || !s || !scene) return;
+    const TY = R3.get('types');
+    let color = null;
+    try { color = (TY && TY.color) ? TY.color(typeId) : null; } catch (e) { color = null; }
+    color = color || NEUTRAL_COLOR;
+
+    if (s.model && T.attach) {
+      try { T.attach(s.model, monOfSide(sk)); }
+      catch (e) { /* pas de couronne : le bonus reste, c'est l'essentiel */ }
+    }
+    if (T.burst) {
+      try {
+        T.burst(scene, new THREE.Vector3(s.base.x, s.holder.position.y, s.base.z), color);
+      } catch (e) { /* l'éclat est un bonus, jamais un blocage */ }
+    }
+    // Un peu de secousse et un coup de lumière : c'est LE moment de gloire.
+    camShake = Math.max(camShake, 0.55);
+    if (punchLight) punchLight.intensity = Math.max(punchLight.intensity, 2.2);
+  }
+
+  /**
+   * LE POINT D'ENTRÉE DU BOUTON TÉRA.
+   * `game3d.js` n'a qu'à appeler `R3.get('battle').teraActivate('player')`
+   * depuis le callback `onPress` du bouton écrit par hud3d, puis afficher le
+   * `message` renvoyé. Tout le reste (règles, visuel, mémoire) est ici.
+   * -> { ok, typeId, message }
+   */
+  function teraActivate(side) {
+    const sk = (side === 'foe') ? 'foe' : 'player';
+    const T = teraApi();
+    const mon = monOfSide(sk);
+    if (!T || !T.activate) {
+      return { ok: false, typeId: null,
+        message: 'La Téracristallisation n’est pas encore disponible ici.' };
+    }
+    let res = null;
+    try { res = T.activate(mon, bs); } catch (e) { res = null; }
+    if (!res || !res.ok) {
+      return res || { ok: false, typeId: null, message: 'Il ne se passe rien…' };
+    }
+    teraShow(sk, res.typeId);
+    return res;
+  }
+
+  /**
+   * FIN DE COMBAT — obligatoire. Sans cet appel, `mon.types` resterait
+   * `[typeTéra]` et la créature serait mono-type pour toujours entre deux
+   * combats (et son bonus de défense de +20 % resterait acquis).
+   */
+  function teraEndBattle() {
+    const T = teraApi();
+    [foe, plr].forEach(function (s) { if (s && s.model) teraDetach(s.model); });
+    if (T && T.deactivateAll) {
+      try { T.deactivateAll(); } catch (e) { /* rien de bloquant */ }
+    }
+  }
+
   // ---------------------------------------------------------------------------
   //  API publique
   // ---------------------------------------------------------------------------
@@ -3034,6 +3247,13 @@
 
     updateSide(foe, dts);
     updateSide(plr, dts);
+
+    // Couronne et éclat de cristaux : tera3d anime sur R3.clock.t (temps
+    // absolu), un second appel dans la même image donne exactement le même
+    // résultat. On l'appelle quand même pour ne pas dépendre de sa boucle rAF
+    // interne, que le navigateur peut ralentir en arrière-plan.
+    const TE = R3.get('tera');
+    if (TE && TE.update) { try { TE.update(); } catch (e) { /* rien de bloquant */ } }
   }
 
   function render(renderer) {
@@ -3058,8 +3278,11 @@
    *        coup doit être SPECTACULAIRE (super efficace / critique) ou sobre.
    */
   function notifyMove(side, move, res) {
-    if (!scene || !bs) return;
     const sk = (side === 'foe') ? 'foe' : 'player';
+    // Le bonus de Téracristallisation est appliqué AVANT tout le reste : même
+    // si la scène 3D n'a pas pu se construire, les dégâts doivent être justes.
+    applyTeraDamage(sk, move, res);
+    if (!scene || !bs) return;
     const A = (sk === 'foe') ? foe : plr;
     const D = (sk === 'foe') ? plr : foe;
     if (!A || !A.model) return;
@@ -3154,6 +3377,21 @@
     swapIn: swapIn,
     playFx: playFx,
     throwBall: throwBall,
+
+    // --- Téracristallisation (§7 de v3) — ce que game3d doit brancher --------
+    // Bouton Téra du menu de combat (écrit par hud3d) :
+    //   onPress  -> R3.get('battle').teraActivate('player')  puis afficher
+    //               `message` avec showMessage(), et enchaîner sur le tour
+    //               adverse comme après n'importe quelle action.
+    //   grisé ?  -> !R3.get('battle').canTera('player')
+    //   info     -> teraStatus() (pourquoi c'est grisé) et teraType('player').
+    // La fin de combat est déjà gérée : `exit()` appelle teraEndBattle().
+    teraActivate: teraActivate,
+    canTera: canTera,
+    teraStatus: teraStatus,
+    teraType: teraTypeOf,
+    teraEndBattle: teraEndBattle,
+
     // Accès pratique pour le débogage / les tests hors contrat.
     get scene() { return scene; },
     get camera() { return camera; },

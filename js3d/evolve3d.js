@@ -46,6 +46,16 @@
 //  Dépendances, toutes facultatives : `dex` (stats de base + publication),
 //  `moves` (PP des capacités apprises), `R3.CREATURE_BUILDERS` (modèles 3D).
 //  Aucune n'est requise : le module se charge seul sans lever d'exception.
+//
+//  ---------------------------------------------------------------------------
+//  INTÉGRATION DU 2026-07-31 (lot I-C) — LES PIERRES
+//  ---------------------------------------------------------------------------
+//  Ce module et `shop3d.js` ont été écrits en parallèle : la boutique vendait
+//  six pierres dont une seule servait, et les deux pierres indispensables
+//  n'étaient nulle part. Corrigé des deux côtés. La règle, désormais unique et
+//  explicable à un enfant : « une pierre fait évoluer TOUT DE SUITE une
+//  créature de sa famille ». Le détail, et pourquoi ce choix plutôt qu'un
+//  catalogue réduit, sont dans la grande section « LES PIERRES — LA RÈGLE ».
 // =============================================================================
 
 (function () {
@@ -433,6 +443,73 @@
 
   function scale(v, m) { return Math.max(1, Math.round(num(v, 40) * num(m, 1.45))); }
 
+  // ===========================================================================
+  //  LES PIERRES — LA RÈGLE, décidée à l'intégration du 2026-07-31
+  // ===========================================================================
+  //
+  //  LE PROBLÈME. Ce module et `shop3d.js` ont été écrits en parallèle, sans se
+  //  voir. Le Centre vendait six pierres à 2500 pièces dont UNE SEULE servait à
+  //  quelque chose, et les deux pierres indispensables (Lune, Nuit) étaient
+  //  introuvables. Un enfant de 10 ans économisait 2500 pièces pour un objet
+  //  dont la description lui promettait une évolution, et il ne se passait rien.
+  //  C'est un mensonge, et un jeu ne ment pas à celui qui y joue.
+  //
+  //  LA RÈGLE, désormais : TOUTE PIERRE VENDUE FAIT ÉVOLUER QUELQUE CHOSE.
+  //  Elle tient en une phrase que Robin peut retenir :
+  //      « une pierre fait évoluer TOUT DE SUITE une créature de sa famille. »
+  //
+  //  Deux sortes d'étapes, donc :
+  //   · étape « à la pierre » (Méduzia, Étoilamer, Koronette) : la pierre est
+  //     une CONDITION. Seule la sienne fonctionne, sinon on contournerait
+  //     l'objet le plus recherché du jeu avec le plus banal.
+  //   · étape « au niveau » (toutes les autres) : la pierre de la famille de la
+  //     forme d'arrivée est un RACCOURCI. Elle avance l'évolution, elle ne la
+  //     remplace jamais — personne ne se retrouve à devoir payer 2500 pièces
+  //     pour une évolution qui arrivait toute seule.
+  //
+  //  Pourquoi ne pas avoir plutôt réduit le catalogue aux deux pierres utiles ?
+  //  Parce que les pierres sont réparties une par région dans le stock du Centre
+  //  (`shop3d.js`) : en supprimer cinq viderait les boutiques de la moitié du
+  //  monde. Et parce qu'une pierre qui fait grandir sa créature plus tôt, c'est
+  //  exactement ce qu'un enfant a envie d'acheter avec son premier magot.
+  // ---------------------------------------------------------------------------
+
+  // Quels TYPES une pierre réveille. La pierre agit sur une étape quand la
+  // forme d'ARRIVÉE porte l'un de ces types : c'est lisible (« la Pierre Plante
+  // fait éclore les créatures Plante ») et ça se vérifie d'un coup d'œil.
+  var STONE_FAMILY = {
+    pierre_feu:        ['feu'],
+    pierre_eau:        ['eau'],
+    pierre_plante:     ['plante'],
+    pierre_electrique: ['electrique'],
+    pierre_glace:      ['glace'],
+    pierre_lumiere:    ['lumiere'],
+    pierre_lune:       ['fee'],
+    pierre_nuit:       ['spectre', 'poison'],
+  };
+
+  /**
+   * Niveau MINIMUM pour utiliser une pierre en raccourci. On ne descend pas
+   * plus bas que 8 : voir un Feuillou niveau 2 devenir un arbre-gardien serait
+   * joli deux secondes, puis très décevant pour la suite de la partie.
+   */
+  function stoneLevelOf(level) {
+    return Math.max(8, Math.round(num(level, 20) * 0.6));
+  }
+
+  /** Les pierres qui réveillent au moins un des types donnés. */
+  function stonesForTypes(types) {
+    var out = [];
+    if (!types || !types.length) return out;
+    for (var id in STONE_FAMILY) {
+      var fam = STONE_FAMILY[id];
+      for (var i = 0; i < fam.length; i++) {
+        if (types.indexOf(fam[i]) >= 0) { out.push(id); break; }
+      }
+    }
+    return out;
+  }
+
   function buildAll() {
     for (var c = 0; c < CHAIN_DATA.length; c++) {
       var def = CHAIN_DATA[c];
@@ -453,6 +530,13 @@
           stone: stone,
           message: d.message || (info.name + ' évolue !'),
         };
+        // --- les pierres ACCEPTÉES par cette étape (voir §6, plus bas) -------
+        // Une étape « à la pierre » (`stone`) n'accepte QUE la sienne : c'est
+        // une condition, pas un raccourci. Une étape « au niveau » accepte en
+        // plus toutes les pierres de la famille de la forme d'arrivée — la
+        // pierre fait alors évoluer PLUS TÔT, sans jamais rien remplacer.
+        step.stones = stone ? [stone] : stonesForTypes(d.types);
+        step.stoneLevel = stone ? d.level : stoneLevelOf(d.level);
         chain.steps.push(step);
         STEP_FROM[fromId] = step;
 
@@ -636,32 +720,72 @@
   //     `shop3d.js` (lot S) vend les objets ; nous décidons ce qu'ils font.
   // ===========================================================================
 
-  var STONES = {};            // itemId -> { id, label, species: [ids] }
+  var STONES = {};            // itemId -> { id, label, species: [ids], required: [ids] }
+  // Noms alignés sur ceux du catalogue de `shop3d.js` : Robin doit lire le même
+  // mot sur l'objet de son sac et dans le message d'évolution.
   var STONE_LABELS = {
-    pierre_feu: 'Pierre de Feu', pierre_eau: 'Pierre d’Eau',
-    pierre_plante: 'Pierre Plante', pierre_foudre: 'Pierre Foudre',
+    pierre_feu: 'Pierre Feu', pierre_eau: 'Pierre Eau',
+    pierre_plante: 'Pierre Plante', pierre_electrique: 'Pierre Foudre',
+    pierre_glace: 'Pierre Glace', pierre_lumiere: 'Pierre Lumière',
     pierre_lune: 'Pierre de Lune', pierre_nuit: 'Pierre de Nuit',
-    pierre_glace: 'Pierre de Givre', pierre_soleil: 'Pierre du Soleil',
   };
 
   (function indexStones() {
     for (var i = 0; i < CHAINS.length; i++) {
       var st = CHAINS[i].steps;
       for (var j = 0; j < st.length; j++) {
-        if (!st[j].stone) continue;
-        var key = st[j].stone;
-        if (!STONES[key]) {
-          STONES[key] = { id: key, label: STONE_LABELS[key] || key, species: [] };
+        var acc = st[j].stones || [];
+        for (var k = 0; k < acc.length; k++) {
+          var key = acc[k];
+          if (!STONES[key]) {
+            STONES[key] = { id: key, label: STONE_LABELS[key] || key, species: [], required: [] };
+          }
+          STONES[key].species.push(st[j].from);
+          if (st[j].stone === key) STONES[key].required.push(st[j].from);
         }
-        STONES[key].species.push(st[j].from);
       }
     }
   })();
 
-  /** La pierre nécessaire à l'évolution de cette espèce, ou null. */
+  /** La pierre EXIGÉE par l'évolution de cette espèce, ou null (contrat §3). */
   function stoneFor(speciesId) {
     var step = nextOf(speciesId);
     return (step && step.stone) ? step.stone : null;
+  }
+
+  /** Toutes les pierres qui marchent sur cette espèce (exigée OU raccourci). */
+  function stonesFor(speciesId) {
+    var step = nextOf(speciesId);
+    return (step && step.stones) ? step.stones.slice() : [];
+  }
+
+  /** Cette pierre-là fonctionne-t-elle sur cette espèce ? */
+  function stoneWorksOn(speciesId, itemId) {
+    var step = nextOf(speciesId);
+    if (!step || !itemId) return false;
+    return (step.stones || []).indexOf(itemId) >= 0;
+  }
+
+  /**
+   * Le petit mot honnête à afficher quand la pierre ne fait rien : il DIT ce
+   * qu'il faudrait, plutôt que de laisser Robin réessayer au hasard.
+   * -> string (jamais vide)
+   */
+  function stoneHint(mon, itemId) {
+    var id = mon && mon.id;
+    var step = nextOf(id);
+    var label = STONE_LABELS[itemId] || 'pierre';
+    if (!step) return 'Cette créature n’évolue pas : elle est très bien comme ça !';
+    var attendue = (step.stones && step.stones.length) ? step.stones[0] : null;
+    if (step.stone) {
+      return 'Il lui faut la ' + (STONE_LABELS[step.stone] || step.stone) + ' pour évoluer.';
+    }
+    if (attendue && !stoneWorksOn(id, itemId)) {
+      return 'La ' + label + ' n’est pas de sa famille. Essaie la ' +
+             (STONE_LABELS[attendue] || attendue) + ' !';
+    }
+    var mini = num(step.stoneLevel, step.level);
+    return 'Elle est encore trop jeune : reviens au niveau ' + mini + '.';
   }
 
   /**
@@ -790,13 +914,21 @@
     catch (e) { console.warn('[evolve3d] évolution impossible :', e); return null; }
   }
 
-  /** Utilise une pierre sur `mon`. -> même résultat que `evolve()`, ou null. */
+  /**
+   * Utilise une pierre sur `mon`. -> même résultat que `evolve()`, ou null.
+   * `null` veut dire « il ne s'est rien passé » : l'appelant (shop3d) ne
+   * consomme alors NI la pierre, NI l'argent, et explique gentiment pourquoi
+   * grâce à `stoneHint()`.
+   */
   function applyStone(mon, itemId) {
     if (!mon || !mon.id || !itemId) return null;
     var step = nextOf(mon.id);
-    if (!step || !step.stone) return null;
-    if (step.stone !== itemId) return null;
-    if (num(mon.level, 1) < step.level) return null;   // le niveau reste un minimum
+    if (!step) return null;
+    // Une étape « à la pierre » n'accepte QUE la sienne ; une étape « au
+    // niveau » accepte toutes les pierres de la famille d'arrivée (raccourci).
+    if ((step.stones || []).indexOf(itemId) < 0) return null;
+    var mini = num(step.stoneLevel, step.level);
+    if (num(mon.level, 1) < mini) return null;
     try { return applyStep(mon, step); }
     catch (e) { console.warn('[evolve3d] pierre inopérante :', e); return null; }
   }
@@ -875,6 +1007,14 @@
       }
       if (isLegendary(sp.evolvedFrom)) warn.push(sp.id + ' : évolue depuis un légendaire !');
     }
+    // AUCUNE PIERRE VENDUE NE DOIT ÊTRE INUTILE : c'est la promesse faite plus
+    // haut (§ « LES PIERRES — LA RÈGLE »). Si une pierre du catalogue n'ouvre
+    // aucune évolution, il faut le savoir tout de suite, pas quand Robin a payé.
+    for (var s in STONE_FAMILY) {
+      if (!STONES[s] || !STONES[s].species.length) {
+        warn.push('pierre sans aucune évolution : ' + s);
+      }
+    }
     if (warn.length) console.warn('[evolve3d] ' + warn.join(' · '));
     return warn;
   }
@@ -898,8 +1038,13 @@
     fallbackModel: fallbackModel,
 
     // --- extras utiles aux autres lots --------------------------------------
+    stonesFor: stonesFor,             // TOUTES les pierres qui marchent sur elle
+    stoneWorksOn: stoneWorksOn,       // (speciesId, itemId) -> bool
+    stoneHint: stoneHint,             // le refus gentil et utile, prêt à afficher
+    STONE_LABELS: STONE_LABELS,
+    STONE_FAMILY: STONE_FAMILY,       // itemId -> [types réveillés]
     EVOLVED: EVOLVED,                 // les 29 espèces, si dex3d ne les prend pas
-    STONES: STONES,                   // { itemId: { id, label, species: [] } }
+    STONES: STONES,                   // { itemId: { id, label, species, required } }
     NO_EVOLUTION: NO_EVOLUTION,
     species: function (id) { ensure(); return speciesOf(id); },
     isEvolved: isEvolved,
