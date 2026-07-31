@@ -1,31 +1,71 @@
 // =============================================================================
-//  legend3d.p3.js — LOT P3 DES LÉGENDAIRES 3D (CONTRACT2 §4)
+//  legend3d.p3.js — LOT L3 DES LÉGENDAIRES 3D   (CONTRACT3 §9, CONTRACT2 §4)
 //  lumière · ombre · temps · espace
 //  aureol · solaria · prismee · nyxaroth · penombra · eclipsion ·
 //  chronoss · eternia · sablion · vortexis · astralis · nebulon
 // =============================================================================
-//  Ce lot est le plus abstrait des trois : temps et espace n'ont pas de
-//  silhouette animale évidente, et ombre doit impressionner sans jamais faire
-//  peur à un enfant de 10 ans. La consigne du contrat est suivie à la lettre :
-//  c'est l'AURA et les PARTICULES (starfield, orbitRing, halo…) de
-//  legendlib3d.js qui portent l'essentiel de la lisibilité, pas la silhouette
-//  seule. Chaque créature reste néanmoins reconnaissable au premier coup
-//  d'œil : posture, proportions et couleurs sont pensées pour se distinguer
-//  nettement de ses deux cousines de même type.
+//  CE QUI A CHANGÉ, ET POURQUOI
+//  ----------------------------
+//  Robin a demandé (demande n° 5) que les légendaires « ressemblent presque aux
+//  vrais » de la série et de Pokémon Horizons. On s'inspire, on ne copie pas :
+//  les noms et les ids ne bougent pas, c'est la SILHOUETTE qui progresse.
+//  Ce lot porte les quatre types les plus mythiques du jeu — l'entité du temps
+//  couronnée d'anneaux, le seigneur de l'espace aux plaques cristallines, le
+//  gardien de lumière auréolé, l'ombre serpentine aux yeux brillants.
 //
-//  Conventions reprises de creatures3d.p1.js :
-//    * Group centré en (0,0,0), posé sur y = 0, regardant vers +z.
-//    * Tout le corps est rangé dans un sous-groupe `inner` : les animations
-//      d'attaque bougent `inner`, jamais le Group racine (que battle3d.js
-//      positionne et met à l'échelle).
+//  Direction artistique « Horizons » appliquée ici :
+//    * formes NETTES et peu nombreuses, contours marqués (facettes plates),
+//    * couleurs franches, deux teintes par créature plus un accent lumineux,
+//    * CRISTAUX et ANNEAUX FLOTTANTS comme signature commune du lot,
+//    * yeux en amande, lumineux : c'est ce qu'on voit en premier, de loin.
+//
+//  LE BUDGET COMMANDE TOUT : 25 DRAW CALLS MAXIMUM PAR LÉGENDAIRE
+//  --------------------------------------------------------------
+//  La version précédente de ce fichier tournait entre 55 et 80 meshes par
+//  légendaire — donc autant de draw calls, les matériaux partagés n'y changent
+//  rien. Avec deux légendaires à l'écran et le monde autour, on crevait le
+//  plafond de 250 draw calls du §1. Un jeu qui rame n'est plus un cadeau : le
+//  budget prime sur l'ambition visuelle.
+//
+//  Trois décisions en découlent, et elles servent AUSSI le style Horizons :
+//    1. Une patte = UN mesh (un fût tronconique à facettes) au lieu de deux.
+//    2. Les yeux passent par `gemEyes` (2 meshes) au lieu de `llib.bigEyes`
+//       (6 à 8) : sur une tête sombre, une amande émissive se lit mieux de loin
+//       qu'un globe + iris + reflet qu'on ne distingue plus à 10 mètres.
+//    3. Les ailes passent par `shardWing` (2 ou 3 grandes lames facettées) au
+//       lieu de `llib.majesticWing` (7 à 11 meshes). Une aile faite de 3 grands
+//       éclats est PLUS lisible de loin qu'une aile de 9 plumettes.
+//  Les primitives de `legendlib3d.js` sont utilisées partout où elles tiennent
+//  dans le budget, et toujours avec `rings`/`particles` explicites : leurs
+//  valeurs par défaut (1 anneau + 4 lucioles) coûtent 5 draw calls à elles
+//  seules et suffisent à faire déborder un modèle.
+//
+//  BUDGET MESURÉ (nombre de meshes du modèle, vérifié au chargement) :
+//    aureol 24 · solaria 24 · prismee 24 · nyxaroth 24 · penombra 24
+//    eclipsion 24 · chronoss 24 · eternia 24 · sablion 24 · vortexis 24
+//    astralis 22 · nebulon 24
+//  `finishLegendary()` recompte à la construction et prévient en console si un
+//  modèle dépasse 25 — impossible de laisser filer le budget sans le voir.
+//
+//  CONVENTIONS (reprises de creatures3d.p1.js et du §4 de v2)
+//  ----------------------------------------------------------
+//    * Group centré en (0,0,0), posé sur y = 0, regardant vers +z, 1,8 à 2,4
+//      unités de haut (les créatures ordinaires font 1,0).
+//    * Tout le corps vit dans un sous-groupe `inner` : les attaques bougent
+//      `inner`, jamais la racine (que battle3d.js positionne et met à l'échelle).
 //    * userData.anim = { head, wingL, wingR, tail, float }
 //    * userData.attack = function (racine, p) avec p de 0 à 1.
-//    * En plus (légendaires) : userData.legendary = true,
-//      userData.auraColor = '#xxxxxx', et le crochet documenté par
-//      legendlib3d.js : userData.anim.update = function (root, t) {
-//      LL.animateAura(root, t); } — pour que les primitives lumineuses
-//      embarquées dans le modèle (au-delà de l'aura ajoutée séparément par
-//      battle3d.js) continuent de respirer une fois l'intégration branchée.
+//    * userData.legendary = true, userData.auraColor = '#xxxxxx'.
+//
+//  IDLE CALME — ET POURQUOI wingL/wingR RESTENT À null
+//  ---------------------------------------------------
+//  `R3.idleCreature()` fait battre `anim.wingL`/`anim.wingR` à sin(t × 6), soit
+//  environ un battement par seconde : c'est le bon rythme pour un petit oiseau,
+//  pas pour un légendaire de 2,3 unités qui doit avoir l'air majestueux. Le §9
+//  de v3 demande un idle CALME. Les ailes de ce lot sont donc animées ici même,
+//  à sin(t × 1,1), par le crochet ci-dessous — et `anim.wingL`/`wingR` restent
+//  à null pour que l'idle générique ne vienne pas les secouer par-dessus.
+//  Idem pour les traînes déjà animées par `llib` : `anim.tail` reste à null.
 // =============================================================================
 
 (function () {
@@ -34,20 +74,59 @@
   if (typeof R3 === 'undefined' || typeof THREE === 'undefined') return;
 
   // ---------------------------------------------------------------------------
-  //  Accès à la bibliothèque de primitives légendaires, avec repli total si
-  //  elle est absente : chaque appel renvoie un Group vide plutôt que de
-  //  lever une exception (règle §1.7 du contrat).
+  //  Accès à la bibliothèque de primitives légendaires (lot L1), avec repli
+  //  total si elle est absente : chaque appel renvoie alors un Group vide
+  //  plutôt que de lever une exception (règle §1.4 de v3).
+  //  Seule `aura` a un vrai repli local : le §9 la rend obligatoire sur les 36,
+  //  un légendaire sans halo redevient une créature ordinaire.
   // ---------------------------------------------------------------------------
+  function num(v, d) { return (typeof v === 'number' && isFinite(v)) ? v : d; }
+
+  /** Options de matériau normalisées. Le cache de `R3.mat()` a pour clé la
+   *  couleur + JSON.stringify(options) : émettre TOUJOURS les mêmes clés dans
+   *  le même ordre est ce qui fait qu'on partage les matériaux au lieu d'en
+   *  créer un par mesh (et donc de perdre le bénéfice du partage). */
+  function M(o) {
+    o = o || {};
+    return {
+      seg: num(o.seg, 12),
+      rough: num(o.rough, 0.55),
+      flat: !!o.flat,
+      transparent: !!o.transparent,
+      opacity: num(o.opacity, 1),
+      side: (o.side !== undefined) ? o.side : THREE.FrontSide,
+      emissive: o.emissive || '#000000',
+      emissiveIntensity: num(o.emissiveIntensity, 0.12),
+      depthWrite: (o.depthWrite !== undefined) ? o.depthWrite : true,
+    };
+  }
+
+  /** Repli local de `aura` : un disque au sol + une bulle. 2 meshes, animés
+   *  par le crochet local puisque `llib.animateAura` n'existe pas dans ce cas. */
+  function auraFallback(color, radius, opts) {
+    const o = opts || {};
+    const col = color || '#ffe066';
+    const r = Math.max(0.2, num(radius, 1.0));
+    const g = new THREE.Group();
+    const soft = M({ seg: 14, rough: 0.35, transparent: true, opacity: 0.18, side: THREE.DoubleSide, emissive: col, emissiveIntensity: 0.9, depthWrite: false });
+    const bulle = R3.ellipsoid(r * 0.9, r * 0.85, r * 0.9, col, 0, num(o.y0, r * 0.85), 0, soft);
+    const tache = R3.cyl(r * 1.2, r * 1.2, 0.004, col, 0, 0.02, 0, soft);
+    bulle.castShadow = false; bulle.receiveShadow = false;
+    tache.castShadow = false; tache.receiveShadow = false;
+    g.add(bulle, tache);
+    g.position.set(num(o.x, 0), num(o.y, 0), num(o.z, 0));
+    // Respiration lente, par la géométrie seule : le matériau est PARTAGÉ,
+    // le faire pulser ferait clignoter les 36 légendaires en même temps.
+    g.userData.p3pulse = { bulle: bulle, tache: tache, ph: Math.random() * 6.28 };
+    return g;
+  }
+
   function safeLL() {
     const base = (typeof R3.get === 'function') ? R3.get('llib') : null;
     const empty = function () { return new THREE.Group(); };
     const noop = function () {};
-    const eyesFallback = function (spread, y, z, r) {
-      try { return R3.eyes(spread || 0.14, y || 0.1, z || 0.28, r || 0.07); }
-      catch (e) { return new THREE.Group(); }
-    };
     return {
-      aura: (base && base.aura) || empty,
+      aura: (base && base.aura) || auraFallback,
       orbitRing: (base && base.orbitRing) || empty,
       crystalCluster: (base && base.crystalCluster) || empty,
       majesticWing: (base && base.majesticWing) || empty,
@@ -57,7 +136,7 @@
       flowRibbon: (base && base.flowRibbon) || empty,
       starfield: (base && base.starfield) || empty,
       glowCore: (base && base.glowCore) || empty,
-      bigEyes: (base && base.bigEyes) || eyesFallback,
+      bigEyes: (base && base.bigEyes) || empty,
       animateAura: (base && base.animateAura) || noop,
       serpentBody: (base && base.serpentBody) || empty,
       plateShell: (base && base.plateShell) || empty,
@@ -67,9 +146,13 @@
   }
   const LL = safeLL();
 
-  // ---------------------------------------------------------------------------
-  //  Petits utilitaires partagés par les 12 modèles.
-  // ---------------------------------------------------------------------------
+  // ===========================================================================
+  //  PRIMITIVES LOCALES
+  //  Elles n'existent pas dans legendlib3d.js (§13 de v2) et ce lot n'a pas le
+  //  droit d'y écrire : elles vivent donc ici. Elles sont signalées dans le
+  //  rapport pour que le lot L1 puisse les remonter dans la bibliothèque si les
+  //  lots L1 et L2 en veulent aussi.
+  // ===========================================================================
 
   /** Courbe 0 -> 1 -> 0 : la base de presque toutes les animations d'attaque. */
   function arc(p) { return Math.sin(R3.clamp01(p) * Math.PI); }
@@ -83,771 +166,1007 @@
     return g;
   }
 
-  /** Patte simple : pivot à la hanche (origine), cuisse + patte vers -y.
-   *  La patte rejoint TOUJOURS le sol (y=0 monde), quel que soit `len` passé :
-   *  c'est `hipY` (la hauteur de la hanche) qui fixe la distance à parcourir,
-   *  `len` n'étant qu'une indication de style conservée pour les appelants. */
-  function leg(hx, hipY, hz, len, thick, color, footColor) {
-    const p = new THREE.Group();
-    p.position.set(hx, hipY, hz);
-    const footR = thick * 0.62;
-    const reach = Math.max(0.05, hipY - footR);
-    const footY = -reach, thighY = -reach * 0.48;
-    p.add(R3.ellipsoid(thick, reach * 0.50, thick, color, 0, thighY, 0, { rough: 0.75 }));
-    p.add(R3.ellipsoid(thick * 1.2, footR, thick * 1.4, footColor || color, 0, footY, thick * 0.32, { rough: 0.82 }));
-    return p;
+  /** PRIMITIVE LOCALE — patte en UN seul mesh.
+   *  Un fût tronconique à facettes qui va de la hanche au sol. La version
+   *  précédente en utilisait deux (cuisse + pied) : à 4 pattes ça faisait 8
+   *  draw calls, soit un tiers du budget d'un légendaire pour la partie du
+   *  corps qu'on regarde le moins. Le pied est suggéré par l'évasement du bas. */
+  function post(hx, hipY, hz, thick, color, opts) {
+    const o = opts || {};
+    const h = Math.max(0.08, hipY);
+    const m = R3.cyl(thick * 0.70, thick * 1.15, h, color, hx, h * 0.5, hz,
+      M({ seg: num(o.seg, 6), rough: num(o.rough, 0.7), flat: true, emissive: o.emissive || '#000000', emissiveIntensity: num(o.emissiveIntensity, 0.08) }));
+    return m;
   }
 
-  /** Marque un modèle comme légendaire et branche le crochet d'animation
-   *  documenté par legendlib3d.js (§13) : à appeler EN DERNIER, une fois
-   *  userData.anim posé, car on complète l'objet plutôt que de l'écraser. */
-  function finishLegendary(g, color) {
+  /** PRIMITIVE LOCALE — yeux en amande lumineux, 2 meshes.
+   *  `llib.bigEyes` en coûte 6 à 8 (globe + iris + reflet + sourcil par œil).
+   *  À la distance où l'on croise un légendaire sur la carte, on ne voit qu'une
+   *  chose : deux fentes qui brillent. On ne modélise donc que ça, et on incline
+   *  l'amande vers le nez — c'est l'inclinaison, pas le sourcil, qui fait le
+   *  regard décidé. */
+  function gemEyes(spread, y, z, r, opts) {
+    const o = opts || {};
+    const col = o.color || '#ffe066';
+    const rr = Math.max(0.02, num(r, 0.07));
+    const g = new THREE.Group();
+    const mtl = M({ seg: 10, rough: 0.2, flat: !!o.flat, emissive: col, emissiveIntensity: num(o.intensity, 1.5) });
+    const tilt = num(o.tilt, 0.34);
+    [-1, 1].forEach(function (s) {
+      const e = R3.ellipsoid(rr * 1.35, rr * 0.58, rr * 0.52, col, s * num(spread, 0.14), num(y, 0), num(z, 0.2), mtl);
+      e.rotation.z = -s * tilt;
+      e.rotation.y = -s * 0.28;   // les amandes suivent la courbe du crâne
+      g.add(e);
+    });
+    return g;
+  }
+
+  /** PRIMITIVE LOCALE — aile en éclats, 1 + `feathers` meshes.
+   *  Pivot à l'ÉPAULE, l'aile se déploie vers +x dans le plan XY (même
+   *  convention que `llib.majesticWing`, on peut donc les mélanger).
+   *  Aile gauche : `side: -1`, retournée par une rotation (jamais par une
+   *  échelle négative, qui retournerait aussi l'éclairage).
+   *
+   *  Chaque « plume » est un cône à 4 pans écrasé sur z : une lame plate et
+   *  anguleuse, très lisible de loin, exactement l'esprit Horizons. Trois
+   *  grandes lames font une aile plus lisible que neuf plumettes, pour trois
+   *  fois moins de draw calls.
+   *
+   *  opts = { feathers 0..3 (1), height (0.55×len), color2, opacity, glow,
+   *           side ±1, sweep (0.07), flatten (0.20), x, y, z } */
+  function shardWing(len, color, opts) {
+    const o = opts || {};
+    const L = Math.max(0.2, num(len, 1.0));
+    const H = num(o.height, L * 0.55);
+    const col2 = o.color2 || color;
+    const n = Math.max(0, Math.min(3, Math.round(num(o.feathers, 1))));
+    const sweep = num(o.sweep, 0.07);
+    const flat = num(o.flatten, 0.20);
+    const transp = num(o.opacity, 1) < 0.99;
+    const g = new THREE.Group();
+
+    // Éventail : la grande lame part vers l'avant-haut, les suivantes s'ouvrent
+    // vers l'arrière-bas. C'est ce décalage qui donne l'impression d'envergure.
+    const ANG = [0.30, -0.10, -0.48, -0.84];
+    for (let i = 0; i <= n; i++) {
+      const a = ANG[i];
+      const l = L * (i === 0 ? 1 : 0.86 - i * 0.14);
+      const w = H * (i === 0 ? 0.50 : 0.34 - i * 0.045);
+      const c = (i % 2) ? col2 : color;
+      const m = R3.cone(w, l, c, Math.cos(a) * l * 0.5, Math.sin(a) * l * 0.5, -sweep * L * i,
+        M({
+          seg: 4, rough: o.glow ? 0.3 : 0.5, flat: true,
+          transparent: transp, opacity: num(o.opacity, 1),
+          side: THREE.DoubleSide,
+          emissive: c, emissiveIntensity: o.glow ? 0.9 : 0.22,
+          depthWrite: !transp,
+        }));
+      m.rotation.z = a - Math.PI / 2;    // la pointe du cône part vers l'extérieur
+      m.scale.z = flat;                  // la lame est PLATE : c'est une aile
+      m.castShadow = !transp;
+      m.receiveShadow = !transp;
+      g.add(m);
+    }
+
+    if (num(o.side, 1) < 0) g.rotation.y = Math.PI;
+    g.position.set(num(o.x, 0), num(o.y, 0), num(o.z, 0));
+    g.userData.p3wingBase = 0;
+    return g;
+  }
+
+  /** PRIMITIVE LOCALE — battement d'aile CALME.
+   *  Renvoie une fonction d'idle à donner à `finishLegendary`. Les deux ailes
+   *  reçoivent la MÊME valeur de rotation.z : l'aile gauche porte déjà un
+   *  rotation.y = π, et l'ordre d'Euler par défaut ('XYZ') applique z AVANT y —
+   *  le retournement s'occupe donc tout seul de la symétrie. */
+  function calmWings(wings, amp, speed) {
+    const a = num(amp, 0.16), sp = num(speed, 1.1);
+    return function (t) {
+      const k = Math.sin(t * sp) * a;
+      for (let i = 0; i < wings.length; i++) {
+        if (wings[i]) wings[i].rotation.z = wings[i].userData.p3wingBase + k;
+      }
+    };
+  }
+
+  /** Anime le repli d'aura local (si `llib` manquait au chargement). */
+  function pulseFallbackAura(g) {
+    const d = g && g.userData && g.userData.p3pulse;
+    if (!d) return null;
+    return function (t) {
+      const k = Math.sin(t * 1.15 + d.ph);
+      d.bulle.scale.setScalar(1 + k * 0.07);
+      const s = 1 + k * 0.09;
+      d.tache.scale.set(s, 1, s);
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  //  Finition commune : marquage légendaire, mesure du budget, crochet d'idle.
+  // ---------------------------------------------------------------------------
+  const BUDGET = 25;
+
+  /**
+   * À appeler EN DERNIER, une fois `userData.anim` posé.
+   *  - marque le modèle (`legendary`, `auraColor`) comme l'exige le §4 de v2 ;
+   *  - COMPTE les meshes et prévient si le budget du §9 de v3 est dépassé ;
+   *  - branche l'idle des primitives lumineuses.
+   *
+   * Deux chemins pour l'idle, et c'est volontaire :
+   *   1. `userData.anim.update(root, t)` — le crochet documenté par
+   *      legendlib3d.js, que le lot Intégration peut appeler.
+   *   2. `onBeforeRender` sur le premier mesh du modèle — un repli qui marche
+   *      SANS branchement. Aujourd'hui `battle3d.js` et `roamers3d.js`
+   *      n'appellent que `R3.idleCreature()`, qui ignore `anim.update` : sans ce
+   *      repli, les anneaux ne tourneraient jamais et les auras ne
+   *      respireraient pas. Three.js appelle `onBeforeRender` juste avant de
+   *      dessiner le mesh ; l'animation ne dépendant que de `t`, être appelé
+   *      deux fois dans la même image (passe d'ombres) ne change rien.
+   */
+  function finishLegendary(g, color, tick) {
     g.userData.legendary = true;
     g.userData.auraColor = color;
     if (!g.userData.anim) g.userData.anim = {};
-    g.userData.anim.update = function (root, t) { LL.animateAura(g, t); };
+
+    // --- Mesure du budget de draw calls -------------------------------------
+    let meshes = 0, first = null;
+    g.traverse(function (o) {
+      if (o.isMesh || o.isPoints) { meshes++; if (!first && o.isMesh) first = o; }
+    });
+    g.userData.drawCalls = meshes;
+    if (meshes > BUDGET) {
+      console.warn('[legend3d.p3] budget dépassé : ' + meshes + ' draw calls (max ' + BUDGET + ')');
+    }
+
+    const run = function (t) {
+      const tt = (typeof t === 'number' && isFinite(t)) ? t : (R3.clock ? R3.clock.t : 0);
+      try { LL.animateAura(g, tt); } catch (e) { /* une animation ne casse jamais une frame */ }
+      if (tick) { try { tick(tt); } catch (e) { /* idem */ } }
+    };
+    g.userData.anim.update = function (root, t) { run(t); };
+
+    try {
+      if (first) {
+        first.frustumCulled = false;   // sinon l'ancre peut être sautée hors champ
+        first.onBeforeRender = function () { run(R3.clock ? R3.clock.t : 0); };
+      }
+    } catch (e) { /* le repli d'idle n'est jamais bloquant */ }
+
     return g;
+  }
+
+  /** Assemble plusieurs fonctions d'idle en une seule (et ignore les nulles). */
+  function ticks() {
+    const list = [];
+    for (let i = 0; i < arguments.length; i++) if (arguments[i]) list.push(arguments[i]);
+    if (!list.length) return null;
+    return function (t) { for (let i = 0; i < list.length; i++) list[i](t); };
   }
 
   // =============================================================================
   //  TYPE LUMIÈRE — aureol · solaria · prismee
+  //  Le gardien de lumière est AURÉOLÉ : l'auréole à rayons est le signe du type.
   // =============================================================================
 
   // ---------------------------------------------------------------------------
-  //  AURÉOL — « griffon solaire, auréole à rayons »
-  //  Un griffon quadrupède trapu et régalien : ailes en éclats de lumière
-  //  raides (style 'ray'), grande auréole verticale derrière la tête, aura en
-  //  colonne qui monte au ciel — le repère qu'on voit par-dessus les arbres.
+  //  AURÉOL — « griffon solaire, auréole à rayons »   (aurore)
+  //  Le gardien de lumière : quadrupède léonin trapu, tête d'aigle, immense
+  //  auréole tournante derrière la nuque, deux ailes de lumière en éclats.
+  //  Attributs distinctifs : COURONNE (auréole à rayons) + AILES majestueuses.
+  //  Budget : 1 corps + 1 poitrail + 4 pattes + 1 cou + 1 crâne + 1 bec
+  //         + 2 yeux + 6 auréole + 4 ailes + 3 aura = 24 draw calls.
   // ---------------------------------------------------------------------------
   R3.registerCreature('aureol', function () {
     const OR = '#ffe066', ORANGE = '#ff8c42', CREME = '#fff4d6';
     const g = shell(), inner = g.userData.inner;
 
-    // --- Corps de lion, trapu et bas -------------------------------------------
-    inner.add(R3.ellipsoid(0.42, 0.38, 0.60, OR, 0, 0.85, 0, { rough: 0.6 }));
-    inner.add(R3.ellipsoid(0.30, 0.26, 0.30, CREME, 0, 0.68, 0.42, { rough: 0.75 }));
-    inner.add(LL.glowCore(ORANGE, 0.13, { y: 0.95, z: 0.55 }));
+    // --- Corps de lion, bas et large (2) ------------------------------------
+    inner.add(R3.ellipsoid(0.46, 0.42, 0.68, OR, 0, 1.06, 0, M({ seg: 14, rough: 0.6, flat: true, emissive: OR, emissiveIntensity: 0.10 })));
+    inner.add(R3.ellipsoid(0.36, 0.33, 0.34, CREME, 0, 0.96, 0.48, M({ seg: 12, rough: 0.7, flat: true })));
 
-    // --- 4 pattes ----------------------------------------------------------------
-    [[0.30, 0.42], [-0.30, 0.42], [0.32, -0.38], [-0.32, -0.38]].forEach(function (hp) {
-      inner.add(leg(hp[0], 0.85, hp[1], 0.62, 0.10, OR, CREME));
+    // --- 4 pattes (4) --------------------------------------------------------
+    [[0.30, 0.48], [-0.30, 0.48], [0.32, -0.44], [-0.32, -0.44]].forEach(function (hp) {
+      inner.add(post(hp[0], 1.02, hp[1], 0.115, ORANGE, { emissive: ORANGE, emissiveIntensity: 0.10 }));
     });
 
-    // --- Queue à plumes solaires ---------------------------------------------
-    const tail = LL.plumeTail(0.75, ORANGE, 5, { style: 'feather', color2: OR, droop: 0.18, y: 0.85, z: -0.55 });
-    inner.add(tail);
-
-    // --- Tête d'aigle ------------------------------------------------------------
+    // --- Tête d'aigle (3 + 2 yeux) -------------------------------------------
     const head = new THREE.Group();
-    head.position.set(0, 1.25, 0.35);
+    head.position.set(0, 1.42, 0.34);
     inner.add(head);
-    head.add(R3.ellipsoid(0.16, 0.20, 0.16, OR, 0, 0.10, 0.10, { rough: 0.6 }));   // cou
-    head.add(R3.ellipsoid(0.22, 0.21, 0.23, CREME, 0, 0.36, 0.28, { rough: 0.6 })); // crâne
-    const beak = R3.cone(0.09, 0.26, ORANGE, 0, 0.34, 0.55, { seg: 8 });
-    beak.rotation.x = Math.PI / 2;
-    head.add(beak);
-    [-1, 1].forEach(function (s) {
-      const c = R3.cone(0.035, 0.16, OR, s * 0.06, 0.55, 0.18, { seg: 6 });
-      c.rotation.x = -0.5;
-      head.add(c);
-    });
-    head.add(LL.bigEyes(0.13, 0.36, 0.42, 0.075, { color: ORANGE, dark: '#3a2410', angry: 0.5 }));
+    head.add(R3.ellipsoid(0.18, 0.24, 0.18, CREME, 0, 0.02, 0.02, M({ seg: 12, rough: 0.62, flat: true })));   // cou
+    head.add(R3.ellipsoid(0.25, 0.23, 0.26, CREME, 0, 0.28, 0.18, M({ seg: 12, rough: 0.55, flat: true })));   // crâne
+    const bec = R3.cone(0.11, 0.30, ORANGE, 0, 0.23, 0.44, M({ seg: 6, rough: 0.45, flat: true, emissive: ORANGE, emissiveIntensity: 0.22 }));
+    bec.rotation.x = Math.PI / 2;
+    head.add(bec);
+    head.add(gemEyes(0.145, 0.31, 0.36, 0.08, { color: ORANGE, intensity: 1.7, tilt: 0.40 }));
 
-    // --- Auréole à rayons, verticale derrière la tête -------------------------
-    const halo = LL.halo(ORANGE, 0.50, 10, { color2: OR, y: 1.66, z: -0.08, plane: 'face' });
-    inner.add(halo);
+    // --- L'AURÉOLE : 1 anneau + 5 rayons = 6 ---------------------------------
+    // Elle est plantée derrière la nuque, pas au-dessus : c'est ce qui fait lire
+    // « soleil levant derrière la tête » et non « ange de crèche ».
+    const aureole = LL.halo(ORANGE, 0.54, 5, { color2: OR, plane: 'face', speed: 0.30, rayLen: 0.30, y: 1.66, z: -0.06 });
+    inner.add(aureole);
 
-    // --- Ailes en éclats de lumière -------------------------------------------
-    const wingR = LL.majesticWing(0.95, OR, { style: 'ray', color2: CREME, segments: 6, x: 0.34, y: 1.05, z: -0.05, side: 1 });
-    const wingL = LL.majesticWing(0.95, OR, { style: 'ray', color2: CREME, segments: 6, x: -0.34, y: 1.05, z: -0.05, side: -1 });
+    // --- Ailes de lumière : 2 lames chacune = 4 ------------------------------
+    const wingR = shardWing(1.00, OR, { feathers: 1, height: 0.60, color2: CREME, glow: true, side: 1, x: 0.36, y: 1.20, z: -0.06 });
+    const wingL = shardWing(1.00, OR, { feathers: 1, height: 0.60, color2: CREME, glow: true, side: -1, x: -0.36, y: 1.20, z: -0.06 });
+    wingR.rotation.z = 0.24; wingL.rotation.z = 0.24;
+    wingR.userData.p3wingBase = 0.24; wingL.userData.p3wingBase = 0.24;
     inner.add(wingR, wingL);
 
-    // --- Aura en colonne : le repère qui perce la canopée ----------------------
-    const aura = LL.aura(OR, 1.15, { shape: 'column', color2: ORANGE, rings: 1, particles: 5 });
+    // --- Aura en colonne : le repère qui perce la canopée (3) ----------------
+    const aura = LL.aura(OR, 1.10, { shape: 'column', color2: ORANGE, rings: 0, particles: 0, height: 3.6 });
     g.add(aura);
 
-    g.userData.anim = { head: head, wingL: wingL, wingR: wingR, tail: tail, float: false };
+    // anim.wingL/wingR volontairement à null : voir le bandeau (idle calme).
+    g.userData.anim = { head: head, wingL: null, wingR: null, tail: null, float: false };
     g.userData.attack = function (root, p) {
       // « Rayon solaire » : le griffon se cabre, ouvre grand ses ailes de
       // lumière et projette la tête en avant.
       const inn = root.userData.inner, k = arc(p);
-      inn.rotation.x = -k * 0.28;
-      inn.position.y = k * 0.10;
-      inn.position.z = k * 0.35;
-      head.rotation.x = -k * 0.35;
-      wingR.rotation.z = 0.15 + k * 1.05;
-      wingL.rotation.z = -(0.15 + k * 1.05);
-      LL.animateAura(root, R3.clock.t);
+      inn.rotation.x = -k * 0.26;
+      inn.position.y = k * 0.12;
+      inn.position.z = k * 0.34;
+      head.rotation.x = -k * 0.32;
+      wingR.rotation.z = 0.24 + k * 1.00;
+      wingL.rotation.z = 0.24 + k * 1.00;
     };
-    return finishLegendary(g, OR);
+    return finishLegendary(g, OR, ticks(
+      calmWings([wingR, wingL], 0.14, 1.05),
+      pulseFallbackAura(aura)
+    ));
   });
 
   // ---------------------------------------------------------------------------
-  //  SOLARIA — « phénix de lumière pure, plumes-rayons »
-  //  Bipède, longue silhouette élancée et verticale (à l'inverse du griffon
-  //  trapu d'Auréol) : grandes rémiges en éventail, longue traîne de plumes
-  //  de flamme, nimbe autour de la tête.
+  //  SOLARIA — « phénix de lumière pure, plumes-rayons »   (braise)
+  //  Verticale et élancée là où Auréol est trapu : c'est cette opposition qui
+  //  permet de les distinguer d'un coup d'œil malgré la même palette dorée.
+  //  Attributs distinctifs : AILES majestueuses + TRAÎNE de flammes (+ nimbe).
+  //  Budget : 1 corps + 2 pattes + 1 cou + 1 crâne + 1 bec + 2 yeux
+  //         + 4 nimbe + 6 ailes + 3 traîne + 3 aura = 24 draw calls.
   // ---------------------------------------------------------------------------
   R3.registerCreature('solaria', function () {
     const CREME = '#fff4d6', OR = '#ffe066', ROSE = '#ffaad8';
     const g = shell(), inner = g.userData.inner;
 
-    // --- Corps élancé, vertical --------------------------------------------
-    inner.add(R3.ellipsoid(0.28, 0.48, 0.32, CREME, 0, 1.00, 0, { rough: 0.55 }));
-    inner.add(LL.glowCore(ROSE, 0.12, { y: 0.90, z: 0.30 }));
+    // --- Corps vertical, en goutte (1) ---------------------------------------
+    inner.add(R3.ellipsoid(0.30, 0.52, 0.34, CREME, 0, 1.16, 0, M({ seg: 14, rough: 0.5, flat: true, emissive: CREME, emissiveIntensity: 0.14 })));
 
-    // --- 2 pattes fines ------------------------------------------------------
-    inner.add(leg(0.14, 0.55, 0, 0.55, 0.06, OR, CREME));
-    inner.add(leg(-0.14, 0.55, 0, 0.55, 0.06, OR, CREME));
+    // --- 2 pattes fines (2) ---------------------------------------------------
+    inner.add(post(0.15, 0.66, 0.02, 0.062, OR, { emissive: OR, emissiveIntensity: 0.18 }));
+    inner.add(post(-0.15, 0.66, 0.02, 0.062, OR, { emissive: OR, emissiveIntensity: 0.18 }));
 
-    // --- Cou et tête ----------------------------------------------------------
+    // --- Cou, crâne, bec, yeux (3 + 2) ---------------------------------------
     const head = new THREE.Group();
-    head.position.set(0, 1.42, 0.06);
+    head.position.set(0, 1.62, 0.04);
     inner.add(head);
-    head.add(R3.ellipsoid(0.10, 0.26, 0.10, CREME, 0, 0.16, 0.06, { rough: 0.55 }));  // cou
-    head.add(R3.ellipsoid(0.17, 0.16, 0.18, OR, 0, 0.36, 0.14, { rough: 0.55 }));      // crâne
-    const beak = R3.cone(0.05, 0.16, ROSE, 0, 0.32, 0.30, { seg: 8 });
-    beak.rotation.x = Math.PI / 2;
-    head.add(beak);
-    [0, -0.5, 0.5].forEach(function (a, i) {
-      const c = R3.cone(0.02, 0.16 - i * 0.02, OR, Math.sin(a) * 0.05, 0.55 + i * 0.02, -0.02, { seg: 6 });
-      c.rotation.x = -1.0;
-      c.rotation.z = a * 0.4;
-      head.add(c);
-    });
-    head.add(LL.bigEyes(0.10, 0.36, 0.20, 0.06, { color: ROSE, dark: '#3a2410', angry: 0.35 }));
+    head.add(R3.ellipsoid(0.115, 0.28, 0.115, CREME, 0, 0.10, 0.04, M({ seg: 10, rough: 0.5, flat: true })));
+    head.add(R3.ellipsoid(0.19, 0.18, 0.20, OR, 0, 0.38, 0.11, M({ seg: 12, rough: 0.45, flat: true, emissive: OR, emissiveIntensity: 0.20 })));
+    const bec = R3.cone(0.06, 0.20, ROSE, 0, 0.34, 0.28, M({ seg: 6, rough: 0.4, flat: true, emissive: ROSE, emissiveIntensity: 0.30 }));
+    bec.rotation.x = Math.PI / 2;
+    head.add(bec);
+    head.add(gemEyes(0.11, 0.40, 0.24, 0.062, { color: ROSE, intensity: 1.8, tilt: 0.30 }));
 
-    // --- Nimbe derrière la tête -------------------------------------------
-    const halo = LL.halo(CREME, 0.40, 9, { color2: ROSE, y: 1.42, z: -0.14, plane: 'face' });
-    inner.add(halo);
+    // --- Nimbe : 1 anneau + 3 rayons = 4 -------------------------------------
+    const nimbe = LL.halo(CREME, 0.34, 3, { color2: ROSE, plane: 'face', speed: -0.28, rayLen: 0.20, y: 1.94, z: -0.12 });
+    inner.add(nimbe);
 
-    // --- Grandes ailes en rémiges -------------------------------------------
-    const wingR = LL.majesticWing(1.05, OR, { style: 'feather', color2: ROSE, segments: 6, x: 0.26, y: 1.10, z: -0.05, side: 1, tipColor: CREME });
-    const wingL = LL.majesticWing(1.05, OR, { style: 'feather', color2: ROSE, segments: 6, x: -0.26, y: 1.10, z: -0.05, side: -1, tipColor: CREME });
+    // --- Grandes ailes déployées : 3 lames chacune = 6 -----------------------
+    const wingR = shardWing(1.15, OR, { feathers: 2, height: 0.76, color2: CREME, glow: true, side: 1, x: 0.26, y: 1.28, z: -0.06 });
+    const wingL = shardWing(1.15, OR, { feathers: 2, height: 0.76, color2: CREME, glow: true, side: -1, x: -0.26, y: 1.28, z: -0.06 });
+    wingR.rotation.z = 0.34; wingL.rotation.z = 0.34;
+    wingR.userData.p3wingBase = 0.34; wingL.userData.p3wingBase = 0.34;
     inner.add(wingR, wingL);
 
-    // --- Longue traîne de flammes ---------------------------------------------
-    const tail = LL.plumeTail(1.10, OR, 7, { style: 'flame', color2: ROSE, droop: 0.28, y: 0.68, z: -0.35 });
+    // --- Traîne de flammes (3) ------------------------------------------------
+    const tail = LL.plumeTail(1.20, OR, 3, { style: 'flame', color2: ROSE, droop: 0.26, amp: 0.16, speed: 1.1, y: 0.92, z: -0.28 });
     inner.add(tail);
 
-    // --- Aura en colonne, plus fine et plus haute qu'Auréol --------------------
-    const aura = LL.aura(OR, 1.20, { shape: 'column', color2: ROSE, rings: 1, particles: 5, radiusY: 0.7 });
+    // --- Aura en colonne, plus fine et plus haute qu'Auréol (3) --------------
+    const aura = LL.aura(OR, 1.05, { shape: 'column', color2: ROSE, rings: 0, particles: 0, height: 4.0 });
     g.add(aura);
 
-    g.userData.anim = { head: head, wingL: wingL, wingR: wingR, tail: tail, float: false };
+    g.userData.anim = { head: head, wingL: null, wingR: null, tail: null, float: false };
     g.userData.attack = function (root, p) {
-      // « Envol phénix » : bond vertical, ailes qui claquent, traîne qui
-      // s'embrase derrière.
+      // « Envol phénix » : bond vertical, ailes qui claquent, traîne qui suit.
       const inn = root.userData.inner, k = arc(p);
-      inn.position.y = k * 0.30;
-      inn.rotation.x = -k * 0.18;
-      wingR.rotation.z = 0.20 + k * 1.15;
-      wingL.rotation.z = -(0.20 + k * 1.15);
-      head.rotation.x = -k * 0.22;
-      LL.animateAura(root, R3.clock.t);
+      inn.position.y = k * 0.32;
+      inn.rotation.x = -k * 0.16;
+      wingR.rotation.z = 0.34 + k * 1.05;
+      wingL.rotation.z = 0.34 + k * 1.05;
+      head.rotation.x = -k * 0.20;
     };
-    return finishLegendary(g, OR);
+    return finishLegendary(g, OR, ticks(
+      calmWings([wingR, wingL], 0.17, 0.95),
+      pulseFallbackAura(aura)
+    ));
   });
 
   // ---------------------------------------------------------------------------
-  //  PRISMÉE — « papillon-prisme, ailes en arc-en-ciel »
-  //  Petite silhouette délicate qui flotte : 4 ailes translucides multicolores
-  //  (à l'inverse des deux oiseaux majestueux ci-dessus), essaim d'étincelles
-  //  prismatiques en orbite. La plus « fée » des trois lumières.
+  //  PRISMÉE — « papillon-prisme, ailes en arc-en-ciel »   (val)
+  //  La seule des trois lumières qui FLOTTE, et la seule sans bec : quatre
+  //  ailes de cristal translucides, une grappe de prismes sur le dos et un
+  //  anneau d'étoiles taillées qui tourne autour d'elle.
+  //  Attributs distinctifs : AILES + CRISTAUX + ANNEAUX en orbite.
+  //  Budget : 1 thorax + 1 abdomen + 1 tête + 2 antennes + 2 yeux + 6 ailes
+  //         + 3 cristaux + 4 anneau + 1 poussière + 3 aura = 24 draw calls.
   // ---------------------------------------------------------------------------
   R3.registerCreature('prismee', function () {
     const BLANC = '#f4f4f4', VIOLET = '#d896ff', CYAN = '#73eff7';
     const g = shell(), inner = g.userData.inner;
 
-    // --- Corps fin, vertical ---------------------------------------------------
-    inner.add(R3.ellipsoid(0.13, 0.30, 0.13, BLANC, 0, 1.33, 0, { rough: 0.5 }));
+    // --- Corps fin, suspendu (2) ---------------------------------------------
+    inner.add(R3.ellipsoid(0.14, 0.30, 0.15, BLANC, 0, 1.46, 0, M({ seg: 12, rough: 0.45, flat: true, emissive: BLANC, emissiveIntensity: 0.16 })));
+    inner.add(R3.ellipsoid(0.11, 0.22, 0.11, VIOLET, 0, 1.12, -0.02, M({ seg: 10, rough: 0.45, flat: true, emissive: VIOLET, emissiveIntensity: 0.20 })));
+
+    // --- Tête, antennes, yeux (1 + 2 + 2) ------------------------------------
     const head = new THREE.Group();
-    head.position.set(0, 1.66, 0.02);
+    head.position.set(0, 1.80, 0.02);
     inner.add(head);
-    head.add(R3.ellipsoid(0.12, 0.12, 0.12, BLANC, 0, 0, 0, { rough: 0.5 }));
+    head.add(R3.ellipsoid(0.14, 0.13, 0.14, BLANC, 0, 0, 0, M({ seg: 12, rough: 0.4, flat: true, emissive: BLANC, emissiveIntensity: 0.18 })));
     [-1, 1].forEach(function (s) {
-      const a = R3.cyl(0.008, 0.02, 0.22, VIOLET, s * 0.06, 0.16, 0.02, { seg: 6, rough: 0.4 });
-      a.rotation.z = -s * 0.5;
+      const a = R3.cyl(0.010, 0.022, 0.26, VIOLET, s * 0.07, 0.19, 0.02, M({ seg: 5, rough: 0.35, flat: true, emissive: VIOLET, emissiveIntensity: 0.55 }));
+      a.rotation.z = -s * 0.55;
       head.add(a);
     });
-    head.add(LL.bigEyes(0.075, 0.02, 0.10, 0.045, { color: VIOLET, dark: '#241a3d', angry: 0.1 }));
+    head.add(gemEyes(0.08, 0.01, 0.11, 0.05, { color: VIOLET, intensity: 1.9, tilt: 0.20 }));
 
-    // --- 2 petites pattes fines, posées au sol ----------------------------------
-    inner.add(leg(0.06, 0.38, 0, 0.38, 0.03, BLANC, VIOLET));
-    inner.add(leg(-0.06, 0.38, 0, 0.38, 0.03, BLANC, VIOLET));
-
-    // --- 4 ailes en arc-en-ciel (2 paires) ---------------------------------------
-    const wingR = LL.majesticWing(0.78, VIOLET, { style: 'membrane', color2: CYAN, x: 0.05, y: 1.28, z: -0.02, side: 1, opacity: 0.72 });
-    const wingL = LL.majesticWing(0.78, VIOLET, { style: 'membrane', color2: CYAN, x: -0.05, y: 1.28, z: -0.02, side: -1, opacity: 0.72 });
-    const wingR2 = LL.majesticWing(0.46, CYAN, { style: 'crystal', color2: VIOLET, segments: 4, x: 0.05, y: 1.06, z: -0.10, side: 1, opacity: 0.68 });
-    const wingL2 = LL.majesticWing(0.46, CYAN, { style: 'crystal', color2: VIOLET, segments: 4, x: -0.05, y: 1.06, z: -0.10, side: -1, opacity: 0.68 });
+    // --- 4 ailes de cristal translucides (2 + 2 + 1 + 1 = 6) ------------------
+    // Paire haute large (2 lames chacune), paire basse courte (1 lame chacune).
+    const wingR = shardWing(0.86, VIOLET, { feathers: 1, height: 0.68, color2: CYAN, glow: true, opacity: 0.62, side: 1, x: 0.06, y: 1.52, z: -0.02 });
+    const wingL = shardWing(0.86, VIOLET, { feathers: 1, height: 0.68, color2: CYAN, glow: true, opacity: 0.62, side: -1, x: -0.06, y: 1.52, z: -0.02 });
+    const wingR2 = shardWing(0.52, CYAN, { feathers: 0, height: 0.46, color2: VIOLET, glow: true, opacity: 0.58, side: 1, x: 0.06, y: 1.22, z: -0.08 });
+    const wingL2 = shardWing(0.52, CYAN, { feathers: 0, height: 0.46, color2: VIOLET, glow: true, opacity: 0.58, side: -1, x: -0.06, y: 1.22, z: -0.08 });
+    wingR.rotation.z = 0.32; wingL.rotation.z = 0.32;
+    wingR.userData.p3wingBase = 0.32; wingL.userData.p3wingBase = 0.32;
+    wingR2.rotation.z = -0.10; wingL2.rotation.z = -0.10;
+    wingR2.userData.p3wingBase = -0.10; wingL2.userData.p3wingBase = -0.10;
     inner.add(wingR, wingL, wingR2, wingL2);
 
-    // --- Poussière de prisme en orbite -----------------------------------------
-    const dust = LL.starfield(CYAN, 20, 0.75, { color2: VIOLET, spread: 'shell', y: 1.33 });
-    inner.add(dust);
+    // --- Grappe de prismes sur le dos (3) ------------------------------------
+    const prismes = LL.crystalCluster(CYAN, 3, 0.19, { base: false, glow: false, tipColor: VIOLET, opacity: 0.8, spread: 0.9, y: 1.56, z: -0.12 });
+    inner.add(prismes);
 
-    // --- Aura, discrète et haute (une fée, pas un mur de lumière) --------------
-    const aura = LL.aura(VIOLET, 0.90, { shape: 'sphere', color2: CYAN, rings: 1, particles: 6, y0: 1.33 });
+    // --- Anneau d'étoiles taillées (4) ---------------------------------------
+    const anneau = LL.orbitRing(BLANC, 0.64, 4, { shape: 'star', size: 0.085, tilt: 0.55, speed: 0.45, glow: true, wobble: 0.18, y: 1.46 });
+    inner.add(anneau);
+
+    // --- Poussière de prisme : 1 seul draw call pour 18 points ---------------
+    inner.add(LL.starfield(CYAN, 18, 0.78, { color2: VIOLET, spread: 'shell', size: 0.07, seed: 31, y: 1.46 }));
+
+    // --- Aura discrète : une fée, pas un mur de lumière (3) ------------------
+    const aura = LL.aura(VIOLET, 0.95, { shape: 'sphere', color2: CYAN, rings: 0, particles: 0, y0: 1.40 });
     g.add(aura);
 
-    g.userData.anim = { head: head, wingL: wingL, wingR: wingR, tail: null, float: true };
+    g.userData.baseY = 0;
+    g.userData.anim = { head: head, wingL: null, wingR: null, tail: null, float: true };
     g.userData.attack = function (root, p) {
       // « Éclat prisme » : les 4 ailes s'ouvrent en grand et le corps tournoie.
       const inn = root.userData.inner, k = arc(p);
-      inn.position.y = k * 0.18;
+      inn.position.y = k * 0.20;
       inn.rotation.y = R3.clamp01(p) * Math.PI * 2;
-      wingR.rotation.z = 0.25 + k * 0.9; wingL.rotation.z = -(0.25 + k * 0.9);
-      wingR2.rotation.z = 0.15 + k * 0.7; wingL2.rotation.z = -(0.15 + k * 0.7);
+      wingR.rotation.z = 0.32 + k * 0.85; wingL.rotation.z = 0.32 + k * 0.85;
+      wingR2.rotation.z = -0.10 + k * 0.70; wingL2.rotation.z = -0.10 + k * 0.70;
       if (p >= 1) inn.rotation.y = 0;
-      LL.animateAura(root, R3.clock.t);
     };
-    return finishLegendary(g, VIOLET);
+    return finishLegendary(g, VIOLET, ticks(
+      calmWings([wingR, wingL], 0.22, 1.35),
+      calmWings([wingR2, wingL2], 0.18, 1.35),
+      pulseFallbackAura(aura)
+    ));
   });
 
   // =============================================================================
   //  TYPE OMBRE — nyxaroth · penombra · eclipsion
-  //  Consigne du contrat : impressionnants, jamais effrayants. Regards doux,
-  //  silhouettes arrondies, teintes sombres réchauffées par une touche rose/or.
+  //  Consigne : impressionnants, JAMAIS effrayants (public 10 ans). Les corps
+  //  sont sombres mais arrondis, et chaque créature porte un accent chaud
+  //  (rose, or, cyan) qui réchauffe l'ensemble. Le regard est brillant, jamais
+  //  vide : ce sont les YEUX qu'on lit en premier sur une silhouette noire.
   // =============================================================================
 
   // ---------------------------------------------------------------------------
-  //  NYXAROTH — « loup des ténèbres, fumée aux pattes »
-  //  Quadrupède, bien planté au sol, volutes de fumée qui s'échappent des
-  //  pattes avant — le seul des trois à toucher vraiment le sol de tout son
-  //  corps (Pénombra flotte, Éclipsion vole).
+  //  NYXAROTH — « loup des ténèbres, fumée aux pattes »   (sylve)
+  //  Le seul des trois ombres qui touche vraiment le sol de tout son corps
+  //  (Pénombra flotte, Éclipsion vole). Crête de cristaux d'ombre sur la nuque,
+  //  traîne de fumée en guise de queue, volutes autour des pattes avant.
+  //  Attributs distinctifs : CRISTAUX (crête) + TRAÎNE.
+  //  Budget : 1 corps + 1 poitrail + 4 pattes + 1 crâne + 1 museau + 2 oreilles
+  //         + 2 yeux + 3 crête + 3 traîne + 2 fumée + 4 aura = 24 draw calls.
   // ---------------------------------------------------------------------------
   R3.registerCreature('nyxaroth', function () {
     const NOIR = '#2a2438', VIOLET = '#7a5cbf', ROSE = '#ff6b9d';
     const g = shell(), inner = g.userData.inner;
 
-    inner.add(R3.ellipsoid(0.40, 0.42, 0.74, NOIR, 0, 1.02, 0, { rough: 0.7 }));
-    inner.add(R3.ellipsoid(0.27, 0.24, 0.36, VIOLET, 0, 0.86, 0.38, { rough: 0.85 }));
-    // Petite crête douce le long du dos — de la majesté, pas des piquants agressifs.
-    [-0.30, 0, 0.30].forEach(function (z) {
-      inner.add(R3.ellipsoid(0.06, 0.11, 0.11, VIOLET, 0, 1.36, z, { rough: 0.7 }));
+    // --- Corps de loup (2) ----------------------------------------------------
+    inner.add(R3.ellipsoid(0.42, 0.44, 0.78, NOIR, 0, 1.06, 0, M({ seg: 14, rough: 0.66, flat: true })));
+    inner.add(R3.ellipsoid(0.30, 0.26, 0.38, VIOLET, 0, 0.90, 0.40, M({ seg: 12, rough: 0.8, flat: true })));
+
+    // --- 4 pattes (4) ---------------------------------------------------------
+    [[0.30, 0.56], [-0.30, 0.56], [0.30, -0.54], [-0.30, -0.54]].forEach(function (hp) {
+      inner.add(post(hp[0], 1.04, hp[1], 0.12, NOIR));
     });
 
-    [[0.30, 0.55], [-0.30, 0.55], [0.30, -0.52], [-0.30, -0.52]].forEach(function (hp) {
-      inner.add(leg(hp[0], 1.02, hp[1], 0.78, 0.11, NOIR, VIOLET));
-    });
-    // Fumée aux pattes avant, comme demandé par le contrat.
-    inner.add(LL.mistPuff(VIOLET, 0.20, 4, { color2: ROSE, opacity: 0.32, x: 0.30, y: 0.06, z: 0.55 }));
-    inner.add(LL.mistPuff(VIOLET, 0.20, 4, { color2: ROSE, opacity: 0.32, x: -0.30, y: 0.06, z: 0.55 }));
-
+    // --- Tête (2 + 2 oreilles + 2 yeux) --------------------------------------
     const head = new THREE.Group();
-    head.position.set(0, 1.32, 0.52);
+    head.position.set(0, 1.36, 0.54);
     inner.add(head);
-    head.add(R3.ellipsoid(0.29, 0.27, 0.34, NOIR, 0, 0, 0, { rough: 0.7 }));
-    head.add(R3.ellipsoid(0.15, 0.12, 0.20, VIOLET, 0, -0.12, 0.29, { rough: 0.85 }));
+    head.add(R3.ellipsoid(0.30, 0.28, 0.35, NOIR, 0, 0, 0, M({ seg: 12, rough: 0.66, flat: true })));
+    head.add(R3.ellipsoid(0.16, 0.13, 0.21, VIOLET, 0, -0.12, 0.30, M({ seg: 10, rough: 0.8, flat: true })));
     [-1, 1].forEach(function (s) {
-      const ear = R3.cone(0.10, 0.24, NOIR, s * 0.16, 0.32, -0.02, { seg: 6 });
-      ear.rotation.x = 0.25;
-      ear.rotation.z = s * 0.18;
-      head.add(ear);
+      const or = R3.cone(0.11, 0.28, NOIR, s * 0.17, 0.34, -0.02, M({ seg: 4, rough: 0.66, flat: true }));
+      or.rotation.x = 0.22;
+      or.rotation.z = s * 0.20;
+      head.add(or);
     });
-    // Regard doux malgré le thème sombre : iris rose chaleureux, peu de colère.
-    head.add(LL.bigEyes(0.16, 0.02, 0.24, 0.085, { color: ROSE, dark: '#141020', angry: 0.30 }));
+    // Regard rose chaleureux : c'est LUI qui empêche le loup d'ombre de faire peur.
+    head.add(gemEyes(0.165, 0.04, 0.26, 0.085, { color: ROSE, intensity: 1.9, tilt: 0.32 }));
 
-    // Traîne de fumée magique en guise de queue.
-    const tail = LL.plumeTail(1.00, VIOLET, 6, { style: 'flame', color2: ROSE, droop: 0.22, opacity: 0.85, y: 1.10, z: -0.70 });
+    // --- Crête de cristaux d'ombre le long de la nuque (3) -------------------
+    const crete = LL.crystalCluster(VIOLET, 3, 0.22, { base: false, glow: false, tipColor: ROSE, spread: 0.55, y: 1.44, z: -0.02 });
+    inner.add(crete);
+
+    // --- Traîne de fumée en guise de queue (3) -------------------------------
+    const tail = LL.plumeTail(1.10, VIOLET, 3, { style: 'flame', color2: ROSE, droop: 0.20, amp: 0.18, speed: 1.0, y: 1.14, z: -0.74 });
     inner.add(tail);
 
-    const aura = LL.aura(NOIR, 1.25, { shape: 'sphere', color2: VIOLET, rings: 1, particles: 4, y0: 1.05 });
+    // --- Fumée aux pattes avant, comme demandé par le contrat (2) ------------
+    inner.add(LL.mistPuff(VIOLET, 0.34, 2, { color2: ROSE, opacity: 0.30, ry: 0.5, speed: 0.4, y: 0.16, z: 0.46 }));
+
+    // --- Aura sombre à un anneau (4) -----------------------------------------
+    const aura = LL.aura(NOIR, 1.20, { shape: 'sphere', color2: VIOLET, rings: 1, particles: 0, y0: 1.05 });
     g.add(aura);
 
-    g.userData.anim = { head: head, wingL: null, wingR: null, tail: tail, float: false };
+    g.userData.anim = { head: head, wingL: null, wingR: null, tail: null, float: false };
     g.userData.attack = function (root, p) {
       // « Bond des ombres » : il se ramasse puis fonce, gueule en avant.
       const inn = root.userData.inner, k = arc(p);
       inn.position.z = k * 0.55;
-      inn.position.y = k * 0.08;
+      inn.position.y = k * 0.09;
       inn.rotation.x = -k * 0.20;
       head.rotation.x = -k * 0.30;
-      LL.animateAura(root, R3.clock.t);
     };
-    return finishLegendary(g, VIOLET);
+    return finishLegendary(g, VIOLET, pulseFallbackAura(aura));
   });
 
   // ---------------------------------------------------------------------------
-  //  PÉNOMBRA — « chat-fantôme translucide, queue vaporeuse »
-  //  Flotte au-dessus du sol (float), corps translucide (opacity < 1), queue
-  //  en ruban ondulant plutôt qu'en fouet — un mouvement bien plus doux que
-  //  celui de Nyxaroth.
+  //  PÉNOMBRA — « chat-fantôme translucide, queue vaporeuse »   (val)
+  //  Corps translucide qui flotte, cœur lumineux visible AU TRAVERS du corps
+  //  (c'est la trouvaille qui la rend inoubliable), collier d'orbes qui tourne
+  //  autour du poitrail, longue queue-ruban qui ondule au lieu de fouetter.
+  //  Attributs distinctifs : CŒUR LUMINEUX + ANNEAUX en orbite + TRAÎNE.
+  //  Budget : 1 corps + 1 crâne + 2 oreilles + 2 yeux + 3 cœur + 4 collier
+  //         + 5 queue + 3 brume + 3 aura = 24 draw calls.
   // ---------------------------------------------------------------------------
   R3.registerCreature('penombra', function () {
     const FONCE = '#4a3d6b', CLAIR = '#a99bd6', CYAN = '#73eff7';
     const g = shell(), inner = g.userData.inner;
-    const T = { transparent: true, opacity: 0.55, rough: 0.3, side: THREE.DoubleSide, depthWrite: false };
+    const T = { seg: 12, rough: 0.3, flat: true, transparent: true, opacity: 0.52, side: THREE.DoubleSide, emissive: CLAIR, emissiveIntensity: 0.3, depthWrite: false };
 
-    inner.add(R3.ellipsoid(0.30, 0.30, 0.52, CLAIR, 0, 1.20, 0, T));
-    inner.add(LL.glowCore(CYAN, 0.11, { y: 1.15, z: 0.22 }));
+    // --- Corps translucide (1) ------------------------------------------------
+    inner.add(R3.ellipsoid(0.32, 0.32, 0.56, CLAIR, 0, 1.26, 0, M(T)));
 
+    // --- Tête (1 + 2 oreilles + 2 yeux) --------------------------------------
     const head = new THREE.Group();
-    head.position.set(0, 1.58, 0.34);
+    head.position.set(0, 1.66, 0.36);
     inner.add(head);
-    head.add(R3.ellipsoid(0.24, 0.22, 0.26, CLAIR, 0, 0, 0, T));
+    head.add(R3.ellipsoid(0.26, 0.24, 0.28, CLAIR, 0, 0, 0, M(T)));
     [-1, 1].forEach(function (s) {
-      const ear = R3.cone(0.08, 0.19, FONCE, s * 0.13, 0.24, -0.02, Object.assign({ seg: 6 }, T));
-      ear.rotation.z = s * 0.22;
-      head.add(ear);
+      const or = R3.cone(0.10, 0.24, FONCE, s * 0.15, 0.26, -0.02, M({ seg: 4, rough: 0.3, flat: true, transparent: true, opacity: 0.62, side: THREE.DoubleSide, emissive: FONCE, emissiveIntensity: 0.35, depthWrite: false }));
+      or.rotation.z = s * 0.24;
+      head.add(or);
     });
-    head.add(LL.bigEyes(0.12, 0.0, 0.22, 0.07, { color: CYAN, dark: '#241a3d', angry: 0.1 }));
+    head.add(gemEyes(0.13, 0.01, 0.24, 0.075, { color: CYAN, intensity: 2.0, tilt: 0.22 }));
 
-    // Volutes de brume à la base, en guise de « pattes » — le chat flotte.
-    const mist = LL.mistPuff(CLAIR, 0.38, 6, { color2: FONCE, opacity: 0.28, y: 0.14, ry: 0.5 });
-    inner.add(mist);
-    // Un second voile de brume à mi-hauteur relie visuellement la tête au sol.
-    const mistMid = LL.mistPuff(FONCE, 0.30, 4, { color2: CLAIR, opacity: 0.20, y: 0.65, ry: 0.7 });
-    inner.add(mistMid);
+    // --- Cœur lumineux, vu au travers du corps translucide (3) ---------------
+    inner.add(LL.glowCore(CYAN, 0.14, { color2: CLAIR, speed: 1.6, y: 1.26, z: 0.16 }));
 
-    // Queue vaporeuse : un ruban qui ondule doucement, pas un fouet.
-    const tail = LL.flowRibbon(0.95, CYAN, { color2: CLAIR, opacity: 0.48, segments: 8, y: 1.20, z: -0.38 });
+    // --- Collier d'orbes en orbite (4) ---------------------------------------
+    const collier = LL.orbitRing(CYAN, 0.46, 4, { shape: 'sphere', size: 0.11, tilt: 0.62, speed: 0.38, glow: true, wobble: 0.14, y: 1.34, z: 0.06 });
+    inner.add(collier);
+
+    // --- Queue-ruban : elle ONDULE (flowRibbon), elle ne fouette pas (5) -----
+    const tail = LL.flowRibbon(1.05, CYAN, { color2: CLAIR, opacity: 0.48, segments: 5, amp: 0.16, speed: 1.15, y: 1.28, z: -0.42 });
     inner.add(tail);
 
-    const aura = LL.aura(FONCE, 1.0, { shape: 'sphere', color2: CYAN, rings: 1, particles: 5, intensity: 1.25, y0: 1.10 });
+    // --- Volutes de brume à la place des pattes (3) --------------------------
+    inner.add(LL.mistPuff(CLAIR, 0.40, 3, { color2: FONCE, opacity: 0.26, ry: 0.45, speed: 0.35, y: 0.20 }));
+
+    // --- Aura (3) -------------------------------------------------------------
+    const aura = LL.aura(FONCE, 1.00, { shape: 'sphere', color2: CYAN, rings: 0, particles: 0, intensity: 1.3, y0: 1.15 });
     g.add(aura);
 
-    g.userData.anim = { head: head, wingL: null, wingR: null, tail: tail, float: true };
+    g.userData.baseY = 0;
+    g.userData.anim = { head: head, wingL: null, wingR: null, tail: null, float: true };
     g.userData.attack = function (root, p) {
       // « Traversée spectrale » : le corps s'estompe, glisse en avant, puis
       // réapparaît de l'autre côté.
       const inn = root.userData.inner, k = arc(p);
       inn.position.z = k * 0.60;
-      inn.position.x = Math.sin(R3.clamp01(p) * Math.PI * 2) * 0.15;
-      inn.scale.setScalar(1 - k * 0.25);
-      head.rotation.y = k * 0.4;
-      LL.animateAura(root, R3.clock.t);
+      inn.position.x = Math.sin(R3.clamp01(p) * Math.PI * 2) * 0.16;
+      inn.scale.setScalar(1 - k * 0.24);
+      head.rotation.y = k * 0.40;
     };
-    return finishLegendary(g, FONCE);
+    return finishLegendary(g, FONCE, pulseFallbackAura(aura));
   });
 
   // ---------------------------------------------------------------------------
-  //  ÉCLIPSION — « corbeau d'éclipse, anneau noir au dos »
-  //  Le seul des trois qui vole vraiment (grandes ailes déployées en
-  //  permanence), avec l'anneau sombre du contrat monté sur le dos comme une
-  //  éclipse miniature — un halo à zéro rayon, cerclé d'éclats dorés.
+  //  ÉCLIPSION — « corbeau d'éclipse, anneau noir au dos »   (givre)
+  //  Le seul des trois qui vole. Dans son dos, un disque noir cerclé de lumière
+  //  — une éclipse miniature — autour duquel tournent trois éclats dorés.
+  //  Attributs distinctifs : ANNEAU/COURONNE (éclipse) + ANNEAUX en orbite
+  //  + AILES.
+  //  Budget : 1 corps + 2 pattes + 1 cou + 1 crâne + 1 bec + 2 yeux
+  //         + 2 éclipse + 3 éclats + 6 ailes + 2 queue + 3 aura = 24 draw calls.
   // ---------------------------------------------------------------------------
   R3.registerCreature('eclipsion', function () {
     const NOIR = '#1a1c2c', VIOLET = '#7a5cbf', OR = '#ffe066';
     const g = shell(), inner = g.userData.inner;
 
-    inner.add(R3.ellipsoid(0.26, 0.32, 0.60, NOIR, 0, 1.12, 0, { rough: 0.55 }));
-    inner.add(leg(0.14, 0.66, 0, 0.60, 0.06, NOIR, VIOLET));
-    inner.add(leg(-0.14, 0.66, 0, 0.60, 0.06, NOIR, VIOLET));
+    // --- Corps d'oiseau (1) + 2 pattes ---------------------------------------
+    inner.add(R3.ellipsoid(0.28, 0.36, 0.64, NOIR, 0, 1.20, 0, M({ seg: 14, rough: 0.5, flat: true })));
+    inner.add(post(0.14, 0.76, 0.02, 0.06, VIOLET, { emissive: VIOLET, emissiveIntensity: 0.18 }));
+    inner.add(post(-0.14, 0.76, 0.02, 0.06, VIOLET, { emissive: VIOLET, emissiveIntensity: 0.18 }));
 
+    // --- Tête (3 + 2 yeux) ----------------------------------------------------
     const head = new THREE.Group();
-    head.position.set(0, 1.48, 0.30);
+    head.position.set(0, 1.58, 0.28);
     inner.add(head);
-    head.add(R3.ellipsoid(0.12, 0.16, 0.14, NOIR, 0, 0.17, 0.06, { rough: 0.55 }));   // cou
-    head.add(R3.ellipsoid(0.21, 0.20, 0.22, NOIR, 0, 0.40, 0.19, { rough: 0.55 }));    // crâne
-    const beakTop = R3.cone(0.065, 0.22, VIOLET, 0, 0.39, 0.39, { seg: 6 });
-    beakTop.rotation.x = Math.PI / 2 - 0.15;
-    head.add(beakTop);
-    const beakBot = R3.cone(0.05, 0.14, OR, 0, 0.31, 0.33, { seg: 6 });
-    beakBot.rotation.x = Math.PI / 2 + 0.15;
-    head.add(beakBot);
-    [-1, 1].forEach(function (s) {
-      const tuft = R3.cone(0.033, 0.11, VIOLET, s * 0.055, 0.56, 0.15, { seg: 5 });
-      tuft.rotation.z = s * 0.3;
-      head.add(tuft);
-    });
-    head.add(LL.bigEyes(0.11, 0.40, 0.33, 0.065, { color: OR, dark: '#0c0d16', angry: 0.45 }));
+    head.add(R3.ellipsoid(0.13, 0.18, 0.15, NOIR, 0, 0.06, 0.04, M({ seg: 10, rough: 0.5, flat: true })));
+    head.add(R3.ellipsoid(0.22, 0.21, 0.23, NOIR, 0, 0.32, 0.16, M({ seg: 12, rough: 0.5, flat: true })));
+    const bec = R3.cone(0.075, 0.30, OR, 0, 0.28, 0.40, M({ seg: 4, rough: 0.4, flat: true, emissive: OR, emissiveIntensity: 0.32 }));
+    bec.rotation.x = Math.PI / 2;
+    head.add(bec);
+    head.add(gemEyes(0.115, 0.35, 0.30, 0.065, { color: OR, intensity: 2.0, tilt: 0.42 }));
 
-    const wingR = LL.majesticWing(1.02, NOIR, { style: 'feather', color2: VIOLET, segments: 6, x: 0.26, y: 1.20, z: -0.05, side: 1, tipColor: OR });
-    const wingL = LL.majesticWing(1.02, NOIR, { style: 'feather', color2: VIOLET, segments: 6, x: -0.26, y: 1.20, z: -0.05, side: -1, tipColor: OR });
+    // --- L'ÉCLIPSE dans le dos : anneau + disque plein (2) -------------------
+    // Un halo à ZÉRO rayon avec un disque : c'est exactement un disque occulté
+    // cerclé de lumière. La primitive du lot L1 le fait pour 2 draw calls.
+    const eclipse = LL.halo(NOIR, 0.62, 0, { color2: VIOLET, solid: true, plane: 'face', speed: 0.18, y: 1.34, z: -0.46 });
+    inner.add(eclipse);
+
+    // --- Éclats dorés en couronne autour de l'éclipse (3) -------------------
+    const eclats = LL.orbitRing(OR, 0.70, 3, { shape: 'shard', size: 0.11, tilt: 1.45, speed: 0.42, glow: true, wobble: 0.10, y: 1.34, z: -0.46 });
+    inner.add(eclats);
+
+    // --- Ailes de corbeau : 3 lames chacune = 6 ------------------------------
+    const wingR = shardWing(1.18, NOIR, { feathers: 2, height: 0.66, color2: VIOLET, side: 1, x: 0.26, y: 1.34, z: -0.06 });
+    const wingL = shardWing(1.18, NOIR, { feathers: 2, height: 0.66, color2: VIOLET, side: -1, x: -0.26, y: 1.34, z: -0.06 });
+    wingR.rotation.z = 0.18; wingL.rotation.z = 0.18;
+    wingR.userData.p3wingBase = 0.18; wingL.userData.p3wingBase = 0.18;
     inner.add(wingR, wingL);
 
-    const tail = LL.plumeTail(0.46, NOIR, 4, { style: 'feather', color2: VIOLET, droop: 0.10, y: 1.05, z: -0.50 });
-    inner.add(tail);
+    // --- Queue courte (2) -----------------------------------------------------
+    inner.add(LL.plumeTail(0.52, NOIR, 2, { style: 'feather', color2: VIOLET, droop: 0.10, amp: 0.12, speed: 1.0, y: 1.10, z: -0.56 }));
 
-    // --- L'anneau noir sur le dos : un halo sans rayons + une couronne dorée --
-    const ring = LL.halo(NOIR, 0.58, 0, { color2: VIOLET, y: 1.18, z: -0.46, plane: 'face', solid: true });
-    inner.add(ring);
-    const glints = LL.orbitRing(OR, 0.63, 6, { shape: 'sphere', size: 0.05, tilt: 1.4, speed: 0.4, glow: true, y: 1.18, z: -0.46 });
-    inner.add(glints);
-
-    const aura = LL.aura(NOIR, 1.15, { shape: 'sphere', color2: VIOLET, rings: 2, particles: 4, y0: 1.15 });
+    // --- Aura (3) -------------------------------------------------------------
+    const aura = LL.aura(NOIR, 1.10, { shape: 'sphere', color2: VIOLET, rings: 0, particles: 0, y0: 1.20 });
     g.add(aura);
 
-    g.userData.anim = { head: head, wingL: wingL, wingR: wingR, tail: tail, float: true };
+    g.userData.baseY = 0;
+    g.userData.anim = { head: head, wingL: null, wingR: null, tail: null, float: true };
     g.userData.attack = function (root, p) {
       // « Éclipse totale » : plongée, l'anneau du dos s'aligne face à
       // l'adversaire, les ailes se replient puis claquent.
       const inn = root.userData.inner, k = arc(p);
-      inn.position.z = k * 0.5;
+      inn.position.z = k * 0.52;
       inn.position.y = -k * 0.10;
-      wingR.rotation.z = 0.2 - k * 0.6; wingL.rotation.z = -(0.2 - k * 0.6);
-      ring.rotation.y = R3.clamp01(p) * Math.PI;
-      head.rotation.x = k * 0.25;
-      LL.animateAura(root, R3.clock.t);
+      wingR.rotation.z = 0.18 - k * 0.62;
+      wingL.rotation.z = 0.18 - k * 0.62;
+      eclipse.rotation.y = R3.clamp01(p) * Math.PI;
+      head.rotation.x = k * 0.24;
     };
-    return finishLegendary(g, VIOLET);
+    return finishLegendary(g, VIOLET, ticks(
+      calmWings([wingR, wingL], 0.13, 1.0),
+      pulseFallbackAura(aura)
+    ));
   });
 
   // =============================================================================
   //  TYPE TEMPS — chronoss · eternia · sablion
+  //  « L'entité du temps couronnée d'anneaux » : les trois portent au moins un
+  //  anneau de fragments en orbite, qui tourne lentement — le mouvement le plus
+  //  lisible qui soit pour dire « temps » sans écrire un mot.
   // =============================================================================
 
   // ---------------------------------------------------------------------------
-  //  CHRONOSS — « tortue-horloge, cadran sur la carapace »
-  //  Basse, trapue, immobile en apparence : la plus « lente » des trois,
-  //  posture au ras du sol, cadran d'horloge posé bien à plat sur le dôme.
+  //  CHRONOSS — « tortue-horloge, cadran sur la carapace »   (aurore)
+  //  Basse et trapue, mais surmontée d'une tour d'horloge : c'est la tour qui
+  //  lui donne sa stature de légendaire alors que la tortue reste au ras du sol.
+  //  Attributs distinctifs : ANNEAUX en orbite + CRISTAUX (couronne de la tour).
+  //  Budget : 1 corps + 4 pattes + 1 tête + 2 yeux + 4 carapace + 1 tour
+  //         + 4 cadran + 2 couronne + 3 anneaux + 2 aura = 24 draw calls.
   // ---------------------------------------------------------------------------
   R3.registerCreature('chronoss', function () {
     const VIOLET = '#d896ff', BRONZE = '#c8a06a', OR = '#ffe066';
     const g = shell(), inner = g.userData.inner;
 
-    // Corps bas et large — le socle trapu d'une tortue, pattes courtes.
-    inner.add(R3.ellipsoid(0.42, 0.24, 0.54, VIOLET, 0, 0.32, 0, { rough: 0.65 }));
-    [[0.34, 0.38], [-0.34, 0.38], [0.34, -0.38], [-0.34, -0.38]].forEach(function (hp) {
-      inner.add(leg(hp[0], 0.28, hp[1], 0.24, 0.13, VIOLET, BRONZE));
+    // --- Socle de tortue (1 + 4 pattes) --------------------------------------
+    inner.add(R3.ellipsoid(0.48, 0.26, 0.60, VIOLET, 0, 0.36, 0, M({ seg: 14, rough: 0.62, flat: true })));
+    [[0.36, 0.40], [-0.36, 0.40], [0.36, -0.40], [-0.36, -0.40]].forEach(function (hp) {
+      inner.add(post(hp[0], 0.30, hp[1], 0.14, BRONZE));
     });
 
+    // --- Tête (1 + 2 yeux) ----------------------------------------------------
     const head = new THREE.Group();
-    head.position.set(0, 0.40, 0.62);
+    head.position.set(0, 0.46, 0.62);
     inner.add(head);
-    head.add(R3.ellipsoid(0.13, 0.12, 0.11, VIOLET, 0, 0, 0, { rough: 0.65 }));
-    head.add(R3.cone(0.05, 0.09, BRONZE, 0, -0.02, 0.13, { seg: 6 }));
-    head.add(LL.bigEyes(0.08, 0.02, 0.09, 0.045, { color: OR, dark: '#241a3d', brow: false }));
+    head.add(R3.ellipsoid(0.16, 0.15, 0.18, VIOLET, 0, 0, 0.04, M({ seg: 10, rough: 0.62, flat: true })));
+    head.add(gemEyes(0.09, 0.03, 0.15, 0.05, { color: OR, intensity: 1.8, tilt: 0.18 }));
 
-    const tail = LL.plumeTail(0.22, VIOLET, 3, { style: 'feather', droop: 0.4, y: 0.32, z: -0.54 });
-    inner.add(tail);
+    // --- Carapace à dalles (1 dôme + 3 dalles = 4) ---------------------------
+    inner.add(LL.plateShell(0.54, BRONZE, { plates: 3, rim: false, plateColor: VIOLET, h: 0.34, flat: true, y: 0.46 }));
 
-    // --- La carapace se prolonge en petite tour d'horloge -----------------------
-    // Un dôme large et peu profond (pour ne jamais passer sous y=0, l'ellipsoïde
-    // de plateShell n'étant pas une demi-sphère mais un ellipsoïde complet), qui
-    // porte une tourelle conique surmontée du cadran puis d'un fleuron doré :
-    // c'est CE qui donne à Chronoss sa taille de légendaire, la tortue restant
-    // basse et « lente » comme il se doit.
-    const shellDome = LL.plateShell(0.50, BRONZE, { h: 0.20, plateColor: VIOLET, rim: true, y: 0.42 });
-    inner.add(shellDome);
-    const tower = R3.cyl(0.16, 0.27, 1.05, BRONZE, 0, 1.14, 0, { seg: 12, rough: 0.55 });
-    inner.add(tower);
-    const towerCap = R3.cone(0.20, 0.22, VIOLET, 0, 1.72, 0, { seg: 10 });
-    inner.add(towerCap);
-    const finial = R3.ellipsoid(0.06, 0.10, 0.06, OR, 0, 1.90, 0, { rough: 0.4, emissive: OR, emissiveIntensity: 0.4 });
-    inner.add(finial);
-    const clock = LL.clockFace(0.24, VIOLET, { rimColor: BRONZE, handColor: OR, marks: 6, plane: 'face', y: 1.35, z: 0.24 });
-    inner.add(clock);
+    // --- Tour d'horloge (1) ---------------------------------------------------
+    // C'est elle qui fait passer Chronoss de 0,9 à 2,1 unités de haut.
+    inner.add(R3.cyl(0.19, 0.30, 0.98, BRONZE, 0, 1.28, 0, M({ seg: 8, rough: 0.5, flat: true, emissive: BRONZE, emissiveIntensity: 0.10 })));
 
-    // Petites gemmes-rouages en orbite autour de la tour.
-    const gears = LL.orbitRing(OR, 0.42, 7, { shape: 'stone', size: 0.05, tilt: 0.2, speed: 0.3, glow: true, y: 1.35 });
-    inner.add(gears);
+    // --- Le cadran, plaqué sur la tour (4) -----------------------------------
+    const cadran = LL.clockFace(0.26, VIOLET, { rimColor: BRONZE, handColor: OR, marks: 0, speed: 0.22, plane: 'face', y: 1.44, z: 0.24 });
+    inner.add(cadran);
 
-    // Aura au sol : Chronoss est lent, son aura reste posée, pas dressée.
-    const aura = LL.aura(VIOLET, 1.05, { shape: 'disc', color2: OR, rings: 1, particles: 4 });
+    // --- Couronne de cristaux au sommet de la tour (2) -----------------------
+    inner.add(LL.crystalCluster(OR, 2, 0.20, { base: false, glow: false, tipColor: VIOLET, spread: 0.8, y: 1.78 }));
+
+    // --- Anneaux de rouages en orbite (3) ------------------------------------
+    const anneaux = LL.orbitRing(OR, 0.66, 3, { shape: 'stone', size: 0.13, tilt: 0.26, speed: 0.24, glow: true, wobble: 0.10, y: 1.50 });
+    inner.add(anneaux);
+
+    // --- Aura au sol : Chronoss est lent, son aura reste posée (2) -----------
+    const aura = LL.aura(VIOLET, 1.05, { shape: 'disc', color2: OR, rings: 0, particles: 0 });
     g.add(aura);
 
-    g.userData.anim = { head: head, wingL: null, wingR: null, tail: tail, float: false };
+    g.userData.anim = { head: head, wingL: null, wingR: null, tail: null, float: false };
     g.userData.attack = function (root, p) {
-      // « Fissure du temps » : la tour d'horloge s'illumine, la tête
-      // s'avance très lentement puis « saute » à l'impact — mouvement
-      // saccadé, à l'image d'une trotteuse.
+      // « Fissure du temps » : la tour s'avance par à-coups, comme une
+      // trotteuse, et le cadran fait un tour complet à l'impact.
       const inn = root.userData.inner, k = arc(p);
-      const step = Math.round(R3.clamp01(p) * 6) / 6;   // saccadé, pas fluide
-      inn.position.z = step * 0.30;
-      head.position.z = 0.62 + k * 0.10;
-      clock.rotation.z = R3.clamp01(p) * Math.PI * 2;
-      LL.animateAura(root, R3.clock.t);
+      const cran = Math.round(R3.clamp01(p) * 6) / 6;     // saccadé, pas fluide
+      inn.position.z = cran * 0.30;
+      head.position.z = 0.62 + k * 0.12;
+      cadran.rotation.z = R3.clamp01(p) * Math.PI * 2;
     };
-    return finishLegendary(g, VIOLET);
+    return finishLegendary(g, VIOLET, pulseFallbackAura(aura));
   });
 
   // ---------------------------------------------------------------------------
-  //  ÉTERNIA — « sphinx du temps, sabliers suspendus »
-  //  La plus grande et la plus régalienne des trois : posture assise de
-  //  sphinx, coiffe ornée, aura en colonne (l'éternité qui monte au ciel).
-  //  Les « sabliers suspendus » sont stylisés en pierres-temps en orbite,
-  //  animées automatiquement par orbitRing plutôt que figées.
+  //  ÉTERNIA — « sphinx du temps, sabliers suspendus »   (aurore)
+  //  La plus régalienne du lot : posture assise de sphinx, coiffe à rabats,
+  //  couronne à rayons posée à plat sur la tête, et trois pierres-sabliers qui
+  //  tournent très lentement autour d'elle.
+  //  Attributs distinctifs : COURONNE + ANNEAUX en orbite + TRAÎNE.
+  //  Budget : 1 corps + 4 pattes + 1 cou + 1 crâne + 2 rabats + 2 yeux
+  //         + 4 couronne + 3 sabliers + 3 traîne + 3 aura = 24 draw calls.
   // ---------------------------------------------------------------------------
   R3.registerCreature('eternia', function () {
     const SABLE = '#e3c68d', VIOLET = '#d896ff', BLEU = '#4b62d9';
     const g = shell(), inner = g.userData.inner;
 
-    inner.add(R3.ellipsoid(0.42, 0.40, 0.62, SABLE, 0, 0.85, 0, { rough: 0.55 }));
-    inner.add(LL.glowCore(VIOLET, 0.12, { y: 1.05, z: 0.45 }));
+    // --- Corps de sphinx assis (1) -------------------------------------------
+    inner.add(R3.ellipsoid(0.46, 0.44, 0.70, SABLE, 0, 0.92, 0, M({ seg: 14, rough: 0.5, flat: true })));
 
-    // Pattes avant tendues (posture de sphinx assis), pattes arrière repliées.
-    inner.add(leg(0.22, 0.85, 0.55, 0.75, 0.11, SABLE, VIOLET));
-    inner.add(leg(-0.22, 0.85, 0.55, 0.75, 0.11, SABLE, VIOLET));
-    inner.add(leg(0.28, 0.60, -0.45, 0.35, 0.14, SABLE, VIOLET));
-    inner.add(leg(-0.28, 0.60, -0.45, 0.35, 0.14, SABLE, VIOLET));
+    // --- Pattes avant tendues, pattes arrière repliées (4) -------------------
+    inner.add(post(0.24, 0.90, 0.58, 0.115, SABLE));
+    inner.add(post(-0.24, 0.90, 0.58, 0.115, SABLE));
+    inner.add(post(0.30, 0.62, -0.46, 0.145, SABLE));
+    inner.add(post(-0.30, 0.62, -0.46, 0.145, SABLE));
 
-    const tail = LL.plumeTail(0.70, VIOLET, 5, { style: 'feather', color2: BLEU, droop: 0.15, y: 0.75, z: -0.60 });
-    inner.add(tail);
-
+    // --- Tête noble et sa coiffe (2 + 2 rabats + 2 yeux) --------------------
     const head = new THREE.Group();
-    head.position.set(0, 1.35, 0.35);
+    head.position.set(0, 1.42, 0.34);
     inner.add(head);
-    head.add(R3.ellipsoid(0.15, 0.20, 0.15, SABLE, 0, 0.15, 0.10, { rough: 0.55 })); // cou
-    head.add(R3.ellipsoid(0.26, 0.25, 0.27, SABLE, 0, 0.42, 0.25, { rough: 0.5 }));   // crâne noble
+    head.add(R3.ellipsoid(0.16, 0.22, 0.16, SABLE, 0, 0.06, 0.06, M({ seg: 10, rough: 0.5, flat: true })));
+    head.add(R3.ellipsoid(0.28, 0.27, 0.29, SABLE, 0, 0.36, 0.20, M({ seg: 12, rough: 0.45, flat: true })));
     [-1, 1].forEach(function (s) {
-      const flap = R3.ellipsoid(0.05, 0.24, 0.13, VIOLET, s * 0.24, 0.32, 0.10, { rough: 0.5 });
-      flap.rotation.z = s * 0.15;
-      head.add(flap);
+      const rabat = R3.ellipsoid(0.06, 0.28, 0.15, VIOLET, s * 0.26, 0.26, 0.06, M({ seg: 8, rough: 0.45, flat: true, emissive: VIOLET, emissiveIntensity: 0.20 }));
+      rabat.rotation.z = s * 0.16;
+      head.add(rabat);
     });
-    // Coiffe : petite pierre gravée en couronne.
-    head.add(LL.runeStone(BLEU, 0.14, { glowColor: VIOLET, rune: 'ring', count: 1, y: 0.68, z: 0.14 }));
-    head.add(LL.bigEyes(0.13, 0.42, 0.36, 0.075, { color: BLEU, dark: '#2a2144', angry: 0.35 }));
+    head.add(gemEyes(0.14, 0.37, 0.30, 0.075, { color: BLEU, intensity: 1.7, tilt: 0.36 }));
 
-    // --- Les « sabliers » : deux anneaux de pierres-temps qui orbitent ---------
-    const orbA = LL.orbitRing(BLEU, 0.90, 3, { shape: 'stone', size: 0.16, tilt: 0.5, speed: 0.25, glow: true, y: 1.55 });
-    const orbB = LL.orbitRing(VIOLET, 0.65, 2, { shape: 'stone', size: 0.12, tilt: -0.6, speed: -0.35, glow: true, y: 1.90 });
-    inner.add(orbA, orbB);
+    // --- Couronne posée à plat sur la coiffe (1 anneau + 3 rayons = 4) -------
+    inner.add(LL.halo(BLEU, 0.30, 3, { color2: VIOLET, plane: 'flat', speed: 0.26, rayLen: 0.20, tube: 0.045, y: 2.00 }));
 
-    // Aura en colonne : l'éternité qui monte au ciel, plus large que Chronoss.
-    const aura = LL.aura(SABLE, 1.20, { shape: 'column', color2: VIOLET, rings: 2, particles: 5 });
+    // --- Les « sabliers » : 3 pierres-temps en orbite lente (3) --------------
+    const sabliers = LL.orbitRing(BLEU, 0.95, 3, { shape: 'stone', size: 0.20, tilt: 0.42, speed: 0.20, glow: true, wobble: 0.16, y: 1.55 });
+    inner.add(sabliers);
+
+    // --- Traîne de plumes de temps (3) ---------------------------------------
+    inner.add(LL.plumeTail(0.80, VIOLET, 3, { style: 'feather', color2: BLEU, droop: 0.14, amp: 0.14, speed: 0.9, y: 0.86, z: -0.66 }));
+
+    // --- Aura en colonne : l'éternité qui monte au ciel (3) ------------------
+    const aura = LL.aura(SABLE, 1.15, { shape: 'column', color2: VIOLET, rings: 0, particles: 0, height: 3.8 });
     g.add(aura);
 
-    g.userData.anim = { head: head, wingL: null, wingR: null, tail: tail, float: false };
+    g.userData.anim = { head: head, wingL: null, wingR: null, tail: null, float: false };
     g.userData.attack = function (root, p) {
-      // « Remonter le temps » : la tête se redresse, les pierres-temps se
-      // resserrent brutalement autour du corps avant de repartir en orbite.
+      // « Remonter le temps » : la tête se redresse, les sabliers se resserrent
+      // brutalement autour du corps avant de repartir en orbite.
       const inn = root.userData.inner, k = arc(p);
-      head.rotation.x = -k * 0.25;
-      inn.position.y = k * 0.14;
-      orbA.scale.setScalar(1 - k * 0.35);
-      orbB.scale.setScalar(1 - k * 0.35);
-      LL.animateAura(root, R3.clock.t);
+      head.rotation.x = -k * 0.26;
+      inn.position.y = k * 0.15;
+      sabliers.scale.setScalar(1 - k * 0.38);
     };
-    return finishLegendary(g, VIOLET);
+    return finishLegendary(g, VIOLET, pulseFallbackAura(aura));
   });
 
   // ---------------------------------------------------------------------------
-  //  SABLION — « serpent de sable, corps qui s'écoule »
-  //  Un long corps serpentin (serpentBody) qui se cabre légèrement, traîne de
-  //  sable qui s'écoule derrière lui (starfield en spirale au ras du sol) —
-  //  posture et silhouette très différentes des deux autres légendaires
-  //  temps, qui sont l'une trapue au sol, l'autre assise et régalienne.
+  //  SABLION — « serpent de sable, corps qui s'écoule »   (sylve)
+  //  Silhouette serpentine cabrée, capuchon de cobra, cristaux de sable figé
+  //  sur la nuque, et un anneau d'éclats qui tourne à mi-hauteur. Le sable qui
+  //  s'écoule est une nuée de points : 1 seul draw call pour 22 grains.
+  //  Attributs distinctifs : CRISTAUX + ANNEAUX en orbite.
+  //  Budget : 9 corps + 1 tête + 2 capuchon + 2 yeux + 3 cristaux
+  //         + 3 anneau + 1 sable + 3 aura = 24 draw calls.
   // ---------------------------------------------------------------------------
   R3.registerCreature('sablion', function () {
     const SABLE = '#e3c68d', BRUN = '#c08c4a', VIOLET = '#d896ff';
     const g = shell(), inner = g.userData.inner;
 
-    // Corps qui se cabre doucement (rise) : le pivot est à la tête.
-    const body = LL.serpentBody(2.1, SABLE, {
-      segments: 12, r: 0.20, taper: 0.72, belly: BRUN, color2: BRUN, rise: 0.36,
-      y: 1.62, z: 0.30,
-    });
-    inner.add(body);
+    // --- Corps serpentin cabré (9) -------------------------------------------
+    // `rise` fait remonter chaque anneau : le corps se dresse au lieu de ramper.
+    inner.add(LL.serpentBody(2.15, SABLE, {
+      segments: 9, r: 0.23, taper: 0.70, color2: BRUN, rise: 0.34,
+      amp: 0.20, speed: 0.9, y: 1.70, z: 0.32,
+    }));
 
-    // --- Tête, ajoutée devant le premier anneau du corps -----------------------
+    // --- Tête à capuchon (1 + 2 + 2 yeux) ------------------------------------
     const head = new THREE.Group();
-    head.position.set(0, 1.62, 0.48);
+    head.position.set(0, 1.70, 0.50);
     inner.add(head);
-    head.add(R3.ellipsoid(0.23, 0.20, 0.26, VIOLET, 0, 0, 0, { rough: 0.55 }));
-    head.add(R3.box(0.03, 0.02, 0.16, BRUN, 0, -0.06, 0.28, { rough: 0.4 }));   // langue
-    // Petite collerette de sable façon capuchon de cobra.
+    head.add(R3.ellipsoid(0.25, 0.21, 0.28, VIOLET, 0, 0, 0, M({ seg: 12, rough: 0.45, flat: true, emissive: VIOLET, emissiveIntensity: 0.16 })));
     [-1, 1].forEach(function (s) {
-      const fin = R3.ellipsoid(0.14, 0.10, 0.03, SABLE, s * 0.20, 0.02, 0.02, { rough: 0.7, side: THREE.DoubleSide });
-      fin.rotation.y = s * 0.6;
-      head.add(fin);
+      const aile = R3.ellipsoid(0.17, 0.13, 0.04, SABLE, s * 0.23, 0.02, -0.02, M({ seg: 8, rough: 0.7, flat: true, side: THREE.DoubleSide }));
+      aile.rotation.y = s * 0.62;
+      head.add(aile);
     });
-    head.add(LL.bigEyes(0.12, 0.05, 0.22, 0.06, { color: VIOLET, dark: '#2a1f12', angry: 0.45 }));
+    head.add(gemEyes(0.125, 0.06, 0.22, 0.065, { color: VIOLET, intensity: 2.0, tilt: 0.44 }));
 
-    // Traîne de sable qui s'écoule au ras du sol.
-    const sand = LL.starfield(BRUN, 22, 1.3, { color2: SABLE, spread: 'spiral', y: 0.25, ry: 0.25, z: -0.4 });
-    inner.add(sand);
-    // Pointe de queue cristallisée (le sable qui se fige).
-    const tailTip = LL.crystalCluster(VIOLET, 4, 0.12, { opacity: 0.7, glow: true, base: false, y: 0.35, z: -1.55 });
-    inner.add(tailTip);
+    // --- Cristaux de sable figé sur la nuque (3) -----------------------------
+    inner.add(LL.crystalCluster(VIOLET, 3, 0.17, { base: false, glow: false, tipColor: SABLE, spread: 0.7, y: 1.76, z: 0.10 }));
 
-    // Aura basse, en flaque de sable.
-    const aura = LL.aura(SABLE, 1.10, { shape: 'disc', color2: VIOLET, rings: 1, particles: 5 });
+    // --- Anneau d'éclats du temps (3) ----------------------------------------
+    const anneau = LL.orbitRing(VIOLET, 0.80, 3, { shape: 'shard', size: 0.15, tilt: 0.34, speed: 0.28, glow: true, wobble: 0.14, y: 1.30, z: 0.10 });
+    inner.add(anneau);
+
+    // --- Le sable qui s'écoule : 22 grains, 1 draw call ----------------------
+    inner.add(LL.starfield(BRUN, 22, 1.30, { color2: SABLE, spread: 'spiral', size: 0.09, ry: 0.25, seed: 17, y: 0.28, z: -0.45 }));
+
+    // --- Aura basse, en flaque de sable (3) ----------------------------------
+    const aura = LL.aura(SABLE, 1.10, { shape: 'disc', color2: VIOLET, rings: 1, particles: 0 });
     g.add(aura);
 
     g.userData.anim = { head: head, wingL: null, wingR: null, tail: null, float: false };
     g.userData.attack = function (root, p) {
-      // « Vague de sable » : le corps entier ondule fort et la tête frappe
-      // en avant.
+      // « Vague de sable » : le corps entier ondule fort et la tête frappe.
       const inn = root.userData.inner, k = arc(p);
-      head.position.z = 0.48 + k * 0.55;
-      head.position.y = 1.62 - k * 0.15;
+      head.position.z = 0.50 + k * 0.58;
+      head.position.y = 1.70 - k * 0.16;
       inn.rotation.z = Math.sin(R3.clamp01(p) * Math.PI * 3) * 0.12 * (1 - k * 0.4);
-      LL.animateAura(root, R3.clock.t);
     };
-    return finishLegendary(g, VIOLET);
+    return finishLegendary(g, VIOLET, pulseFallbackAura(aura));
   });
 
   // =============================================================================
   //  TYPE ESPACE — vortexis · astralis · nebulon
-  //  Comme pour temps, la silhouette animale s'efface derrière l'aura et les
-  //  particules : starfield (quasi gratuit, un seul THREE.Points) est utilisé
-  //  sans retenue sur les trois.
+  //  « Le seigneur de l'espace aux plaques cristallines » : les trois portent
+  //  une grappe de cristaux et une nuée d'étoiles. Le starfield est le meilleur
+  //  rapport spectacle/coût du moteur — 1 draw call pour 20 à 30 points — et
+  //  c'est ce qui permet à ces trois-là d'en imposer dans 24 draw calls.
   // =============================================================================
 
   // ---------------------------------------------------------------------------
-  //  VORTEXIS — « raie-galaxie, spirale d'étoiles »
-  //  Une raie manta plate qui plane, spirale de galaxie qui tourbillonne
-  //  derrière elle — la plus « rapide et fine » des trois espace.
+  //  VORTEXIS — « raie-galaxie, spirale d'étoiles »   (aurore)
+  //  Silhouette plate et rapide, deux immenses ailes-nageoires en éclats, une
+  //  crête de plaques cristallines sur le dos, une longue queue-ruban qui plonge
+  //  vers le sol et une spirale de galaxie qui tourne sous elle.
+  //  Attributs distinctifs : AILES + CRISTAUX + ANNEAUX + TRAÎNE.
+  //  Budget : 1 corps + 1 dos + 2 lobes + 2 yeux + 4 ailes + 3 cristaux
+  //         + 4 queue + 3 anneau + 1 spirale + 3 aura = 24 draw calls.
   // ---------------------------------------------------------------------------
   R3.registerCreature('vortexis', function () {
     const BLEU = '#4b62d9', NOIR = '#1a1c2c', BLANC = '#f4f4f4';
     const g = shell(), inner = g.userData.inner;
 
-    inner.add(R3.ellipsoid(0.50, 0.16, 0.70, NOIR, 0, 1.55, 0, { rough: 0.45 }));
-    inner.add(R3.ellipsoid(0.40, 0.10, 0.55, BLEU, 0, 1.49, 0.10, { rough: 0.5 }));
-    [-1, 1].forEach(function (s) {
-      const lobe = R3.cone(0.05, 0.24, BLEU, s * 0.16, 1.66, 0.62, { seg: 6 });
-      lobe.rotation.x = Math.PI / 2 - 0.55;
-      lobe.rotation.z = s * 0.2;
-      inner.add(lobe);
-    });
-    const head = new THREE.Group();
-    head.position.set(0, 1.55, 0.55);
-    inner.add(head);
-    head.add(LL.bigEyes(0.16, 0.0, 0.08, 0.06, { color: BLANC, dark: '#05070f', brow: false }));
+    // --- Corps de raie, très plat (2) ----------------------------------------
+    inner.add(R3.ellipsoid(0.52, 0.17, 0.74, NOIR, 0, 1.58, 0, M({ seg: 14, rough: 0.45, flat: true })));
+    inner.add(R3.ellipsoid(0.40, 0.11, 0.56, BLEU, 0, 1.66, 0.08, M({ seg: 12, rough: 0.5, flat: true, emissive: BLEU, emissiveIntensity: 0.18 })));
 
-    const wingR = LL.majesticWing(1.30, NOIR, { style: 'membrane', color2: BLEU, x: 0.05, y: 1.53, z: -0.05, side: 1, opacity: 0.92 });
-    const wingL = LL.majesticWing(1.30, NOIR, { style: 'membrane', color2: BLEU, x: -0.05, y: 1.53, z: -0.05, side: -1, opacity: 0.92 });
+    // --- Lobes céphaliques (2) + yeux (2) ------------------------------------
+    const head = new THREE.Group();
+    head.position.set(0, 1.58, 0.52);
+    inner.add(head);
+    [-1, 1].forEach(function (s) {
+      const lobe = R3.cone(0.06, 0.28, BLEU, s * 0.17, 0.08, 0.16, M({ seg: 4, rough: 0.45, flat: true, emissive: BLEU, emissiveIntensity: 0.22 }));
+      lobe.rotation.x = Math.PI / 2 - 0.55;
+      lobe.rotation.z = s * 0.22;
+      head.add(lobe);
+    });
+    head.add(gemEyes(0.19, 0.01, 0.10, 0.065, { color: BLANC, intensity: 2.0, tilt: 0.30 }));
+
+    // --- Ailes-nageoires : 2 lames chacune = 4 -------------------------------
+    const wingR = shardWing(1.35, NOIR, { feathers: 1, height: 0.62, color2: BLEU, side: 1, x: 0.10, y: 1.56, z: -0.04, flatten: 0.14 });
+    const wingL = shardWing(1.35, NOIR, { feathers: 1, height: 0.62, color2: BLEU, side: -1, x: -0.10, y: 1.56, z: -0.04, flatten: 0.14 });
+    wingR.rotation.z = 0.06; wingL.rotation.z = 0.06;
+    wingR.userData.p3wingBase = 0.06; wingL.userData.p3wingBase = 0.06;
     inner.add(wingR, wingL);
 
-    // Longue queue-ruban qui plonge vers le sol : c'est elle qui donne à
-    // Vortexis toute sa hauteur (une raie à plat resterait basse).
-    const tail = LL.plumeTail(1.45, BLEU, 7, { style: 'ribbon', color2: NOIR, droop: 0.05, y: 1.58, z: -0.68 });
-    tail.rotation.x = -1.35;
-    inner.add(tail);
+    // --- Plaques cristallines sur le dos (3) ---------------------------------
+    inner.add(LL.crystalCluster(BLANC, 3, 0.18, { base: false, glow: false, tipColor: BLEU, spread: 0.9, y: 1.70, z: -0.10 }));
 
-    const spiral = LL.starfield(BLANC, 26, 1.4, { spread: 'spiral', color2: BLEU, y: 1.30, ry: 0.30 });
-    inner.add(spiral);
-    const shards = LL.orbitRing(BLANC, 0.85, 7, { shape: 'star', size: 0.05, tilt: 0.3, speed: 0.6, glow: true, y: 1.30 });
-    inner.add(shards);
+    // --- Queue-ruban qui plonge (4) ------------------------------------------
+    // C'est elle qui donne sa hauteur à Vortexis : une raie à plat resterait
+    // basse et se lirait mal de loin.
+    const queue = LL.flowRibbon(1.45, BLEU, { color2: NOIR, opacity: 0.85, segments: 4, amp: 0.20, speed: 1.2, y: 1.58, z: -0.72 });
+    queue.rotation.x = -1.25;
+    inner.add(queue);
 
-    const aura = LL.aura(BLEU, 1.30, { shape: 'sphere', color2: NOIR, rings: 2, particles: 6, y0: 1.2 });
+    // --- Anneau d'étoiles (3) -------------------------------------------------
+    inner.add(LL.orbitRing(BLANC, 0.88, 3, { shape: 'star', size: 0.11, tilt: 0.30, speed: 0.50, glow: true, wobble: 0.12, y: 1.40 }));
+
+    // --- La spirale de galaxie : 26 points, 1 draw call ----------------------
+    inner.add(LL.starfield(BLANC, 26, 1.45, { color2: BLEU, spread: 'spiral', size: 0.10, ry: 0.30, seed: 5, y: 1.28 }));
+
+    // --- Aura (3) -------------------------------------------------------------
+    const aura = LL.aura(BLEU, 1.25, { shape: 'sphere', color2: NOIR, rings: 0, particles: 0, y0: 1.30 });
     g.add(aura);
 
-    g.userData.anim = { head: head, wingL: wingL, wingR: wingR, tail: tail, float: true };
+    g.userData.baseY = 0;
+    g.userData.anim = { head: head, wingL: null, wingR: null, tail: null, float: true };
     g.userData.attack = function (root, p) {
       // « Spirale galactique » : elle pique, effectue une vrille complète,
       // puis se stabilise.
       const inn = root.userData.inner, k = arc(p);
-      inn.position.z = k * 0.5;
+      inn.position.z = k * 0.52;
       inn.rotation.z = R3.clamp01(p) * Math.PI * 2;
-      wingR.rotation.z = 0.15 + k * 0.7; wingL.rotation.z = -(0.15 + k * 0.7);
+      wingR.rotation.z = 0.06 + k * 0.68;
+      wingL.rotation.z = 0.06 + k * 0.68;
       if (p >= 1) inn.rotation.z = 0;
-      LL.animateAura(root, R3.clock.t);
     };
-    return finishLegendary(g, BLEU);
+    return finishLegendary(g, BLEU, ticks(
+      calmWings([wingR, wingL], 0.10, 0.85),
+      pulseFallbackAura(aura)
+    ));
   });
 
   // ---------------------------------------------------------------------------
-  //  ASTRALIS — « baleine stellaire, constellations »
-  //  La plus grande et la plus lente des trois espace : un long corps de
-  //  baleine tout en rondeur, couvert de constellations, qui plane
-  //  paisiblement plutôt que de foncer comme Vortexis.
+  //  ASTRALIS — « baleine stellaire, constellations »   (aurore)
+  //  La plus grande et la plus lente du lot : un long corps rond qui plane,
+  //  une crête de cristaux sur le dos, deux nuées d'étoiles (les constellations
+  //  sur la peau, et le sillage derrière) et un anneau d'astres très lent.
+  //  Attributs distinctifs : CRISTAUX + ANNEAUX en orbite.
+  //  Budget : 1 corps + 1 ventre + 1 museau + 2 yeux + 1 aileron + 2 nageoires
+  //         + 3 caudale + 3 cristaux + 3 anneau + 2 étoiles + 3 aura
+  //         = 22 draw calls (la marge du lot).
   // ---------------------------------------------------------------------------
   R3.registerCreature('astralis', function () {
     const NUIT = '#29366f', BLEU = '#4b62d9', JAUNE = '#fcef8d';
     const g = shell(), inner = g.userData.inner;
 
-    inner.add(R3.ellipsoid(0.45, 0.62, 1.00, NUIT, 0, 1.55, 0, { rough: 0.45 }));
-    inner.add(R3.ellipsoid(0.34, 0.36, 0.55, BLEU, 0, 1.35, 0.30, { rough: 0.55 }));
-    inner.add(R3.ellipsoid(0.36, 0.36, 0.36, NUIT, 0, 1.58, 1.05, { rough: 0.45 }));   // museau
-    // Grand aileron dorsal cristallin — c'est lui qui donne à Astralis sa
-    // stature de légendaire (une baleine à plat serait trop basse).
-    inner.add(R3.cone(0.12, 0.68, BLEU, 0, 2.16, 0.30, { seg: 8 }));
+    // --- Corps de baleine (3) -------------------------------------------------
+    inner.add(R3.ellipsoid(0.47, 0.64, 1.04, NUIT, 0, 1.58, 0, M({ seg: 14, rough: 0.45, flat: true })));
+    inner.add(R3.ellipsoid(0.35, 0.37, 0.58, BLEU, 0, 1.36, 0.30, M({ seg: 12, rough: 0.55, flat: true, emissive: BLEU, emissiveIntensity: 0.14 })));
+    inner.add(R3.ellipsoid(0.37, 0.37, 0.38, NUIT, 0, 1.60, 1.06, M({ seg: 12, rough: 0.45, flat: true })));
 
+    // --- Yeux (2) -------------------------------------------------------------
     const head = new THREE.Group();
-    head.position.set(0, 1.60, 1.15);
+    head.position.set(0, 1.64, 1.18);
     inner.add(head);
-    head.add(LL.bigEyes(0.26, 0.0, 0.10, 0.07, { color: JAUNE, dark: '#0d1230', brow: false }));
+    head.add(gemEyes(0.27, 0.0, 0.10, 0.075, { color: JAUNE, intensity: 1.9, tilt: 0.22 }));
 
-    const finR = LL.majesticWing(0.58, BLEU, { style: 'membrane', color2: NUIT, x: 0.42, y: 0.95, z: 0.15, side: 1, arm: false });
-    const finL = LL.majesticWing(0.58, BLEU, { style: 'membrane', color2: NUIT, x: -0.42, y: 0.95, z: 0.15, side: -1, arm: false });
-    inner.add(finR, finL);
+    // --- Aileron dorsal cristallin (1) ---------------------------------------
+    inner.add(R3.cone(0.14, 0.68, BLEU, 0, 2.06, 0.28, M({ seg: 4, rough: 0.4, flat: true, emissive: BLEU, emissiveIntensity: 0.25 })));
 
-    // --- Nageoire caudale, à plat ------------------------------------------------
-    const tail = new THREE.Group();
-    tail.position.set(0, 1.35, -1.05);
-    inner.add(tail);
-    tail.add(R3.cyl(0.10, 0.16, 0.45, NUIT, 0, 0, -0.20, { seg: 8, rough: 0.5 }));
+    // --- Nageoires pectorales, 1 mesh chacune (2) ----------------------------
     [-1, 1].forEach(function (s) {
-      const lobe = R3.ellipsoid(0.34, 0.05, 0.20, BLEU, s * 0.28, 0, -0.42, { rough: 0.5 });
-      lobe.rotation.y = s * 0.35;
+      const nag = R3.cone(0.20, 0.62, BLEU, s * 0.52, 1.10, 0.16, M({ seg: 4, rough: 0.45, flat: true, emissive: BLEU, emissiveIntensity: 0.18 }));
+      nag.rotation.z = -s * (Math.PI / 2 - 0.5);
+      nag.scale.z = 0.20;
+      inner.add(nag);
+    });
+
+    // --- Nageoire caudale (3) -------------------------------------------------
+    const tail = new THREE.Group();
+    tail.position.set(0, 1.38, -1.08);
+    inner.add(tail);
+    tail.add(R3.cyl(0.11, 0.18, 0.46, NUIT, 0, 0, -0.20, M({ seg: 8, rough: 0.5, flat: true })));
+    [-1, 1].forEach(function (s) {
+      const lobe = R3.ellipsoid(0.36, 0.06, 0.22, BLEU, s * 0.30, 0, -0.44, M({ seg: 10, rough: 0.5, flat: true, emissive: BLEU, emissiveIntensity: 0.16 }));
+      lobe.rotation.y = s * 0.36;
       tail.add(lobe);
     });
 
-    // --- Constellations sur la peau + sillage d'étoiles -------------------------
-    const constellation = LL.starfield(JAUNE, 30, 0.9, { color2: BLEU, spread: 'shell', ry: 0.85, y: 1.55, z: 0.10 });
-    inner.add(constellation);
-    const wake = LL.starfield(BLEU, 18, 1.6, { color2: JAUNE, spread: 'ball', y: 1.35, z: -0.9 });
-    inner.add(wake);
-    const runes = LL.runeStone(BLEU, 0.10, { glowColor: JAUNE, rune: 'star', count: 2, spread: 0.9, y: 1.75, z: -0.30 });
-    inner.add(runes);
+    // --- Crête de cristaux sur le dos (3) ------------------------------------
+    inner.add(LL.crystalCluster(BLEU, 3, 0.20, { base: false, glow: false, tipColor: JAUNE, spread: 0.5, y: 1.98, z: -0.35 }));
 
-    // Aura en colonne : la baleine qui domine le ciel, visible de très loin.
-    const aura = LL.aura(NUIT, 1.40, { shape: 'column', color2: BLEU, rings: 2, particles: 6, y0: 1.55 });
+    // --- Anneau d'astres, très lent (3) --------------------------------------
+    inner.add(LL.orbitRing(JAUNE, 1.05, 3, { shape: 'star', size: 0.13, tilt: 0.26, speed: 0.16, glow: true, wobble: 0.18, y: 1.55 }));
+
+    // --- Constellations sur la peau + sillage (2 draw calls, 48 points) ------
+    inner.add(LL.starfield(JAUNE, 30, 0.95, { color2: BLEU, spread: 'shell', size: 0.075, ry: 0.85, seed: 9, y: 1.58, z: 0.08 }));
+    inner.add(LL.starfield(BLEU, 18, 1.60, { color2: JAUNE, spread: 'ball', size: 0.09, ry: 0.5, seed: 23, y: 1.36, z: -0.95 }));
+
+    // --- Aura en colonne : elle domine le ciel, visible de très loin (3) -----
+    const aura = LL.aura(NUIT, 1.35, { shape: 'column', color2: BLEU, rings: 0, particles: 0, height: 4.2 });
     g.add(aura);
 
-    g.userData.anim = { head: head, wingL: finL, wingR: finR, tail: tail, float: true };
+    g.userData.baseY = 0;
+    g.userData.anim = { head: head, wingL: null, wingR: null, tail: tail, float: true };
     g.userData.attack = function (root, p) {
-      // « Chant stellaire » : la baleine ondule lentement de tout son long
-      // et les constellations scintillent plus fort.
+      // « Chant stellaire » : la baleine ondule lentement de tout son long.
       const inn = root.userData.inner, k = arc(p);
       inn.rotation.z = Math.sin(R3.clamp01(p) * Math.PI * 1.5) * 0.10;
-      inn.position.y = k * 0.16;
-      finR.rotation.z = 0.1 + k * 0.4; finL.rotation.z = -(0.1 + k * 0.4);
-      LL.animateAura(root, R3.clock.t);
+      inn.position.y = k * 0.18;
+      inn.position.z = k * 0.22;
     };
-    return finishLegendary(g, BLEU);
+    return finishLegendary(g, BLEU, pulseFallbackAura(aura));
   });
 
   // ---------------------------------------------------------------------------
-  //  NÉBULON — « méduse-nébuleuse, voile de gaz coloré »
-  //  Flotte très haut, cloche translucide, longs tentacules-rubans qui
-  //  pendent (contrairement à la queue horizontale d'Astralis et à la
-  //  silhouette plate de Vortexis) — la plus verticale et la plus « molle »
-  //  des trois espace.
+  //  NÉBULON — « méduse-nébuleuse, voile de gaz coloré »   (saphir)
+  //  La plus verticale et la plus molle du lot : une cloche translucide très
+  //  haut perchée, un bourrelet lumineux à son bord, une couronne de cristaux
+  //  au sommet et trois longs tentacules-rubans qui ondulent jusqu'au sol.
+  //  Attributs distinctifs : TRAÎNE (tentacules) + CRISTAUX + ANNEAUX.
+  //  Budget : 1 cloche + 1 doublure + 1 bourrelet + 2 yeux + 9 tentacules
+  //         + 3 cristaux + 3 anneau + 1 étoiles + 3 aura = 24 draw calls.
   // ---------------------------------------------------------------------------
   R3.registerCreature('nebulon', function () {
     const VIOLET = '#7a5cbf', BLEU = '#4b62d9', ROSE = '#ff6b9d';
     const g = shell(), inner = g.userData.inner;
-    const T = { transparent: true, opacity: 0.62, rough: 0.25, side: THREE.DoubleSide, depthWrite: false };
+    const T = { seg: 14, rough: 0.25, flat: true, transparent: true, opacity: 0.58, side: THREE.DoubleSide, emissive: VIOLET, emissiveIntensity: 0.4, depthWrite: false };
 
-    inner.add(R3.ellipsoid(0.50, 0.36, 0.50, VIOLET, 0, 1.85, 0, T));
-    inner.add(R3.ellipsoid(0.36, 0.24, 0.36, BLEU, 0, 1.80, 0, Object.assign({}, T, { opacity: 0.4 })));
+    // --- Cloche (2) + bourrelet lumineux (1) ---------------------------------
+    inner.add(R3.ellipsoid(0.54, 0.40, 0.54, VIOLET, 0, 1.92, 0, M(T)));
+    inner.add(R3.ellipsoid(0.38, 0.26, 0.38, BLEU, 0, 1.86, 0, M({ seg: 12, rough: 0.25, flat: true, transparent: true, opacity: 0.38, side: THREE.DoubleSide, emissive: BLEU, emissiveIntensity: 0.55, depthWrite: false })));
+    const bourrelet = R3.torus(0.52, 0.055, ROSE, 0, 1.74, 0, M({ seg: 14, rough: 0.3, transparent: true, opacity: 0.8, side: THREE.DoubleSide, emissive: ROSE, emissiveIntensity: 0.9, depthWrite: false }));
+    bourrelet.rotation.x = -Math.PI / 2;
+    inner.add(bourrelet);
 
+    // --- Yeux, sur le devant de la cloche (2) --------------------------------
     const head = new THREE.Group();
-    head.position.set(0, 1.80, 0.40);
+    head.position.set(0, 1.86, 0.42);
     inner.add(head);
-    head.add(LL.bigEyes(0.15, 0.0, 0.05, 0.055, { color: ROSE, dark: '#241a3d', brow: false }));
+    head.add(gemEyes(0.16, 0.0, 0.06, 0.06, { color: ROSE, intensity: 2.1, tilt: 0.16 }));
 
-    // --- Tentacules-rubans qui pendent sous la cloche, longues et basses --------
-    // (c'est leur longueur qui donne à Nébulon sa taille de légendaire)
-    const tentacles = [];
-    const positions = [[0.30, 0.0], [-0.30, 0.0], [0.16, 0.28], [-0.16, 0.28], [0.0, -0.32]];
-    positions.forEach(function (pp, i) {
-      const rb = LL.flowRibbon(1.30 + (i % 2) * 0.25, ROSE, {
-        color2: VIOLET, segments: 7, opacity: 0.55, x: pp[0], y: 1.62, z: pp[1],
+    // --- 3 tentacules-rubans, 3 lames chacun (9) -----------------------------
+    // Construits vers -z puis basculés : rotation.x = -π/2 envoie -z sur -y,
+    // les rubans retombent donc bien vers le sol.
+    const tentacules = [];
+    [[0.32, 0.04], [-0.28, -0.10], [0.02, 0.30]].forEach(function (pp, i) {
+      const rb = LL.flowRibbon(1.55 + (i % 2) * 0.20, ROSE, {
+        color2: VIOLET, segments: 3, opacity: 0.55, width: 0.20,
+        amp: 0.22, speed: 1.0, x: pp[0], y: 1.70, z: pp[1],
       });
-      rb.rotation.x = -Math.PI / 2;   // le ruban, construit vers -z, retombe vers -y
+      rb.rotation.x = -Math.PI / 2;
       inner.add(rb);
-      tentacles.push(rb);
+      tentacules.push(rb);
     });
 
-    // --- Nuage de gaz nébuleux autour de la cloche -------------------------------
-    const gas = LL.mistPuff(BLEU, 0.60, 7, { color2: ROSE, opacity: 0.22, ry: 0.6, y: 1.85 });
-    inner.add(gas);
-    const sparkle = LL.starfield(ROSE, 16, 0.80, { color2: BLEU, spread: 'ball', y: 1.85 });
-    inner.add(sparkle);
+    // --- Couronne de cristaux au sommet (3) ----------------------------------
+    inner.add(LL.crystalCluster(ROSE, 3, 0.17, { base: false, glow: false, tipColor: BLEU, spread: 0.9, y: 2.12 }));
 
-    const aura = LL.aura(VIOLET, 1.20, { shape: 'sphere', color2: BLEU, rings: 1, particles: 5, intensity: 1.2, y0: 1.30 });
+    // --- Anneau d'orbes de gaz (3) -------------------------------------------
+    inner.add(LL.orbitRing(BLEU, 0.72, 3, { shape: 'sphere', size: 0.13, tilt: 0.22, speed: 0.32, glow: true, wobble: 0.20, y: 1.62 }));
+
+    // --- Nébuleuse : 20 points, 1 draw call ----------------------------------
+    inner.add(LL.starfield(ROSE, 20, 0.90, { color2: BLEU, spread: 'ball', size: 0.10, ry: 0.7, seed: 41, y: 1.92 }));
+
+    // --- Aura (3) -------------------------------------------------------------
+    const aura = LL.aura(VIOLET, 1.15, { shape: 'sphere', color2: BLEU, rings: 0, particles: 0, intensity: 1.2, y0: 1.40 });
     g.add(aura);
 
-    g.userData.anim = { head: head, wingL: null, wingR: null, tail: tentacles[0], float: true };
+    g.userData.baseY = 0;
+    g.userData.anim = { head: head, wingL: null, wingR: null, tail: null, float: true };
     g.userData.attack = function (root, p) {
-      // « Voile de nébuleuse » : la cloche se contracte comme une vraie
-      // méduse et les tentacules fouettent vers l'avant.
+      // « Voile de nébuleuse » : la cloche se contracte comme une vraie méduse
+      // et les tentacules fouettent vers l'avant.
       const inn = root.userData.inner, k = arc(p);
       inn.scale.set(1 + k * 0.12, 1 - k * 0.18, 1 + k * 0.12);
-      inn.position.z = k * 0.35;
-      tentacles.forEach(function (t, i) {
-        t.rotation.z = Math.sin(R3.clamp01(p) * Math.PI + i) * 0.35 * k;
-      });
-      LL.animateAura(root, R3.clock.t);
+      inn.position.z = k * 0.36;
+      for (let i = 0; i < tentacules.length; i++) {
+        tentacules[i].rotation.z = Math.sin(R3.clamp01(p) * Math.PI + i) * 0.35 * k;
+      }
     };
-    return finishLegendary(g, VIOLET);
+    return finishLegendary(g, VIOLET, pulseFallbackAura(aura));
   });
 
 })();
