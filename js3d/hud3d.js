@@ -1,10 +1,23 @@
 // =============================================================================
-//  hud3d.js — INTERFACE de la version 3D du « Jeu de Robin »  (CONTRAT2 §18)
+//  hud3d.js — INTERFACE de la version 3D du « Jeu de Robin »
+//             (CONTRAT2 §18, complété par CONTRAT3 §11)
 // =============================================================================
 //  Tout ce qui n'est pas de la 3D vit ici : boîte de dialogue, bandeaux de
 //  biome/région, équipe, Pokédex, carte (région + monde), combat (menus,
 //  barres de PV, sac, capacités), menu du dirigeable, viseur de Pokéball,
 //  collection, choix du compagnon, toasts, sélecteur de qualité.
+//
+//  Ajouts de la vague « Dresseur complet » (CONTRAT3 §11) :
+//   · LA BOÎTE — valider une créature de la Boîte l'envoie DIRECTEMENT dans
+//     l'équipe s'il reste de la place (demande n°1, la priorité absolue) ;
+//   · le SÉLECTEUR DE BALL permanent, touche X ou clic (demande n°9) ;
+//   · l'ARGENT, la BOUTIQUE du Centre, le JOURNAL des légendes (touche J),
+//     l'écran d'ÉVOLUTION, l'ACADÉMIE du type Téra et le bouton TÉRA du
+//     menu de combat.
+//
+//  Le HUD n'a JAMAIS de règle de jeu à lui : il affiche ce qu'on lui donne et
+//  rappelle les callbacks. L'argent est à shop3d, les quêtes à quest3d, la
+//  Téracristallisation à tera3d, la vérité de la Ball active à game3d.
 //
 //  L'interface est en HTML/CSS (fichier css3d/hud3d.css) : plus net et plus
 //  lisible qu'un dessin sur canvas, et ça s'adapte tout seul à l'écran.
@@ -99,23 +112,49 @@
   //  TYPES ÉLÉMENTAIRES — table de repli si types3d.js manque (§2, figée)
   // ===========================================================================
 
+  //  Table de repli alignée sur les 19 types de CONTRAT3 §2. Elle n'est utilisée
+  //  QUE si types3d.js manque : dans ce cas, le HUD doit tout de même savoir
+  //  colorier une pastille et remplir le filtre du Pokédex.
   const TYPE_FALLBACK = {
     feu: { id: 'feu', label: 'Feu', color: '#ff6b3d', icon: '🔥' },
     eau: { id: 'eau', label: 'Eau', color: '#41a6f6', icon: '💧' },
     plante: { id: 'plante', label: 'Plante', color: '#38b764', icon: '🌿' },
-    foudre: { id: 'foudre', label: 'Foudre', color: '#f1c40f', icon: '⚡' },
+    electrique: { id: 'electrique', label: 'Électrique', color: '#f1c40f', icon: '⚡' },
     glace: { id: 'glace', label: 'Glace', color: '#a8e6ff', icon: '❄️' },
     air: { id: 'air', label: 'Air', color: '#bfe3f2', icon: '💨' },
     terre: { id: 'terre', label: 'Terre', color: '#c08c4a', icon: '🍂' },
     roche: { id: 'roche', label: 'Roche', color: '#9aa0a6', icon: '🪨' },
     lumiere: { id: 'lumiere', label: 'Lumière', color: '#ffe066', icon: '✨' },
-    ombre: { id: 'ombre', label: 'Ombre', color: '#7a5cbf', icon: '🌑' },
+    spectre: { id: 'spectre', label: 'Spectre', color: '#7a5cbf', icon: '👻' },
     temps: { id: 'temps', label: 'Temps', color: '#d896ff', icon: '⏳' },
     espace: { id: 'espace', label: 'Espace', color: '#4b62d9', icon: '🌌' },
+    psy: { id: 'psy', label: 'Psy', color: '#ff6b9d', icon: '🔮' },
+    fee: { id: 'fee', label: 'Fée', color: '#ffb3d9', icon: '🧚' },
+    acier: { id: 'acier', label: 'Acier', color: '#b8c4d0', icon: '⚙️' },
+    dragon: { id: 'dragon', label: 'Dragon', color: '#6a4fd8', icon: '🐉' },
+    poison: { id: 'poison', label: 'Poison', color: '#b45cd8', icon: '☠️' },
+    combat: { id: 'combat', label: 'Combat', color: '#e8622c', icon: '🥊' },
+    normal: { id: 'normal', label: 'Normal', color: '#d8d0c4', icon: '◻️' },
   };
-  const TYPE_ORDER_FALLBACK = ['feu', 'eau', 'plante', 'foudre', 'glace', 'air',
-    'terre', 'roche', 'lumiere', 'ombre', 'temps', 'espace'];
-  const NEUTRAL_TYPE = { id: null, label: 'Normal', color: '#94b0c2', icon: '◇' };
+  const TYPE_ORDER_FALLBACK = ['feu', 'eau', 'plante', 'electrique', 'glace', 'air',
+    'terre', 'roche', 'lumiere', 'spectre', 'temps', 'espace', 'psy', 'fee',
+    'acier', 'dragon', 'poison', 'combat', 'normal'];
+  // Les anciens ids traînent encore dans dex3d, moves3d et les sauvegardes :
+  // même sans types3d, le HUD doit les afficher comme les nouveaux.
+  const TYPE_ALIAS_FALLBACK = { foudre: 'electrique', ombre: 'spectre' };
+  // « Normal » est désormais un VRAI type : le repli change de nom pour qu'on ne
+  // voie jamais deux choses différentes sous le même mot (CONTRAT3 §2.3).
+  const NEUTRAL_TYPE = { id: null, label: 'Neutre', color: '#94b0c2', icon: '◇' };
+
+  /** Ramène un ancien id de type sur son id canonique (repli sans types3d). */
+  function typeNormalize(id) {
+    const api = TYPES();
+    if (api && typeof api.normalize === 'function') {
+      try { return api.normalize(id); } catch (e) { /* repli ci-dessous */ }
+    }
+    if (!id) return null;
+    return TYPE_ALIAS_FALLBACK[id] || id;
+  }
 
   function typeInfo(id) {
     const api = TYPES();
@@ -123,12 +162,31 @@
       const t = api.get(id);
       if (t) return t;
     }
-    return TYPE_FALLBACK[id] || NEUTRAL_TYPE;
+    return TYPE_FALLBACK[typeNormalize(id)] || NEUTRAL_TYPE;
   }
 
   function typeOrder() {
     const api = TYPES();
     return (api && Array.isArray(api.ORDER)) ? api.ORDER : TYPE_ORDER_FALLBACK;
+  }
+
+  /**
+   * « Cette liste de types contient-elle ce type ? », en tenant compte des
+   * renommages. INDISPENSABLE : les espèces de dex3d portent encore `foudre` et
+   * `ombre` alors que les filtres viennent de ORDER, qui dit `electrique` et
+   * `spectre`. Un simple indexOf ne trouvait donc jamais rien.
+   */
+  function typeMatches(list, id) {
+    const api = TYPES();
+    if (api && typeof api.hasType === 'function') {
+      try { return !!api.hasType(list, id); } catch (e) { /* repli ci-dessous */ }
+    }
+    if (!Array.isArray(list)) return false;
+    const want = typeNormalize(id);
+    for (let i = 0; i < list.length; i++) {
+      if (typeNormalize(list[i]) === want) return true;
+    }
+    return false;
   }
 
   /** Pastille de type prête à insérer — réutilise types3d.badge() si présent. */
@@ -381,10 +439,12 @@
     if (typeof species.draw === 'function') {
       return resizedCanvas(creatureThumb(species, 3), px);
     }
-    if (species.legendary) {
-      const cv3d = creature3DThumb(species);
-      if (cv3d) return resizedCanvas(cv3d, px);
-    }
+    // Les 36 légendaires ET les 29 formes évoluées n'ont pas de dessin 2D :
+    // dès qu'il n'y a pas de `draw`, on tente le rendu 3D hors écran. Le cache
+    // garde aussi les échecs, donc une espèce sans modèle n'est essayée qu'une
+    // fois avant de retomber sur la pastille de type.
+    const cv3d = creature3DThumb(species);
+    if (cv3d) return resizedCanvas(cv3d, px);
     return typeIconThumb(species, px);
   }
 
@@ -444,6 +504,10 @@
     buildDexOverlay();
     buildMapOverlay();
     buildAirshipOverlay();
+    buildShopOverlay();
+    buildJournalOverlay();
+    buildAcademyOverlay();
+    buildEvolutionOverlay();
     buildCompass();
     buildToastLayer();
     buildQualityPicker();
@@ -489,11 +553,29 @@
     ui.count.title = 'Créatures différentes capturées';
   }
 
+  /**
+   * DEMANDE N°9 DE ROBIN — le sélecteur de Ball.
+   * Il remplace l'ancien compteur muet : on y voit la Ball active, son nom et
+   * ce qu'il en reste, et un clic (ou la touche X) passe à la suivante.
+   */
   function buildBallCount() {
-    const b = el('div', 'ball-count hidden', hudRoot);
-    el('span', 'bc-icon', b, '⚪');
-    ui.ballNum = el('span', 'bc-num', b, '0');
+    const b = el('button', 'ball-picker hidden', hudRoot);
+    b.type = 'button';
+    ui.ballIcon = el('span', 'bp-icon', b, '🔴');
+    const body = el('span', 'bp-body', b);
+    ui.ballName = el('span', 'bp-name', body, 'Pokéball');
+    el('span', 'bp-key', body, 'X pour changer');
+    ui.ballNum = el('span', 'bp-qty', b, '×0');
+    b.addEventListener('click', function () { cycleBall(1); b.blur(); });
     ui.ballCount = b;
+
+    // L'argent, discret, juste en dessous : Robin doit savoir s'il peut
+    // s'offrir une Super Ball avant d'entrer au Centre.
+    const m = el('div', 'money-count hidden', hudRoot);
+    el('span', 'mc-icon', m, '🪙');
+    ui.moneyNum = el('span', 'mc-num', m, '0');
+    m.title = 'Ton argent';
+    ui.moneyCount = m;
   }
 
   function buildAimReticle() {
@@ -790,7 +872,11 @@
   function setCollectionCount(n, total) {
     if (!ui.count) return;
     const dex = DEX();
-    const t = total || (dex ? dex.count : (typeof CREATURES !== 'undefined' ? CREATURES.length : 26));
+    // Le Pokédex FAIT AUTORITÉ sur le total : evolve3d y greffe ses 29 formes
+    // évoluées après coup, et `dex.count` passe alors de 62 à 91. Un total figé
+    // passé par l'appelant afficherait « /62 » pour toujours.
+    const vrai = (dex && dex.count) | 0;
+    const t = vrai || total || (typeof CREATURES !== 'undefined' ? CREATURES.length : 26);
     ui.countNum.textContent = (n | 0) + '/' + t;
     ui.count.title = (n | 0) + ' créature(s) différente(s) sur ' + t;
     if (lastUniques >= 0 && n > lastUniques) replayAnim(ui.count, 'pop');
@@ -799,12 +885,176 @@
 
   function showCollectionCount(v) { if (ui.count) ui.count.classList.toggle('hidden', !v); }
 
+  // ===========================================================================
+  //  SÉLECTEUR DE BALL (CONTRAT3 §11.2 — demande n°9)
+  // ---------------------------------------------------------------------------
+  //  Les bonus des quatre Balls existaient depuis le début (BALL_BONUS dans
+  //  game3d.js) mais rien ne permettait de choisir. Ici : la Ball active est
+  //  toujours à l'écran, on en change par clic ou par la touche X, et les Balls
+  //  dont il ne reste rien sont sautées.
+  //
+  //  La VÉRITÉ appartient à game3d.js (`state.activeBall`) : quand le joueur
+  //  change de Ball ici, on écrit dans l'état, on prévient window.GAME3D si
+  //  la fonction existe, et on appelle le callback posé par onBallChange().
+  // ===========================================================================
+
+  const BALL_ORDER_FALLBACK = ['pokeball', 'superball', 'hyperball', 'ballmaitresse'];
+  let ballInventory = null;      // {id: qty} — posé par setBallInventory()
+  let activeBallId = 'pokeball';
+  let ballChangeHandler = null;
+
+  function SHOP() { return R3ref.get('shop'); }
+
+  /** Les ids de Ball, dans l'ordre du catalogue de la boutique si on l'a. */
+  function ballIds() {
+    const shop = SHOP();
+    if (shop && Array.isArray(shop.CATALOG)) {
+      const out = [];
+      shop.CATALOG.forEach(function (it) { if (it && it.kind === 'ball') out.push(it.id); });
+      if (out.length) return out;
+    }
+    return BALL_ORDER_FALLBACK;
+  }
+
+  /** Métadonnées d'un objet : shop3d fait autorité, ITEM_META sert de repli. */
+  function itemMeta(id) {
+    const shop = SHOP();
+    if (shop && typeof shop.item === 'function') {
+      try {
+        const it = shop.item(id);
+        if (it && it.id === id) return it;
+      } catch (e) { /* repli ci-dessous */ }
+    }
+    const m = ITEM_META[id];
+    if (m) return { id: id, name: m.name, icon: m.icon, description: m.desc, price: 0, kind: 'objet' };
+    return { id: id, name: String(id), icon: '🎁', description: '', price: 0, kind: 'objet' };
+  }
+
+  function ballQty(id) {
+    const inv = ballInventory || hudItems || {};
+    return inv[id] | 0;
+  }
+
+  function renderBallPicker() {
+    if (!ui.ballCount) return;
+    const meta = itemMeta(activeBallId);
+    const n = ballQty(activeBallId);
+    ui.ballIcon.textContent = meta.icon || '⚪';
+    ui.ballName.textContent = meta.name || activeBallId;
+    ui.ballNum.textContent = '×' + n;
+    ui.ballCount.classList.toggle('vide', n <= 0);
+    ui.ballCount.style.setProperty('--ball-color', meta.color || '#f1c40f');
+    ui.ballCount.title = (meta.description || '') + '  (X ou clic : changer de Ball)';
+  }
+
+  /** Combien de Balls différentes le joueur possède-t-il vraiment ? */
+  function ballsAvailable() {
+    const ids = ballIds();
+    const out = [];
+    for (let i = 0; i < ids.length; i++) if (ballQty(ids[i]) > 0) out.push(ids[i]);
+    return out;
+  }
+
+  function setActiveBall(id) {
+    const ids = ballIds();
+    activeBallId = (id && ids.indexOf(id) >= 0) ? id : (ids[0] || 'pokeball');
+    renderBallPicker();
+    if (liveBattle && ui.bagMenu && !ui.bagMenu.classList.contains('hidden')) renderBagMenu(liveBattle);
+    return activeBallId;
+  }
+
+  function activeBall() { return activeBallId; }
+
+  function setBallInventory(items) {
+    ballInventory = (items && typeof items === 'object') ? items : null;
+    // Si la Ball active est épuisée, on glisse sur une Ball qu'on possède :
+    // rester bloqué sur un stock vide serait incompréhensible.
+    if (ballQty(activeBallId) <= 0) {
+      const dispo = ballsAvailable();
+      if (dispo.length && dispo.indexOf(activeBallId) === -1) {
+        activeBallId = dispo[0];
+        notifyBallChange(activeBallId, true);
+      }
+    }
+    renderBallPicker();
+  }
+
+  function notifyBallChange(id, silencieux) {
+    const st = gameState();
+    if (st) st.activeBall = id;
+    if (window.GAME3D && typeof window.GAME3D.setActiveBall === 'function') {
+      try { window.GAME3D.setActiveBall(id); } catch (e) { /* jamais bloquant */ }
+    }
+    if (ballChangeHandler) {
+      try { ballChangeHandler(id); } catch (e) { console.warn('[hud3d] onBallChange :', e); }
+    }
+    if (!silencieux) {
+      const meta = itemMeta(id);
+      toast((meta.icon || '⚪') + ' ' + (meta.name || id) + ' — ×' + ballQty(id), null);
+    }
+  }
+
+  /** game3d.js peut brancher ce qui se passe quand Robin change de Ball. */
+  function onBallChange(fn) { ballChangeHandler = fn; }
+
+  /** Rotation : la Ball suivante que l'on possède réellement. */
+  function cycleBall(delta) {
+    const dispo = ballsAvailable();
+    if (!dispo.length) {
+      toast('Tu n’as plus aucune Ball ! Passe au Centre en acheter.', '🛍️');
+      return activeBallId;
+    }
+    if (dispo.length === 1) {
+      if (dispo[0] !== activeBallId) { activeBallId = dispo[0]; renderBallPicker(); notifyBallChange(activeBallId); }
+      else toast('C’est ta seule sorte de Ball pour l’instant !', '⚪');
+      return activeBallId;
+    }
+    const d = (delta < 0) ? -1 : 1;
+    let i = dispo.indexOf(activeBallId);
+    if (i < 0) i = (d > 0) ? -1 : 0;
+    i = ((i + d) % dispo.length + dispo.length) % dispo.length;
+    activeBallId = dispo[i];
+    renderBallPicker();
+    notifyBallChange(activeBallId);
+    return activeBallId;
+  }
+
+  /**
+   * Compatibilité §18 : `showBallCount(n)` reste appelé par game3d.js avec le
+   * nombre de Pokéballs. On s'en sert comme repli tant que setBallInventory()
+   * n'a rien dit, et on montre/cache le sélecteur.
+   */
   function showBallCount(n) {
     if (!ui.ballCount) return;
     if (n === undefined || n === null) { hide(ui.ballCount); return; }
-    ui.ballNum.textContent = String(n | 0);
+    if (!ballInventory) {
+      if (!hudItems || typeof hudItems !== 'object') hudItems = {};
+      hudItems.pokeball = n | 0;
+    }
+    renderBallPicker();
     show(ui.ballCount);
   }
+
+  // ===========================================================================
+  //  ARGENT (CONTRAT3 §11.3) — discret, à côté des compteurs
+  // ===========================================================================
+
+  let hudMoney = 0;
+
+  function setMoney(n) {
+    hudMoney = Math.max(0, n | 0);
+    if (!ui.moneyCount) return;
+    ui.moneyNum.textContent = String(hudMoney);
+    ui.moneyCount.title = hudMoney + ' pièces';
+    show(ui.moneyCount);
+    replayAnim(ui.moneyCount, 'pop');
+    if (ui.shopMoney) ui.shopMoney.textContent = '🪙 ' + hudMoney;
+    if (ui.shopOverlay && !ui.shopOverlay.classList.contains('hidden')) renderShopGrid();
+  }
+
+  function money() { return hudMoney; }
+
+  function showMoney(v) { if (ui.moneyCount) ui.moneyCount.classList.toggle('hidden', !v); }
 
   // ===========================================================================
   //  VISEUR DE POKÉBALL
@@ -859,7 +1109,10 @@
 
   function setItems(items) {
     hudItems = (items && typeof items === 'object') ? items : {};
+    // Le sac EST l'inventaire des Balls : le sélecteur se met à jour tout seul.
+    setBallInventory(items);
     if (liveBattle && ui.bagMenu && !ui.bagMenu.classList.contains('hidden')) renderBagMenu(liveBattle);
+    if (ui.shopOverlay && !ui.shopOverlay.classList.contains('hidden')) renderShopGrid();
   }
 
   // ===========================================================================
@@ -979,7 +1232,68 @@
       });
       return cell;
     });
+
+    // --- La cinquième entrée : TÉRACRISTALLISATION (CONTRAT3 §7 et §11.3) ---
+    // Elle occupe toute la largeur, sous la grille 2×2 : elle ne se confond
+    // donc jamais avec les quatre commandes habituelles, et l'ordre 0..3 que
+    // battle3d.js connaît ne bouge pas d'un pouce.
+    const tera = el('button', 'bm-cell bm-tera', grid);
+    tera.type = 'button';
+    ui.teraIcon = el('span', 'bm-icon', tera, '💎');
+    const tbody = el('span', 'bm-tera-body', tera);
+    ui.teraLabel = el('span', 'bm-label', tbody, 'Téra');
+    ui.teraSub = el('span', 'bm-tera-sub', tbody, 'À apprendre à l’Académie');
+    tera.addEventListener('mouseenter', function () { setMenuCursor(MAIN_MENU_ITEMS.length); });
+    tera.addEventListener('click', function () {
+      if (tera.disabled) { toast(teraState.reason || 'Pas encore disponible.', '💎'); return; }
+      setMenuCursor(MAIN_MENU_ITEMS.length);
+      tera.blur();
+      if (typeof teraState.onPress === 'function') {
+        try { teraState.onPress(); } catch (e) { console.warn('[hud3d] bouton Téra :', e); }
+      } else fakeKey(' ');
+    });
+    ui.teraCell = tera;
+    ui.mainCells.push(tera);
+    renderTeraButton();
+
     ui.mainMenu = menu;
+  }
+
+  // --- État du bouton Téra, poussé par game3d.js via setTeraState() ---------
+  const teraState = { enabled: false, teraType: null, reason: '', onPress: null, shown: false };
+
+  function renderTeraButton() {
+    if (!ui.teraCell) return;
+    // Tant que tera3d n'est pas là ET que personne n'a rien poussé, on cache
+    // le bouton : mieux vaut rien qu'une commande qui ne sert à rien.
+    const dispo = teraState.shown || !!R3ref.get('tera');
+    ui.teraCell.classList.toggle('hidden', !dispo);
+    if (!dispo) return;
+
+    const t = teraState.teraType ? typeInfo(teraState.teraType) : null;
+    ui.teraIcon.textContent = t ? (t.icon || '💎') : '💎';
+    ui.teraCell.style.setProperty('--type-color', t ? t.color : '#d896ff');
+    ui.teraLabel.textContent = t ? ('Téra ' + t.label) : 'Téracristallisation';
+    ui.teraSub.textContent = teraState.enabled
+      ? 'Fais briller ta créature !'
+      : (teraState.reason || 'À apprendre à l’Académie-château.');
+    ui.teraCell.disabled = !teraState.enabled;
+    ui.teraCell.classList.toggle('disabled', !teraState.enabled);
+    ui.teraCell.title = teraState.enabled ? 'Téracristalliser ta créature' : (teraState.reason || '');
+  }
+
+  /**
+   * @param {object} o { enabled, teraType, reason, onPress }
+   * Le HUD n'invente rien : il affiche ce que game3d/tera3d lui disent.
+   */
+  function setTeraState(o) {
+    o = o || {};
+    teraState.shown = true;
+    teraState.enabled = !!o.enabled;
+    teraState.teraType = o.teraType || null;
+    teraState.reason = o.reason || '';
+    teraState.onPress = (typeof o.onPress === 'function') ? o.onPress : null;
+    renderTeraButton();
   }
 
   function showMainMenu(battle) {
@@ -988,12 +1302,16 @@
     const b = liveBattle || {};
     if (ui.mainCells) {
       ui.mainCells.forEach(function (cell, i) {
+        // La cellule Téra a sa propre logique (renderTeraButton) : surtout ne
+        // pas la réactiver ici, elle redeviendrait cliquable sans l'Académie.
+        if (cell === ui.teraCell) return;
         const flee = (i === 3) && b.canFlee === false;
         cell.disabled = !!flee;
         cell.classList.toggle('disabled', !!flee);
         cell.title = flee ? 'Impossible de fuir ce combat !' : '';
       });
     }
+    renderTeraButton();
     hideMoveMenu(); hideMonMenu(); hideBagMenu();
     setMenuCursor(b.menuCursor || 0);
     show(ui.mainMenu);
@@ -1007,7 +1325,11 @@
     if (!ui.mainCells) return;
     const idx = clamp(i, 0, ui.mainCells.length - 1);
     ui.mainCells.forEach(function (c, k) { c.classList.toggle('selected', k === idx); });
-    if (liveBattle) liveBattle.menuCursor = idx;
+    // On n'écrit JAMAIS l'index 4 (Téra) dans battle.menuCursor : battle3d ne
+    // connaît que les quatre commandes 0..3, et un curseur hors table lui
+    // ferait faire n'importe quoi si Robin appuyait ensuite sur Espace.
+    // Le bouton Téra se déclenche par son propre callback (setTeraState).
+    if (liveBattle && idx < MAIN_MENU_ITEMS.length) liveBattle.menuCursor = idx;
   }
 
   // ===========================================================================
@@ -1193,9 +1515,14 @@
     Object.keys(hudItems).forEach(function (id) {
       const n = hudItems[id] | 0;
       if (n <= 0) return;
-      const meta = ITEM_META[id] || { name: id, icon: '🎁', desc: '' };
-      const isBall = id.indexOf('ball') >= 0;
-      out.push({ id: id, n: n, meta: meta, disabled: isBall && b.canCatch === false });
+      const it = itemMeta(id);
+      const meta = { name: it.name, icon: it.icon, desc: it.description || it.tagline || '' };
+      const isBall = (it.kind === 'ball') || id.indexOf('ball') >= 0;
+      out.push({
+        id: id, n: n, meta: meta,
+        actif: isBall && id === activeBallId,
+        disabled: isBall && b.canCatch === false,
+      });
     });
     return out;
   }
@@ -1209,13 +1536,14 @@
       return;
     }
     entries.forEach(function (entry, i) {
-      const cell = el('button', 'bag-item' + (entry.disabled ? ' disabled' : ''), ui.bagList);
+      const cell = el('button', 'bag-item' + (entry.disabled ? ' disabled' : '') +
+        (entry.actif ? ' active-ball' : ''), ui.bagList);
       cell.type = 'button';
       cell.disabled = entry.disabled;
       el('span', 'bi-icon', cell, entry.meta.icon);
       const info = el('span', 'bi-info', cell);
-      el('span', 'bi-name', info, entry.meta.name);
-      el('span', 'bi-desc', info, entry.meta.desc);
+      el('span', 'bi-name', info, entry.meta.name + (entry.actif ? '  ⭐' : ''));
+      el('span', 'bi-desc', info, entry.actif ? 'Ta Ball choisie (X pour changer)' : entry.meta.desc);
       el('span', 'bi-count', cell, '×' + entry.n);
       cell.title = entry.disabled ? 'Impossible de capturer ici.' : '';
       cell.addEventListener('mouseenter', function () { setBagCursor(i); });
@@ -1353,6 +1681,7 @@
     const boxHead = el('div', 'box-head', boxSection);
     el('h3', null, boxHead, 'La Boîte');
     ui.boxCount = el('span', 'box-count', boxHead, '');
+    el('span', 'box-tip', boxHead, '👆 Clique une créature pour la mettre dans ton équipe');
     ui.boxGrid = el('div', 'box-grid', boxSection);
     const pager = el('div', 'box-pager', boxSection);
     ui.boxPrev = el('button', null, pager, '◀ Page précédente');
@@ -1385,22 +1714,41 @@
       }
     });
 
+    // LE bouton de la demande n°1 de Robin : « je ne peux pas mettre les
+    // créatures de la boîte dans mon équipe ». Il est écrit noir sur blanc,
+    // à côté de son symétrique « Renvoyer à la Boîte », et il suffit de
+    // cliquer une créature de la Boîte pour qu'il s'allume.
+    ui.teamToTeamBtn = el('button', 'td-toteam', right, '⬆️ Mettre dans l’équipe');
+    ui.teamToTeamBtn.type = 'button';
+    ui.teamToTeamBtn.addEventListener('click', function () {
+      boxToTeam(boxPage * BOX_PAGE_SIZE + boxCursor);
+    });
+
     ui.teamDetailStats = el('div', 'td-stats', right);
     ui.teamDetailMoves = el('div', 'td-moves', right);
     ui.teamToBoxBtn = el('button', 'td-tobox', right, '↓ Renvoyer à la Boîte');
     ui.teamToBoxBtn.type = 'button';
     ui.teamToBoxBtn.addEventListener('click', function () {
       const api = TEAM();
-      if (api && teamSelected >= 0 && api.toBox(teamSelected)) {
+      if (!api) return;
+      // On accepte les DEUX gestes : une créature « en main » (teamSelected),
+      // ou simplement celle que le curseur désigne. Exiger la sélection
+      // préalable, c'était exactement le piège de la Boîte, à l'envers.
+      const idx = (teamSelected >= 0) ? teamSelected : (teamZone === 'team' ? teamCursor : -1);
+      if (idx < 0) return;
+      if (api.toBox(idx)) {
         teamSelected = -1;
         renderTeamScreen();
         toast('Créature renvoyée à la Boîte', '📦');
+      } else {
+        toast('Il faut garder au moins une créature avec toi !', '💛');
       }
     });
 
     const teamHint = el('p', 'hint', frame);
     teamHint.innerHTML = 'Flèches : choisir &nbsp;·&nbsp; <strong>A</strong> : envoyer au combat' +
-      ' &nbsp;·&nbsp; Espace : saisir/échanger &nbsp;·&nbsp; Échap : fermer';
+      ' &nbsp;·&nbsp; <strong>Espace</strong> sur une créature de la Boîte : la mettre dans ton équipe' +
+      ' &nbsp;·&nbsp; Échap : fermer';
 
     ov.addEventListener('click', function (ev) { if (ev.target === ov) closeTeam(); });
     ui.teamOverlay = ov;
@@ -1555,6 +1903,8 @@
       cell.appendChild(thumbFor(sp, 44));
       el('div', 'bs-name', cell, mon.nick || (sp && sp.name) || mon.id);
       el('div', 'bs-level', cell, 'Nv ' + mon.level);
+      el('div', 'bs-go', cell, '⬆️ Dans l’équipe');
+      cell.title = 'Clique pour mettre ' + monLabel(mon) + ' dans ton équipe';
       cell.classList.toggle('cursor', teamZone === 'box' && localIndex === boxCursor);
       cell.addEventListener('click', function () { teamZone = 'box'; boxCursor = localIndex; onBoxSlotActivate(idx); });
       cell.addEventListener('mouseenter', function () { moveTeamCursor('box', localIndex); });
@@ -1571,15 +1921,64 @@
     renderTeamScreen();
   }
 
+  /** Le nom qu'on affiche pour une créature (surnom, sinon nom d'espèce). */
+  function monLabel(mon) {
+    if (!mon) return 'Cette créature';
+    const sp = teamSlotLabel(mon);
+    return mon.nick || (sp && sp.name) || mon.id;
+  }
+
+  /**
+   * DEMANDE N°1 DE ROBIN — sortir une créature de la Boîte.
+   *
+   * L'ancienne version exigeait d'avoir d'abord sélectionné une place dans
+   * l'équipe, et refusait tout le reste du temps (« Choisis d'abord une place
+   * dans ton équipe »). Or `team.toTeam(boxIndex)` sait parfaitement ajouter
+   * tout seul tant que l'équipe compte moins de 6 créatures : on ne demande
+   * donc l'échange QUE quand l'équipe est vraiment pleine, et on dit alors
+   * précisément quoi faire.
+   */
+  function boxToTeam(absoluteIndex) {
+    const api = TEAM();
+    if (!api || typeof api.toTeam !== 'function') return false;
+    const mon = api.box[absoluteIndex];
+    if (!mon) return false;
+    const nom = monLabel(mon);
+    const plein = api.team.length >= TEAM_MAX();
+
+    if (!plein) {
+      // Cas normal et de loin le plus fréquent : il reste de la place.
+      if (api.toTeam(absoluteIndex)) {
+        teamSelected = -1;
+        renderTeamScreen();
+        toast(nom + ' rejoint ton équipe !', '⬆️');
+        return true;
+      }
+      return false;
+    }
+
+    // Équipe pleine : il FAUT désigner qui part à la Boîte.
+    if (teamSelected >= 0) {
+      const sortante = monLabel(api.team[teamSelected]);
+      if (api.toTeam(absoluteIndex, teamSelected)) {
+        teamSelected = -1;
+        renderTeamScreen();
+        toast(nom + ' remplace ' + sortante + ' !', '🔄');
+        return true;
+      }
+      teamSelected = -1;
+      renderTeamScreen();
+      return false;
+    }
+
+    toast('Ton équipe est pleine ! Clique d’abord la créature de ton équipe que tu veux remplacer.', '👆');
+    return false;
+  }
+
   function onBoxSlotActivate(absoluteIndex) {
     const api = TEAM();
     if (!api) return;
-    if (teamSelected >= 0) {
-      if (api.toTeam(absoluteIndex, teamSelected)) toast('Échange effectué !', '🔄');
-      teamSelected = -1;
-    } else {
-      toast('Choisis d’abord une place dans ton équipe.', 'ℹ️');
-    }
+    boxToTeam(absoluteIndex);
     renderTeamScreen();
   }
 
@@ -1599,6 +1998,7 @@
       ui.teamDetailStats.innerHTML = '';
       ui.teamDetailMoves.innerHTML = '';
       ui.teamToBoxBtn.disabled = true;
+      if (ui.teamToTeamBtn) { ui.teamToTeamBtn.disabled = true; hide(ui.teamToTeamBtn); }
       if (ui.teamActiveBtn) { ui.teamActiveBtn.disabled = true; ui.teamActiveBtn.textContent = '⚔️ Envoyer au combat'; }
       return;
     }
@@ -1626,6 +2026,30 @@
     });
 
     ui.teamToBoxBtn.disabled = !(teamZone === 'team' && api && api.team.length > 1);
+
+    // Le bouton « Mettre dans l'équipe » : visible dès qu'on regarde une
+    // créature de la Boîte, avec un libellé qui explique quoi faire quand
+    // l'équipe est pleine. C'est le geste que Robin doit trouver seul.
+    if (ui.teamToTeamBtn) {
+      const dansBoite = (teamZone === 'box');
+      ui.teamToTeamBtn.classList.toggle('hidden', !dansBoite);
+      if (dansBoite) {
+        const plein = api && api.team.length >= TEAM_MAX();
+        if (!plein) {
+          ui.teamToTeamBtn.disabled = false;
+          ui.teamToTeamBtn.textContent = '⬆️ Mettre dans l’équipe';
+          ui.teamToTeamBtn.title = 'Il reste de la place dans ton équipe !';
+        } else if (teamSelected >= 0) {
+          ui.teamToTeamBtn.disabled = false;
+          ui.teamToTeamBtn.textContent = '🔄 Remplacer ' + monLabel(api.team[teamSelected]);
+          ui.teamToTeamBtn.title = 'Échange les deux créatures.';
+        } else {
+          ui.teamToTeamBtn.disabled = true;
+          ui.teamToTeamBtn.textContent = '⬆️ Équipe pleine — choisis qui remplacer';
+          ui.teamToTeamBtn.title = 'Clique une créature de ton équipe, puis reviens ici.';
+        }
+      }
+    }
 
     if (ui.teamActiveBtn) {
       const actif = (api && typeof api.activeIndex === 'number') ? api.activeIndex : 0;
@@ -1778,7 +2202,9 @@
     const collection = (st && st.collection) || {};
 
     const list = dex.ALL.filter(function (sp) {
-      if (dexFilterType && sp.types.indexOf(dexFilterType) === -1) return false;
+      // typeMatches() et pas indexOf() : les espèces disent encore « foudre »
+      // et « ombre » là où le filtre dit « electrique » et « spectre ».
+      if (dexFilterType && !typeMatches(sp.types, dexFilterType)) return false;
       if (dexFilterRegion && sp.regions.indexOf(dexFilterRegion) === -1) return false;
       return true;
     });
@@ -2253,6 +2679,538 @@
   function onStarterPick(fn) { starterHandler = fn; }
 
   // ===========================================================================
+  //  BOUTIQUE DU CENTRE POKÉMON (CONTRAT3 §6 et §11.3 — demande n°8)
+  // ---------------------------------------------------------------------------
+  //  Le HUD n'achète rien et ne compte pas l'argent : il affiche l'étal que
+  //  game3d lui donne et rappelle onBuy / onSell. Toute la logique (prix,
+  //  porte-monnaie, stock) appartient à shop3d.js.
+  // ===========================================================================
+
+  const shopState = {
+    stock: [], owned: {}, welcome: '', mode: 'buy',
+    onBuy: null, onSell: null, onClose: null, qty: {},
+  };
+
+  function buildShopOverlay() {
+    const ov = el('div', 'overlay hidden', hudRoot);
+    ov.id = 'shop-overlay';
+    const frame = el('div', 'shop-frame', ov);
+
+    const head = el('div', 'shop-head', frame);
+    el('h2', null, head, '🛍️ La boutique du Centre');
+    ui.shopMoney = el('span', 'shop-money', head, '🪙 0');
+
+    ui.shopWelcome = el('p', 'shop-welcome', frame, '');
+
+    const tabs = el('div', 'shop-tabs', frame);
+    ui.shopTabBuy = el('button', null, tabs, '🛒 Acheter');
+    ui.shopTabSell = el('button', null, tabs, '💰 Vendre');
+    ui.shopTabBuy.type = 'button'; ui.shopTabSell.type = 'button';
+    ui.shopTabBuy.addEventListener('click', function () { setShopMode('buy'); });
+    ui.shopTabSell.addEventListener('click', function () { setShopMode('sell'); });
+
+    ui.shopGrid = el('div', 'shop-grid', frame);
+
+    el('p', 'hint', frame, 'Les flèches − et + choisissent la quantité · Échap : sortir de la boutique');
+    const close = el('button', 'shop-close', frame, 'Au revoir !');
+    close.type = 'button';
+    close.addEventListener('click', closeShop);
+    ov.addEventListener('click', function (ev) { if (ev.target === ov) closeShop(); });
+    ui.shopOverlay = ov;
+  }
+
+  function setShopMode(mode) {
+    shopState.mode = (mode === 'sell') ? 'sell' : 'buy';
+    if (ui.shopTabBuy) ui.shopTabBuy.classList.toggle('on', shopState.mode === 'buy');
+    if (ui.shopTabSell) ui.shopTabSell.classList.toggle('on', shopState.mode === 'sell');
+    renderShopGrid();
+  }
+
+  /** Le sac de référence : celui que la boutique a fourni, sinon celui du HUD. */
+  function shopInventory() {
+    return (shopState.owned && Object.keys(shopState.owned).length) ? shopState.owned : (hudItems || {});
+  }
+
+  function shopOwned(id) {
+    const inv = shopInventory();
+    return (inv && inv[id]) | 0;
+  }
+
+  function sellPriceOf(item) {
+    const shop = SHOP();
+    if (shop && typeof shop.sellPriceOf === 'function') {
+      try { return shop.sellPriceOf(item.id) | 0; } catch (e) { /* repli */ }
+    }
+    return Math.floor((item.price || 0) / 2);
+  }
+
+  function shopQty(id) { return Math.max(1, shopState.qty[id] || 1); }
+
+  function renderShopGrid() {
+    if (!ui.shopGrid) return;
+    ui.shopGrid.innerHTML = '';
+    if (ui.shopMoney) ui.shopMoney.textContent = '🪙 ' + hudMoney;
+
+    const vente = (shopState.mode === 'sell');
+    let liste;
+    if (vente) {
+      // On ne vend que ce qu'on possède, et jamais sa dernière Pokéball.
+      liste = [];
+      const vus = {};
+      const source = shopState.stock.slice();
+      const inv = shopInventory();
+      Object.keys(inv).forEach(function (id) {
+        if (!source.some(function (it) { return it && it.id === id; })) source.push(itemMeta(id));
+      });
+      source.forEach(function (it) {
+        if (!it || vus[it.id]) return;
+        vus[it.id] = true;
+        if (shopOwned(it.id) <= 0) return;
+        if (!it.price) return;                 // la Ball Maîtresse ne se revend pas
+        liste.push(it);
+      });
+    } else {
+      liste = shopState.stock.filter(function (it) { return it && it.price > 0; });
+    }
+
+    if (!liste.length) {
+      el('p', 'shop-empty', ui.shopGrid, vente
+        ? 'Tu n’as rien à vendre pour l’instant — garde tes trésors !'
+        : 'L’étal est vide aujourd’hui. Reviens plus tard !');
+      return;
+    }
+
+    liste.forEach(function (item) {
+      const prix = vente ? sellPriceOf(item) : (item.price | 0);
+      const possede = shopOwned(item.id);
+      const card = el('div', 'shop-card', ui.shopGrid);
+      card.style.setProperty('--item-color', item.color || '#41a6f6');
+
+      const top = el('div', 'sc-top', card);
+      el('span', 'sc-icon', top, item.icon || '🎁');
+      const titre = el('span', 'sc-titles', top);
+      el('span', 'sc-name', titre, item.name || item.id);
+      el('span', 'sc-price', titre, '🪙 ' + prix + (vente ? ' à la revente' : ''));
+
+      el('p', 'sc-desc', card, item.description || '');
+      if (item.tagline) el('p', 'sc-tag', card, '« ' + item.tagline + ' »');
+      el('div', 'sc-owned', card, possede > 0 ? ('Tu en as déjà ' + possede) : 'Tu n’en as pas encore');
+
+      // Réglage de la quantité : deux gros boutons, pas un champ de saisie.
+      const rowQ = el('div', 'sc-qty', card);
+      const moins = el('button', 'sc-step', rowQ, '−');
+      const nb = el('span', 'sc-n', rowQ, String(shopQty(item.id)));
+      const plus = el('button', 'sc-step', rowQ, '+');
+      moins.type = 'button'; plus.type = 'button';
+
+      const maxi = function () {
+        if (vente) return Math.max(1, possede);
+        return Math.max(1, prix > 0 ? Math.floor(hudMoney / prix) : 1);
+      };
+      const bouton = el('button', 'sc-buy', card, '');
+      bouton.type = 'button';
+
+      const refresh = function () {
+        const q = Math.min(shopQty(item.id), Math.max(1, maxi()));
+        shopState.qty[item.id] = q;
+        nb.textContent = String(q);
+        const total = prix * q;
+        if (vente) {
+          bouton.textContent = '💰 Vendre ×' + q + '  (+' + total + ')';
+          bouton.disabled = possede < q;
+        } else {
+          bouton.textContent = '🛒 Acheter ×' + q + '  (−' + total + ')';
+          bouton.disabled = total > hudMoney;
+        }
+        bouton.classList.toggle('disabled', bouton.disabled);
+        moins.disabled = q <= 1;
+        plus.disabled = q >= maxi();
+      };
+
+      moins.addEventListener('click', function () { shopState.qty[item.id] = shopQty(item.id) - 1; refresh(); });
+      plus.addEventListener('click', function () { shopState.qty[item.id] = shopQty(item.id) + 1; refresh(); });
+      bouton.addEventListener('click', function () {
+        const q = shopQty(item.id);
+        const cb = vente ? shopState.onSell : shopState.onBuy;
+        if (typeof cb !== 'function') { toast('La caisse est fermée…', '🔒'); return; }
+        try { cb(item.id, q); } catch (e) { console.warn('[hud3d] boutique :', e); }
+        shopState.qty[item.id] = 1;
+        renderShopGrid();
+      });
+      refresh();
+    });
+  }
+
+  /**
+   * @param {object} o { welcome, stock:[item], money, owned:{id:qty},
+   *                     onBuy(id,qty), onSell(id,qty), onClose() }
+   */
+  function openShop(o) {
+    if (!ui.shopOverlay) return;
+    o = o || {};
+    shopState.stock = Array.isArray(o.stock) ? o.stock.slice() : [];
+    // On accepte aussi une simple liste d'ids : le HUD sait retrouver l'objet.
+    shopState.stock = shopState.stock.map(function (it) {
+      return (typeof it === 'string') ? itemMeta(it) : it;
+    });
+    shopState.owned = (o.owned && typeof o.owned === 'object') ? o.owned : {};
+    shopState.welcome = o.welcome || '';
+    shopState.onBuy = (typeof o.onBuy === 'function') ? o.onBuy : null;
+    shopState.onSell = (typeof o.onSell === 'function') ? o.onSell : null;
+    shopState.onClose = (typeof o.onClose === 'function') ? o.onClose : null;
+    shopState.qty = {};
+    if (typeof o.money === 'number') setMoney(o.money);
+
+    if (!shopState.welcome) {
+      const shop = SHOP();
+      if (shop && typeof shop.shopWelcome === 'function') {
+        try { shopState.welcome = shop.shopWelcome(); } catch (e) { /* tant pis */ }
+      }
+    }
+    ui.shopWelcome.textContent = shopState.welcome || 'Bienvenue ! Tout ce qu’il te faut pour l’aventure.';
+
+    setShopMode('buy');
+    show(ui.shopOverlay);
+    replayAnim(ui.shopOverlay, 'overlay');
+    showCompass(false);
+  }
+
+  function closeShop() {
+    if (!ui.shopOverlay || ui.shopOverlay.classList.contains('hidden')) return;
+    hide(ui.shopOverlay);
+    showCompass(true);
+    const cb = shopState.onClose;
+    shopState.onClose = null;
+    if (cb) { try { cb(); } catch (e) { console.warn('[hud3d] fermeture de la boutique :', e); } }
+  }
+
+  // ===========================================================================
+  //  JOURNAL DE QUÊTE (touche J) — CONTRAT3 §5 et §11.3, demande n°3
+  // ===========================================================================
+
+  const QUEST_ETAT = {
+    inconnue: { label: 'Pas encore entendue', cls: 'inconnue', icon: '❔' },
+    entendue: { label: 'La légende court…', cls: 'entendue', icon: '👂' },
+    ouverte: { label: 'Le sanctuaire est ouvert !', cls: 'ouverte', icon: '🔓' },
+    accomplie: { label: 'Quête accomplie !', cls: 'accomplie', icon: '🏆' },
+  };
+
+  function buildJournalOverlay() {
+    const ov = el('div', 'overlay hidden', hudRoot);
+    ov.id = 'journal-overlay';
+    const frame = el('div', 'journal-frame', ov);
+    el('h2', null, frame, '📖 Le journal des légendes');
+    ui.journalList = el('div', 'journal-list', frame);
+    el('p', 'hint', frame, 'J ou Échap : refermer le journal');
+    ov.addEventListener('click', function (ev) { if (ev.target === ov) closeJournal(); });
+    ui.journalOverlay = ov;
+  }
+
+  /** @param {Array} entries — exactement le tableau rendu par quest.journal() */
+  function openJournal(entries) {
+    if (!ui.journalOverlay) return;
+    let list = Array.isArray(entries) ? entries : null;
+    if (!list) {
+      const q = R3ref.get('quest');
+      if (q && typeof q.journal === 'function') {
+        try { list = q.journal(); } catch (e) { list = null; }
+      }
+    }
+    ui.journalList.innerHTML = '';
+    if (!list || !list.length) {
+      el('p', 'hint', ui.journalList, 'Ton journal est encore vide. Parle aux gens des villages !');
+    } else {
+      list.forEach(function (q) {
+        const etat = QUEST_ETAT[q.etat] || QUEST_ETAT.inconnue;
+        const card = el('div', 'quest-card ' + etat.cls, ui.journalList);
+        card.style.setProperty('--quest-color', q.couleur || '#f1c40f');
+
+        const head = el('div', 'qc-head', card);
+        el('span', 'qc-icon', head, q.icone || '🏅');
+        const t = el('span', 'qc-titles', head);
+        el('span', 'qc-title', t, q.titre || 'Quête');
+        el('span', 'qc-region', t, q.regionName || regionName(q.region));
+        el('span', 'qc-state', head, etat.icon + ' ' + etat.label);
+
+        el('p', 'qc-line', card, q.ligne || '');
+        if (q.sanctuaire) el('p', 'qc-sanct', card, '⛩️ ' + q.sanctuaire);
+
+        // Une petite barre de progression : « où en suis-je ? » en un coup d'œil.
+        const total = q.total | 0;
+        if (total > 0) {
+          const pris = Math.min(total, q.captures | 0);
+          const bar = el('div', 'qc-bar', card);
+          const fill = el('div', 'qc-bar-fill', bar);
+          fill.style.width = Math.round((pris / total) * 100) + '%';
+          el('span', 'qc-count', card, '✨ ' + pris + ' / ' + total + ' légendaires');
+        }
+        if (q.fait) el('div', 'qc-done', card, '🏆 Bravo, cette légende est complète !');
+      });
+    }
+    show(ui.journalOverlay);
+    replayAnim(ui.journalOverlay, 'overlay');
+    showCompass(false);
+  }
+
+  function closeJournal() { hide(ui.journalOverlay); showCompass(true); }
+
+  // ===========================================================================
+  //  ÉVOLUTION (CONTRAT3 §11.3 — demande n°4)
+  // ---------------------------------------------------------------------------
+  //  2,5 secondes exactement, plein écran, NON interruptible : c'est le moment
+  //  de gloire de la créature, on le laisse jouer jusqu'au bout. Le HUD avale
+  //  les touches pendant ce temps-là (voir onGlobalKeydown).
+  // ===========================================================================
+
+  let evoBusy = false;
+  let evoPendingDone = null;     // le onDone de l'évolution en cours
+  const EVO_TIMERS = [];
+
+  function buildEvolutionOverlay() {
+    const ov = el('div', 'evo-overlay hidden', hudRoot);
+    const stage = el('div', 'evo-stage', ov);
+    ui.evoThumb = el('div', 'evo-thumb', stage);
+    ui.evoFlash = el('div', 'evo-flash', stage);
+    ui.evoTitle = el('div', 'evo-title', ov, '');
+    ui.evoText = el('div', 'evo-text', ov, '');
+    ui.evoStage = stage;
+    ui.evoOverlay = ov;
+  }
+
+  function evoClearTimers() {
+    while (EVO_TIMERS.length) clearTimeout(EVO_TIMERS.pop());
+  }
+
+  function evoThumbOf(speciesId) {
+    const dex = DEX();
+    let sp = null;
+    if (dex && typeof dex.get === 'function') {
+      try { sp = dex.get(speciesId); } catch (e) { sp = null; }
+    }
+    return thumbFor(sp, 168);
+  }
+
+  /**
+   * @param {object} o { fromName, toName, message, speciesId, fromSpeciesId, onDone() }
+   */
+  function showEvolution(o) {
+    o = o || {};
+    const fini = function () {
+      if (typeof o.onDone === 'function') {
+        try { o.onDone(); } catch (e) { console.warn('[hud3d] fin d’évolution :', e); }
+      }
+    };
+    if (!ui.evoOverlay) { fini(); return; }
+    // Deux évolutions d'affilée (une équipe qui monte de plusieurs niveaux) :
+    // on enchaîne, mais on n'oublie JAMAIS de rendre la main sur la première,
+    // sinon game3d resterait à attendre un onDone qui ne viendrait pas.
+    evoClearTimers();
+    if (evoPendingDone) {
+      const precedent = evoPendingDone;
+      evoPendingDone = null;
+      try { precedent(); } catch (e) { console.warn('[hud3d] fin d’évolution :', e); }
+    }
+    evoBusy = true;
+    evoPendingDone = fini;
+
+    const de = o.fromName || 'Ta créature';
+    const vers = o.toName || 'sa nouvelle forme';
+
+    ui.evoThumb.innerHTML = '';
+    ui.evoThumb.appendChild(o.fromSpeciesId ? evoThumbOf(o.fromSpeciesId) : evoThumbOf(o.speciesId));
+    ui.evoTitle.textContent = 'Que se passe-t-il ?';
+    ui.evoText.textContent = de + ' se met à briller…';
+
+    ui.evoStage.className = 'evo-stage phase-blanchit';
+    show(ui.evoOverlay);
+    replayAnim(ui.evoOverlay, 'evo-overlay');
+
+    // 1,2 s : l'éclat blanc, et on échange la silhouette contre la nouvelle.
+    EVO_TIMERS.push(setTimeout(function () {
+      ui.evoStage.className = 'evo-stage phase-eclat';
+      ui.evoThumb.innerHTML = '';
+      ui.evoThumb.appendChild(evoThumbOf(o.speciesId));
+    }, 1200));
+
+    // 1,7 s : la révélation.
+    EVO_TIMERS.push(setTimeout(function () {
+      ui.evoStage.className = 'evo-stage phase-revele';
+      ui.evoTitle.textContent = '✨ ' + vers + ' ✨';
+      ui.evoText.textContent = o.message || (de + ' a évolué en ' + vers + ' !');
+    }, 1700));
+
+    // 2,5 s : rideau. Jamais plus, jamais moins.
+    EVO_TIMERS.push(setTimeout(function () {
+      hide(ui.evoOverlay);
+      evoBusy = false;
+      evoPendingDone = null;
+      fini();
+    }, 2500));
+  }
+
+  function evolutionBusy() { return evoBusy; }
+
+  // ===========================================================================
+  //  ACADÉMIE — choix du type Téra (CONTRAT3 §7, demande n°10)
+  // ---------------------------------------------------------------------------
+  //  Les types sont TOUJOURS itérés depuis la table vivante (o.types, sinon
+  //  types.ORDER, sinon le repli du haut de ce fichier) : le nombre de types
+  //  n'est jamais écrit en dur, il en restera 19 aujourd'hui et davantage
+  //  demain sans toucher une ligne d'ici.
+  // ===========================================================================
+
+  const academyState = { unlocked: false, types: null, team: [], onUnlock: null, onPick: null, onClose: null, pick: null };
+
+  function buildAcademyOverlay() {
+    const ov = el('div', 'overlay hidden', hudRoot);
+    ov.id = 'academy-overlay';
+    const frame = el('div', 'academy-frame', ov);
+    el('h2', null, frame, '🏰 L’Académie de Téracristallisation');
+    ui.academyIntro = el('p', 'academy-intro', frame, '');
+
+    ui.academyLock = el('div', 'academy-lock', frame);
+    el('p', null, ui.academyLock,
+      'Ici, on apprend à faire briller sa créature comme un cristal : elle change de type, ' +
+      'frappe plus fort et encaisse mieux, une fois par combat.');
+    ui.academyUnlockBtn = el('button', null, ui.academyLock, '💎 Apprendre la Téracristallisation !');
+    ui.academyUnlockBtn.type = 'button';
+    ui.academyUnlockBtn.addEventListener('click', function () {
+      if (typeof academyState.onUnlock === 'function') {
+        try { academyState.onUnlock(); } catch (e) { console.warn('[hud3d] académie :', e); }
+      }
+      academyState.unlocked = true;
+      renderAcademy();
+      toast('Tu sais Téracristalliser ! Choisis un type pour tes créatures.', '💎');
+    });
+
+    const body = el('div', 'academy-body', frame);
+    const left = el('div', 'academy-team', body);
+    el('h3', null, left, 'Quelle créature veux-tu former ?');
+    ui.academyTeamGrid = el('div', 'academy-team-grid', left);
+    const right = el('div', 'academy-types', body);
+    el('h3', null, right, 'Choisis son type Téra');
+    ui.academyTypeGrid = el('div', 'academy-type-grid', right);
+    ui.academyBody = body;
+
+    el('p', 'hint', frame, 'Échap : quitter l’Académie');
+    const close = el('button', null, frame, 'Merci, au revoir !');
+    close.type = 'button';
+    close.addEventListener('click', closeAcademy);
+    ov.addEventListener('click', function (ev) { if (ev.target === ov) closeAcademy(); });
+    ui.academyOverlay = ov;
+  }
+
+  /** La liste des types à proposer — jamais un nombre écrit en dur. */
+  function academyTypeList() {
+    if (Array.isArray(academyState.types) && academyState.types.length) return academyState.types;
+    return typeOrder().map(function (id) {
+      const t = typeInfo(id);
+      return { id: id, label: t.label, color: t.color, icon: t.icon };
+    });
+  }
+
+  function monUid(mon) { return (mon && (mon.uid || mon.id)) || null; }
+
+  function renderAcademy() {
+    if (!ui.academyOverlay) return;
+    const dev = academyState.unlocked;
+    ui.academyLock.classList.toggle('hidden', dev);
+    ui.academyBody.classList.toggle('hidden', !dev);
+    ui.academyIntro.textContent = dev
+      ? 'Un maître cristallier peut changer le type Téra d’une créature — une seule fois par visite.'
+      : 'Le grand château aux quatre tours… c’est ici qu’on apprend le secret des cristaux.';
+    if (!dev) return;
+
+    const tera = R3ref.get('tera');
+    const equipe = academyState.team.length ? academyState.team : ((TEAM() && TEAM().team) || []);
+
+    // --- la colonne des créatures ---
+    ui.academyTeamGrid.innerHTML = '';
+    if (!equipe.length) {
+      el('p', 'hint', ui.academyTeamGrid, 'Tu n’as aucune créature à former.');
+    }
+    equipe.forEach(function (mon) {
+      const sp = teamSlotLabel(mon);
+      let libre = true;
+      if (tera && typeof tera.canSetTeraType === 'function') {
+        try { libre = !!tera.canSetTeraType(mon); } catch (e) { libre = true; }
+      }
+      let actuel = null;
+      if (tera && typeof tera.teraTypeOf === 'function') {
+        try { actuel = tera.teraTypeOf(mon); } catch (e) { actuel = mon.teraType || null; }
+      } else actuel = mon.teraType || (mon.types && mon.types[0]) || null;
+
+      const card = el('button', 'academy-mon' + (libre ? '' : ' servie') +
+        (monUid(mon) === academyState.pick ? ' choisie' : ''), ui.academyTeamGrid);
+      card.type = 'button';
+      card.appendChild(thumbFor(sp, 56));
+      el('div', 'am-name', card, monLabel(mon));
+      const badge = el('div', 'am-tera', card);
+      badge.appendChild(typeBadge(actuel, true));
+      if (!libre) el('div', 'am-note', card, 'Déjà formée aujourd’hui');
+      card.disabled = !libre;
+      card.addEventListener('click', function () {
+        academyState.pick = monUid(mon);
+        renderAcademy();
+      });
+    });
+
+    // --- la colonne des types ---
+    ui.academyTypeGrid.innerHTML = '';
+    const choisi = academyState.pick;
+    academyTypeList().forEach(function (t) {
+      const b = el('button', 'academy-type', ui.academyTypeGrid);
+      b.type = 'button';
+      b.style.setProperty('--type-color', t.color || typeInfo(t.id).color);
+      el('span', 'at-icon', b, t.icon || typeInfo(t.id).icon || '◇');
+      el('span', 'at-label', b, t.label || typeInfo(t.id).label || t.id);
+      b.disabled = !choisi;
+      b.title = choisi ? 'Donner le type ' + (t.label || t.id) : 'Choisis d’abord une créature à gauche.';
+      b.addEventListener('click', function () {
+        if (!choisi) { toast('Choisis d’abord une créature à gauche !', '👈'); return; }
+        if (typeof academyState.onPick === 'function') {
+          try { academyState.onPick(choisi, t.id); } catch (e) { console.warn('[hud3d] académie :', e); }
+        }
+        academyState.pick = null;
+        renderAcademy();
+      });
+    });
+  }
+
+  /**
+   * @param {object} o { unlocked, types, team, onUnlock(), onPick(uid,typeId), onClose() }
+   */
+  function openAcademy(o) {
+    if (!ui.academyOverlay) return;
+    o = o || {};
+    const tera = R3ref.get('tera');
+    let dev = o.unlocked;
+    if (dev === undefined && tera && typeof tera.isUnlocked === 'function') {
+      try { dev = tera.isUnlocked(); } catch (e) { dev = false; }
+    }
+    academyState.unlocked = !!dev;
+    academyState.types = Array.isArray(o.types) && o.types.length ? o.types : null;
+    academyState.team = Array.isArray(o.team) ? o.team.slice() : [];
+    academyState.onUnlock = (typeof o.onUnlock === 'function') ? o.onUnlock : null;
+    academyState.onPick = (typeof o.onPick === 'function') ? o.onPick : null;
+    academyState.onClose = (typeof o.onClose === 'function') ? o.onClose : null;
+    academyState.pick = null;
+    renderAcademy();
+    show(ui.academyOverlay);
+    replayAnim(ui.academyOverlay, 'overlay');
+    showCompass(false);
+  }
+
+  function closeAcademy() {
+    if (!ui.academyOverlay || ui.academyOverlay.classList.contains('hidden')) return;
+    hide(ui.academyOverlay);
+    showCompass(true);
+    const cb = academyState.onClose;
+    academyState.onClose = null;
+    if (cb) { try { cb(); } catch (e) { console.warn('[hud3d] fermeture de l’académie :', e); } }
+  }
+
+  // ===========================================================================
   //  DIVERS : FPS, toasts, bouton muet, astuce de commandes
   // ===========================================================================
 
@@ -2309,9 +3267,67 @@
   //  dans le monde pendant que l'écran Équipe est ouvert.
   // ===========================================================================
 
+  /** Un écran plein est-il ouvert ? (on n'y lance pas de Ball, par exemple) */
+  function anyOverlayOpen() {
+    const l = [ui.teamOverlay, ui.dexOverlay, ui.mapOverlay, ui.airshipOverlay,
+      ui.shopOverlay, ui.journalOverlay, ui.academyOverlay];
+    for (let i = 0; i < l.length; i++) {
+      if (l[i] && !l[i].classList.contains('hidden')) return true;
+    }
+    const col = $('collection-overlay');
+    if (col && !col.classList.contains('hidden')) return true;
+    return false;
+  }
+
   function onGlobalKeydown(ev) {
     const key = ev.key;
 
+    // L'évolution est un moment de gloire : rien ne l'interrompt, pas même Échap.
+    if (evoBusy) { ev.preventDefault(); ev.stopPropagation(); return; }
+
+    // --- la touche X : changer de Ball (CONTRAT3 §11.2) ---------------------
+    // Le HUD la consomme entièrement (stopPropagation) pour qu'aucun autre
+    // module ne fasse tourner la sélection une deuxième fois dans la foulée.
+    if ((key === 'x' || key === 'X') && !ev.ctrlKey && !ev.altKey && !ev.metaKey) {
+      const cible = ev.target;
+      const saisie = cible && (cible.tagName === 'INPUT' || cible.tagName === 'TEXTAREA');
+      if (!saisie && !anyOverlayOpen()) {
+        cycleBall(1);
+        ev.preventDefault();
+        ev.stopPropagation();
+        return;
+      }
+    }
+
+    // --- la touche J : le journal des légendes (CONTRAT3 §11.3) -------------
+    // Le HUD l'ouvre lui-même en lisant quest.journal() : ainsi elle marche
+    // même si game3d ne l'a pas branchée. game3d peut toujours appeler
+    // hud.openJournal(entries) de son côté quand il veut fournir les données.
+    if ((key === 'j' || key === 'J') && !ev.ctrlKey && !ev.altKey && !ev.metaKey) {
+      const cible2 = ev.target;
+      const saisie2 = cible2 && (cible2.tagName === 'INPUT' || cible2.tagName === 'TEXTAREA');
+      if (!saisie2 && !anyOverlayOpen() && !liveBattle) {
+        openJournal(null);
+        ev.preventDefault();
+        ev.stopPropagation();
+        return;
+      }
+    }
+
+    if (ui.shopOverlay && !ui.shopOverlay.classList.contains('hidden')) {
+      if (key === 'Escape') { closeShop(); ev.preventDefault(); ev.stopPropagation(); }
+      return;
+    }
+    if (ui.journalOverlay && !ui.journalOverlay.classList.contains('hidden')) {
+      if (key === 'Escape' || key === 'j' || key === 'J') {
+        closeJournal(); ev.preventDefault(); ev.stopPropagation();
+      }
+      return;
+    }
+    if (ui.academyOverlay && !ui.academyOverlay.classList.contains('hidden')) {
+      if (key === 'Escape') { closeAcademy(); ev.preventDefault(); ev.stopPropagation(); }
+      return;
+    }
     if (ui.teamOverlay && !ui.teamOverlay.classList.contains('hidden')) {
       if (key === 'Escape') { closeTeam(); fakeKey('Escape'); return; }
       if (teamHandleKey(ev)) { ev.preventDefault(); ev.stopPropagation(); return; }
@@ -2380,6 +3396,29 @@
     setCollectionCount: setCollectionCount,
     showAimReticle: showAimReticle,
     showBallCount: showBallCount,
+
+    // --- CONTRAT3 §11 : argent, Balls, boutique, journal, évolution, Téra ---
+    setMoney: setMoney,
+    money: money,
+    showMoney: showMoney,
+    setActiveBall: setActiveBall,
+    activeBall: activeBall,
+    setBallInventory: setBallInventory,
+    cycleBall: cycleBall,
+    onBallChange: onBallChange,
+
+    openShop: openShop,
+    closeShop: closeShop,
+
+    openJournal: openJournal,
+    closeJournal: closeJournal,
+
+    showEvolution: showEvolution,
+    evolutionBusy: evolutionBusy,
+
+    openAcademy: openAcademy,
+    closeAcademy: closeAcademy,
+    setTeraState: setTeraState,
 
     // dirigeable (§17 bis)
     openAirshipMenu: openAirshipMenu,
