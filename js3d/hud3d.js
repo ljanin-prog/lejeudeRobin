@@ -2454,11 +2454,15 @@
     // Marqueurs HTML par-dessus le canvas, positionnés en pourcentage.
     ui.mapOverlayMarkers.innerHTML = '';
     const def = (R && typeof R.active === 'function') ? R.active() : null;
-    const addMarker = function (x, y, cls, icon, label) {
-      const m = el('div', 'map-marker ' + cls, ui.mapOverlayMarkers);
+    // `nomme` : le nom du lieu est écrit À CÔTÉ du marqueur, pas seulement en
+    // infobulle. Un émoji de 15 px sans légende ne se remarque pas — c'est
+    // pour ça que Robin ne trouvait ni l'Académie ni les Centres.
+    const addMarker = function (x, y, cls, icon, label, nomme) {
+      const m = el('div', 'map-marker ' + cls + (nomme ? ' nomme' : ''), ui.mapOverlayMarkers);
       m.style.left = (x / W * 100) + '%';
       m.style.top = (y / H * 100) + '%';
-      m.textContent = icon;
+      el('span', 'mk-icon', m, icon);
+      if (nomme && label) el('span', 'mk-label', m, label);
       if (label) m.title = label;
     };
 
@@ -2468,9 +2472,22 @@
     try {
       const cities = CITIES();
       const plan = cities && typeof cities.plan === 'function' ? cities.plan(regionId) : null;
-      if (plan) {
-        if (plan.arena) addMarker(plan.arena.x, plan.arena.y, 'arena', '⚔️', 'Arène');
-        if (plan.castle) addMarker(plan.castle.x, plan.castle.y, 'city', '🏰', plan.name || 'Ville');
+      if (plan && plan.castle) {
+        addMarker(plan.castle.x, plan.castle.y, 'city', '🏰', plan.name || 'Ville');
+      }
+      // Les lieux qui SERVENT vraiment au joueur — Centre Pokémon, arène,
+      // Académie. `cities.beacons()` les fournit tous les trois depuis le
+      // début, mais personne ne l'appelait : ni le Centre ni l'Académie
+      // n'apparaissaient sur la carte, et Robin ne les trouvait pas.
+      const reperes = (cities && typeof cities.beacons === 'function')
+        ? cities.beacons(regionId) : null;
+      if (Array.isArray(reperes) && reperes.length) {
+        reperes.forEach(function (b) {
+          if (typeof b.x !== 'number' || typeof b.y !== 'number') return;
+          addMarker(b.x, b.y, b.kind || 'lieu', b.icon || '📌', b.label || '', true);
+        });
+      } else if (plan && plan.arena) {
+        addMarker(plan.arena.x, plan.arena.y, 'arena', '⚔️', 'Arène');
       }
     } catch (e) { /* dégradation silencieuse */ }
     try {
@@ -2492,12 +2509,25 @@
     const R = REGIONS();
     const visited = (st && st.visitedRegions) || {};
     const currentId = (R && typeof R.activeId === 'function' && R.activeId()) || (st && st.regionId) || 'val';
+    // Quelle région abrite l'Académie ? Il n'y en a qu'une dans tout le jeu, et
+    // rien ne le disait nulle part : Robin l'a cherchée sans savoir qu'elle
+    // n'était pas dans la sienne. La carte du monde le dit maintenant.
+    let regionAcademie = null;
+    try {
+      const C = CITIES();
+      if (C && typeof C.academyDoorTile === 'function') {
+        const d = C.academyDoorTile();
+        if (d && d.regionId) regionAcademie = d.regionId;
+      }
+    } catch (e) { /* la carte marche très bien sans */ }
+
     const out = {};
     Object.keys(WORLD_GRID).forEach(function (id) {
       out[id] = {
         current: id === currentId,
         visited: !!visited[id] || id === 'val',
-        label: regionName(id),
+        label: regionName(id) + (id === regionAcademie ? '  🔮' : ''),
+        academy: id === regionAcademie,
         icon: '📍',
       };
     });
@@ -2508,7 +2538,10 @@
     if (!ui.mapWorldGrid) return;
     const states = worldRegionStates();
     buildWorldGrid(ui.mapWorldGrid, states, function (id, st) {
-      toast(st.label + (st.current ? ' — tu y es !' : (st.visited ? ' — déjà explorée' : ' — pas encore explorée')), '🗺️');
+      const ou = st.current ? ' — tu y es !'
+        : (st.visited ? ' — déjà explorée' : ' — pas encore explorée');
+      const plus = st.academy ? '\n🔮 C’est ici qu’on apprend la Téracristallisation !' : '';
+      toast(st.label + ou + plus, '🗺️');
     });
   }
 

@@ -1335,6 +1335,24 @@ html, body {
   filter: drop-shadow(0 2px 3px rgba(0,0,0,.6));
 }
 .map-marker.player { font-size: 20px; }
+
+/* Marqueurs NOMMÉS : Centre Pokémon, arène, Académie. Un émoji seul, à 15 px,
+   ne se remarque pas sur une carte — Robin cherchait l'Académie sans la voir.
+   On écrit donc le nom du lieu juste à côté. */
+.map-marker.nomme { display: flex; align-items: center; gap: 3px; white-space: nowrap; }
+.map-marker.nomme .mk-icon { font-size: 18px; }
+.map-marker.nomme .mk-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(26, 28, 44, .82);
+  padding: 1px 6px;
+  border-radius: 8px;
+  text-shadow: 0 1px 2px rgba(0,0,0,.9);
+}
+.map-marker.academy .mk-label { background: rgba(122, 92, 191, .92); }
+.map-marker.center  .mk-label { background: rgba(255, 107, 157, .92); }
+.map-marker.arena   .mk-label { background: rgba(255, 107, 61, .92); }
 .map-marker.player.blink { opacity: .55; }
 
 .map-legend {

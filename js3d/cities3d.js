@@ -1918,8 +1918,11 @@
     }
     if (d.academy) {
       out.push({
+        // 🔮 et non 🏰 : sur la carte, le château de la ville porte déjà 🏰, et
+        // deux tours identiques ne s'y retrouvent pas. Le cristal dit en plus
+        // ce qu'on vient y apprendre.
         kind: 'academy', x: d.academy.x, y: d.academy.y,
-        label: d.academy.name, icon: '🏰', color: '#a678f0',
+        label: d.academy.name, icon: '🔮', color: '#a678f0',
       });
     }
     return out;
