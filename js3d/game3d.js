@@ -97,6 +97,9 @@
   // qui leur va très bien.
   const FPS_SPEED = 4.6;          // unités par seconde (une tuile = une unité)
   const FPS_RADIUS = 0.34;        // demi-gabarit du joueur, pour les collisions
+  const FPS_TAP_MS = 220;         // au-delà, la touche est « maintenue » et la
+                                  // rotation devient libre au lieu de s'arrêter
+                                  // au quart de tour
   const TURN_ORDER = ['up', 'right', 'down', 'left'];   // sens des aiguilles
   const DIR_STEP = {
     up: { dx: 0, dz: -1 }, down: { dx: 0, dz: 1 },
@@ -1040,15 +1043,72 @@
    * c'est ce qui permet à toute la mécanique de grille (le pas, les portes, les
    * PNJ) de rester exactement la même qu'avant.
    */
-  function updateFpsTurn(dtMs) {
-    const l = state.input.left, r = state.input.right;
-    if (l === r) return;                          // rien, ou les deux à la fois
-    const a = normalizeYaw(fpsYaw() + (l ? -1 : 1) * FPS_TURN_SPEED * (dtMs / 1000));
-    state.player.fpsYaw = a;
-    const nd = dirFromYaw(a);
+  // --- état de la rotation en vue subjective ---------------------------------
+  let fpsTurnCible = null;    // yaw visé par un quart de tour déclenché au tap
+  let fpsTurnTenue = 0;       // depuis combien de ms la touche est maintenue
+  let fpsTurnAvant = 0;       // sens de la touche à l'image précédente (front montant)
+
+  /** Le cran de 90° suivant, dans le sens demandé. */
+  function cranSuivant(a, sens) {
+    // On part du cran le PLUS PROCHE : si l'on est à 80°, un quart de tour à
+    // droite doit mener à 0°, pas à −10°.
+    const cran = Math.round(a / (Math.PI / 2)) * (Math.PI / 2);
+    return cran + sens * (Math.PI / 2);
+  }
+
+  function poseYaw(a) {
+    state.player.fpsYaw = normalizeYaw(a);
+    const nd = dirFromYaw(state.player.fpsYaw);
     if (nd !== state.player.dir) {
       state.player.dir = nd;
       refreshCompass();     // la boussole ne bouge qu'aux changements de cardinale
+    }
+  }
+
+  /**
+   * Rotation de la vue subjective — deux gestes, un seul mécanisme.
+   *
+   * SENS : `TURN_ORDER` est déclaré « sens des aiguilles » et vaut
+   * up → right → down → left, soit les angles π → π/2 → 0 → −π/2. Tourner à
+   * DROITE fait donc DÉCROÎTRE le yaw. Le contraire (ce que faisait la première
+   * version) inverse les commandes : la flèche droite tournait à gauche.
+   *
+   * GESTE : une rotation purement continue ne bouge que tant qu'on maintient la
+   * touche — un appui bref de 50 ms ne fait pivoter que de 8°, invisible, d'où
+   * l'impression qu'« une fois sur deux ça ne marche pas ». On garde donc les
+   * deux : un APPUI BREF donne un quart de tour net (animé, mené à son terme
+   * même si la touche est relâchée), un APPUI MAINTENU passe en rotation libre.
+   */
+  function updateFpsTurn(dtMs) {
+    const l = state.input.left, r = state.input.right;
+    // Droite = sens horaire = yaw décroissant.
+    const sens = (l === r) ? 0 : (r ? -1 : 1);
+    const pas = FPS_TURN_SPEED * (dtMs / 1000);
+
+    // Front montant : nouvel appui -> on vise le cran suivant.
+    if (sens !== 0 && sens !== fpsTurnAvant) {
+      fpsTurnCible = cranSuivant(fpsYaw(), sens);
+      fpsTurnTenue = 0;
+    }
+    if (sens === 0) fpsTurnTenue = 0;
+    else fpsTurnTenue += dtMs;
+    fpsTurnAvant = sens;
+
+    // Touche maintenue : on abandonne le cran et on tourne librement.
+    if (sens !== 0 && fpsTurnTenue >= FPS_TAP_MS) {
+      fpsTurnCible = null;
+      poseYaw(fpsYaw() + sens * pas);
+      return;
+    }
+
+    // Un quart de tour est en cours : on le termine, même touche relâchée.
+    if (fpsTurnCible !== null) {
+      const a = fpsYaw();
+      let d = fpsTurnCible - a;
+      while (d > Math.PI) d -= Math.PI * 2;
+      while (d < -Math.PI) d += Math.PI * 2;
+      if (Math.abs(d) <= pas) { poseYaw(fpsTurnCible); fpsTurnCible = null; }
+      else poseYaw(a + Math.sign(d) * pas);
     }
   }
 
@@ -1116,6 +1176,9 @@
       p.freeX = p.tileX;
       p.freeZ = p.tileY;
       p.moving = false;
+      // Aucune rotation en attente en arrivant : sinon un quart de tour resté
+      // en cours ferait pivoter la vue toute seule au changement de vue.
+      fpsTurnCible = null; fpsTurnTenue = 0; fpsTurnAvant = 0;
     } else if (!fps && p.freeMove) {
       // En sortant de la vue subjective, on se recale sur la tuile la plus
       // proche : les autres vues n'attendent que des positions entières.
