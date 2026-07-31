@@ -696,3 +696,54 @@ remettent simplement `freeMove = false`, et la resynchronisation se fait à l'im
 Vérifié en jeu : sur quatre caps, le cap réel égale le cap visé **au degré près** (le
 quatrième était contre un mur, d'où le glissement) ; en tournant tout en avançant, la
 trajectoire est un arc régulier — segments de 0,72 à 0,73 unité, plus aucun escalier.
+
+---
+
+## 18. TROIS CORRECTIONS APRÈS LES TESTS DE ROBIN — 2026-07-31 (3)
+
+Trois retours successifs, tous fondés, tous corrigés. Ils ont un point commun qui vaut
+d'être retenu : **ce que le joueur décrit est toujours vrai**, même quand les données
+sous-jacentes sont justes.
+
+### 18.1 Le sens de rotation était inversé
+
+`TURN_ORDER` (`game3d.js`) est déclaré « sens des aiguilles » et vaut
+`up → right → down → left`, soit les angles π → π/2 → 0 → −π/2 : **tourner à droite fait
+DÉCROÎTRE le yaw**. La première version faisait l'inverse, donc la flèche droite tournait
+à gauche.
+
+### 18.2 Une rotation continue rend les appuis brefs inopérants
+
+À 3 rad/s, un appui de 50 ms ne fait pivoter que de 8° : invisible. D'où « ça fonctionne
+une fois sur deux ». Les deux gestes cohabitent désormais :
+
+| geste | effet |
+|---|---|
+| appui **bref** (< 220 ms) | un quart de tour net, **mené à son terme même après le relâchement** |
+| appui **maintenu** | rotation libre et continue (§17) |
+
+Le quart de tour vise `cranSuivant()` — le multiple de 90° le plus proche, plus un cran —
+et n'est donc jamais « à moitié » : depuis 80°, un cran à droite mène à 0°, pas à −10°.
+
+### 18.3 La carte affichait ses repères à côté de la réalité
+
+**Le canvas de la carte était créé sans son id `map-canvas`.** Toute sa mise en page tient
+pourtant dans la règle CSS `#map-canvas` (position absolue, `inset: 6px`, taille du
+conteneur) : sans id, la règle ne s'appliquait jamais, le canvas prenait sa taille brute de
+768×448 dans le flux, et `.map-markers` — lui bien en position absolue sur tout le
+conteneur — plaçait les repères **à une autre échelle**. Bug présent depuis l'écriture de
+l'écran, invisible tant que personne ne cherchait un lieu précis.
+
+La carte affiche par ailleurs, depuis cette session, les repères de `cities.beacons()` :
+**Centre Pokémon ➕, arène ⚔️ et Académie 🔮**, chacun avec son nom écrit à côté du
+marqueur. Ils n'y figuraient pas, alors que la fonction qui les fournit existait depuis le
+lot Bâtiments — personne ne l'appelait. La carte du monde signale en plus d'un 🔮 la seule
+région qui abrite l'Académie (Sylve d'Ambre, porte en **129,80**).
+
+### Ce qui reste à vérifier à l'œil
+
+L'extension Chrome s'est déconnectée avant que le rendu de la carte corrigée ait pu être
+constaté. Les **données** sont vérifiées pour les 6 régions (chaque repère tombe sur sa
+tuile `HEAL_DOOR` / `ARENA_DOOR` / `ACADEMY_DOOR`, toutes marchables, et les bâtiments sont
+posés sur le terrain : 19 tuiles de décor `healCenter` à Ambrelune, 48 pour son arène, 119
+pour l'Académie). Le placement visuel des marqueurs, lui, reste à confirmer en jeu.
