@@ -42,6 +42,11 @@
 //      consommé : on le dit gentiment, on ne le gaspille pas.
 //    · Les prix sont ronds, les gains sont généreux, la boutique s'enrichit
 //      région après région pour que progresser se SENTE.
+//    · TOUTE PIERRE VENDUE FAIT ÉVOLUER QUELQUE CHOSE (corrigé le 2026-07-31,
+//      lot I-C : cinq des six pierres du catalogue étaient décoratives et les
+//      deux pierres indispensables manquaient — voir la section « LES PIERRES
+//      D'ÉVOLUTION » du catalogue). Une pierre qui ne peut rien faire sur la
+//      créature choisie le dit gentiment, et n'est NI consommée NI payée.
 // =============================================================================
 
 (function () {
@@ -266,6 +271,16 @@
     // --- LES PIERRES D'ÉVOLUTION --------------------------------------------
     // Une par grande famille. Elles délèguent à `evolve3d.applyStone()` : ici,
     // on ne sait pas QUI évolue avec quoi, et c'est très bien ainsi.
+    //
+    // INTÉGRATION DU 2026-07-31 (lot I-C) — CES HUIT PIERRES SERVENT TOUTES.
+    // Ce catalogue et les chaînes d'`evolve3d.js` avaient été écrits en
+    // parallèle : cinq de ces pierres ne faisaient rien du tout, et les deux
+    // pierres indispensables (Lune, Nuit) n'étaient nulle part. Payer 2500
+    // pièces pour un objet dont la description promet une évolution, et qu'il
+    // ne se passe rien, c'est mentir à un enfant. Les deux manquantes sont donc
+    // ajoutées ici, et `evolve3d.js` rattache une famille d'évolutions à
+    // chacune des six autres. La règle, la même pour toutes : « une pierre fait
+    // évoluer tout de suite une créature de sa famille ».
     {
       id: 'pierre_feu', name: 'Pierre Feu', icon: '🔥', price: STONE_PRICE, kind: 'pierre',
       power: 0, color: '#ff6b3d', family: 'feu',
@@ -306,6 +321,23 @@
       power: 0, color: '#ffe066', family: 'lumiere',
       description: 'Une pierre qui brille toute seule. Fait évoluer certaines créatures de Lumière.',
       tagline: 'La plus rare de toutes. On dit qu\'elle vient d\'une étoile.',
+      effect: 'stone',
+    },
+    {
+      // EXIGÉE par Koronette (et par elle seule) : sans cette pierre au
+      // catalogue, l'évolution la plus jolie du jeu était inatteignable.
+      id: 'pierre_lune', name: 'Pierre de Lune', icon: '🌙', price: STONE_PRICE, kind: 'pierre',
+      power: 0, color: '#ffb3d9', family: 'fee',
+      description: 'Une pierre pâle qui garde la lumière de la nuit. Fait évoluer les créatures Fée.',
+      tagline: 'Regarde-la de près : il y a des cratères dedans.',
+      effect: 'stone',
+    },
+    {
+      // EXIGÉE par Méduzia. Elle réveille aussi les créatures Spectre.
+      id: 'pierre_nuit', name: 'Pierre de Nuit', icon: '🌑', price: STONE_PRICE, kind: 'pierre',
+      power: 0, color: '#7a5cbf', family: 'spectre',
+      description: 'Une pierre plus noire que le noir. Fait évoluer les créatures Spectre et Poison.',
+      tagline: 'On ne voit pas son reflet dedans. C\'est normal, paraît-il.',
       effect: 'stone',
     },
 
@@ -399,8 +431,11 @@
   const NEW_STOCK = {
     val:    ['pokeball', 'baiedouce', 'potion', 'repulsif'],
     sylve:  ['superball', 'superpotion', 'pierre_plante', 'pierre_electrique'],
-    saphir: ['rappel', 'elixir', 'pierre_eau'],
-    givre:  ['hyperball', 'charmechance', 'pierre_glace'],
+    // Chaque pierre arrive dans la région où vit la famille qu'elle réveille :
+    // la Pierre de Nuit à Port-Saphir (Méduzia), la Pierre de Lune sur la
+    // banquise — assez tôt pour que Koronette évolue avant la fin du jeu.
+    saphir: ['rappel', 'elixir', 'pierre_eau', 'pierre_nuit'],
+    givre:  ['hyperball', 'charmechance', 'pierre_glace', 'pierre_lune'],
     braise: ['hyperpotion', 'bonbonxp', 'pierre_feu'],
     aurore: ['rappelmax', 'pierre_lumiere'],
   };
@@ -679,14 +714,18 @@
       const res = safe(function () { return evolve.applyStone(mon, itemId); }, null);
       if (!res) {
         // Cas normal et fréquent : cette créature-là n'évolue pas avec CETTE
-        // pierre. Ce n'est pas une erreur, c'est un essai.
-        const preview = (evolve.previewName)
-          ? safe(function () { return evolve.previewName(mon.id); }, null) : null;
+        // pierre. Ce n'est pas une erreur, c'est un essai — donc NI la pierre
+        // NI l'argent ne sont consommés (`consumed: false`). Et on DIT ce qu'il
+        // faudrait : un refus muet donnerait l'impression d'un jeu cassé.
+        const indice = (evolve.stoneHint)
+          ? safe(function () { return evolve.stoneHint(mon, itemId); }, null) : null;
         return { ok: false, consumed: false,
           message: nom + ' regarde la ' + it.name + ' avec curiosité…\nmais il ne se passe rien.' +
-            (preview ? '\n(Cette créature évolue autrement.)' : '') };
+            (indice ? '\n' + indice : '') };
       }
-      const nouveau = (res && (res.to || res.toName)) || nameOf(mon);
+      // `toName` d'abord : `to` est un identifiant technique (« feuillonix »),
+      // Robin doit lire le NOM (« Feuillix »).
+      const nouveau = (res && (res.toName || res.to)) || nameOf(mon);
       return { ok: true, consumed: true, evolved: res,
         message: 'La ' + it.name + ' brille très fort…\n' + nom + ' évolue en ' + nouveau + ' ! ✦' };
     }
