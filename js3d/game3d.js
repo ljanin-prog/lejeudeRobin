@@ -234,7 +234,12 @@
     // être remplacé par celui de la sauvegarde.
     call('shop', 'bindWallet', [state]);
 
-    applyRegion(state.regionId, { silent: true });
+    // `keepPosition` : reprendre une partie doit reposer Robin LÀ OÙ IL ÉTAIT.
+    // Sans ce drapeau, `applyRegion` le renvoyait au point d'apparition de la
+    // région à chaque ouverture du jeu — une partie qui perd sa position à
+    // chaque chargement, c'est déjà une partie perdue. (`_resumePosition` était
+    // calculé par `loadGame()` mais n'était lu nulle part.)
+    applyRegion(state.regionId, { silent: true, keepPosition: _resumePosition });
     refreshHudCounters();
     refreshCompass();
     call('hud', 'setViewMode', [viewMode()]);
@@ -2128,12 +2133,12 @@
     state.battle = null;
     state.screen = 'world';
     _hudBattle.phase = null;
-    // La Téracristallisation retombe : `mon.tera` repasse à false, `mon.teraType`
-    // reste (§7). On le fait AVANT la sauvegarde, pour ne jamais figer une
-    // créature mono-type dans le fichier.
-    call('tera', 'deactivateAll', []);
     call('hud', 'hideBattleUI', []);
     call('battle', 'exit', []);
+    // `battle.exit()` appelle déjà `teraEndBattle()`. Ce second appel est un
+    // FILET : si battle3d manquait, une créature ne doit jamais rester figée
+    // mono-type dans la sauvegarde qui suit (§7).
+    call('tera', 'deactivateAll', []);
     // Le compagnon ressort, s'il était dehors avant le combat.
     call('buddy', 'autoRelease', []);
     playBiomeMusic(state.lastBiome);
@@ -2150,38 +2155,45 @@
     _hudBattle.phase = p;
   }
 
-  /** Le bouton Téra du menu de combat : le HUD affiche, nous décidons (§7). */
+  /**
+   * Le bouton Téra du menu de combat : le HUD affiche, nous décidons (§7).
+   *
+   * TOUT passe par `battle3d` (lot I-C), jamais par `tera3d` directement :
+   * `canTera` / `teraStatus` / `teraType` / `teraActivate` savent déjà quelle
+   * créature est en scène, posent la couronne et déclenchent l'éclat de
+   * cristaux. Et surtout, `battle.notifyMove()` applique DÉJÀ le multiplicateur
+   * Téra sur `res` avant qu'`applyMove()` ne consomme `res.dmg` : on n'ajoute
+   * ici AUCUN calcul de dégâts, sous peine de frapper à ×1.44 au lieu de ×1.2.
+   */
   function refreshTeraButton() {
     const hud = mod('hud');
-    const tera = mod('tera');
+    const bt = mod('battle');
     if (!hud || !hud.setTeraState) return;
     const b = state.battle;
-    if (!tera) {
+    if (!bt || !bt.teraActivate) {
       safeCall('hud.setTeraState.absent', function () {
         hud.setTeraState({ enabled: false, teraType: null,
           reason: 'La Téracristallisation n\'est pas disponible.', onPress: null });
       });
       return;
     }
-    const mon = b && b.player && b.player.mon;
     safeCall('hud.setTeraState', function () {
       hud.setTeraState({
-        enabled: !!(b && tera.canUse && tera.canUse(b) && mon),
-        teraType: mon && tera.teraTypeOf ? tera.teraTypeOf(mon) : null,
-        reason: tera.statusText ? tera.statusText(b) : '',
+        enabled: !!(b && bt.canTera && bt.canTera('player')),
+        teraType: bt.teraType ? bt.teraType('player') : null,
+        reason: bt.teraStatus ? bt.teraStatus() : '',
         onPress: function () { activateTera(); },
       });
     });
   }
 
-  /** Cristallisation demandée par le joueur. Une seule fois par combat. */
+  /** Cristallisation demandée par le joueur : c'est une action de tour, comme
+   *  attaquer ou utiliser un objet — l'adversaire réplique ensuite. */
   function activateTera() {
     const b = state.battle;
-    const tera = mod('tera');
-    if (!b || !tera || !tera.activate) return;
-    const mon = b.player && b.player.mon;
-    if (!mon) return;
-    const res = safeCall('tera.activate', function () { return tera.activate(mon, b); });
+    const bt = mod('battle');
+    if (!b || !bt || !bt.teraActivate) return;
+    const res = safeCall('battle.teraActivate', function () { return bt.teraActivate('player'); });
     if (!res || !res.ok) {
       showToast((res && res.message) || 'Impossible pour l\'instant.', '💎');
       refreshTeraButton();
@@ -2189,10 +2201,9 @@
     }
     sfx('rare');
     _hudBattle.player = '';   // ses types ont changé : la barre de PV se refait
-    call('battle', 'notifyTera', [mon, res.typeId]);
     refreshTeraButton();
     setBattlePhase('animating');
-    showMessage(res.message || 'Téracristallisation !', function () { setBattlePhase('choose'); });
+    showMessage(res.message || 'Téracristallisation !', function () { foeTurn(); });
   }
 
   // --- Synchronisation légère de l'interface (barres de PV) -------------------
@@ -2453,6 +2464,15 @@
     // FOIS. C'est exactement ce qu'il ne faut pas refaire.
     const shop = mod('shop');
     const mon = b.player.mon;
+
+    // Une pierre d'évolution EN PLEIN COMBAT : non. Une évolution ne se joue
+    // jamais au milieu d'un tour (§3) — elle se mérite au calme, sur l'écran
+    // Équipe, avec la mise en scène qui va avec.
+    if (shop && shop.isStone && safeCall('shop.isStone', function () { return shop.isStone(id); })) {
+      showToast('Pas maintenant ! Utilise ta pierre depuis l\'écran Équipe.', '💎');
+      return;
+    }
+
     if (shop && shop.useFrom) {
       const res = safeCall('shop.useFrom', function () { return shop.useFrom(id, mon, state); });
       if (!res) { showToast('Cet objet ne fait rien ici.', '🎒'); return; }
@@ -3365,6 +3385,22 @@
     } catch (e) { /* localStorage indisponible : on ignore */ }
   }
 
+  /**
+   * Aligne l'état des quêtes sur les badges déjà gagnés. Idempotent :
+   * `quest.onBadge()` ne fait rien sur un sanctuaire déjà ouvert. Silencieux :
+   * on ne rejoue pas six textes de révélation au démarrage.
+   */
+  function syncQuestWithBadges() {
+    const quest = mod('quest');
+    if (!quest || !quest.onBadge || !quest.state) return;
+    for (const rid in state.badges) {
+      if (!state.badges[rid]) continue;
+      const st = safeCall('quest.state', function () { return quest.state(rid); });
+      if (st === 'ouverte' || st === 'accomplie') continue;
+      safeCall('quest.onBadge.sync', function () { quest.onBadge(rid); });
+    }
+  }
+
   /** Lit une clé de sauvegarde. -> l'objet, ou null (jamais d'exception). */
   function readSave(key) {
     try {
@@ -3431,6 +3467,11 @@
       ensureActiveBall();
 
       call('quest', 'deserialize', [data.quest || null]);
+      // Une sauvegarde v1 n'a AUCUN état de quête, mais elle a des badges. Sans
+      // ce rattrapage, Robin devrait regagner des badges déjà en poche pour
+      // rouvrir « ses » sanctuaires : c'est exactement la perte de progression
+      // que la migration doit éviter. On rejoue les badges en silence.
+      syncQuestWithBadges();
 
       // ⚠️ ORDRE IMPÉRATIF : `tera.deserialize()` APRÈS `team.deserialize()`.
       // C'est lui qui répare les créatures sauvegardées en pleine
