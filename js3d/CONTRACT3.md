@@ -627,5 +627,23 @@ en cas d'écart avec les sections précédentes, c'est ici que la vérité est �
 `X` fait tourner la Ball d'un cran · journal ouvert avec `state.screen = 'journal'` ·
 compagnon sorti sur `F` et suivant à **1,66 tuile**.
 
+### Finitions du 2026-07-31 (2)
+
+Les trois points laissés ouverts sont traités, plus deux retours de Robin arrivés après coup.
+
+| | ce qui a changé |
+|---|---|
+| **Vue FPS** | « c'est trop compliqué » : la rotation se faisait par crans de 90°. L'angle est désormais **libre et continu** (3 rad/s) ;  devient la cardinale la plus proche du regard, donc toute la mécanique de grille est inchangée.  suit  s'il est fourni. |
+| **Musique** | « la musique ordinateur c'est usant » : nouveau module  — guitare en Karplus-Strong, basse, batterie, réverbe à convolution, grille pop, 5 ambiances selon le biome. Entièrement procédural.  n'est pas modifié : music3d coupe son ancienne piste et prend le relais. |
+| **Navigation clavier** | Boutique, Journal et Académie se pilotent aux flèches (fonction , éléments marqués ). |
+| **Sac hors combat** | Bouton « 🎒 Utiliser un objet » (touche ) dans l'écran Équipe.  pilote ; une pierre enchaîne sur l'écran d'évolution. |
+| **Répulsif** | Il ne faisait rien (il visait des rencontres aléatoires supprimées en juillet). Il écarte maintenant les créatures de la carte sous le niveau 12, pendant 200 pas. |
+
+Trois pièges rencontrés, à connaître avant de rejouer sur ces sujets :
+
+1. **Un  naît suspendu** et un  hors geste utilisateur échoue **en silence** : le module croit jouer, l'horloge reste à zéro, pas un son ne sort.  arme donc un filet sur la première interaction.  mesure le niveau réel — sans elle, ce bug est invisible.
+2. **Le volume se règle à la mesure, pas à l'oreille** : 0,22 donnait un RMS de crête de 0,027, c'est-à-dire presque rien. 0,55 place les crêtes vers 0,07.
+3. **Le Répulsif filtre au spawn** : les créatures déjà posées restent. Pour le vérifier, il faut repartir d'une population neuve (), sinon on mesure les survivantes.
+
 ⚠️ Pour tester dans un onglet d'arrière-plan, Chrome gèle `requestAnimationFrame` :
 utiliser **`GAME3D.tick(16)`** (§23.7) pour avancer le jeu à la main.
