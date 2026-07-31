@@ -575,3 +575,57 @@ un module absent n'a jamais le droit de casser quoi que ce soit.
 - [ ] Commentaires en français.
 - [ ] Budget de draw calls annoncé dans le rapport final, et tenu.
 - [ ] Le rapport final dit : ce qui est fait, ce qui manque, ce que le lot **I** doit brancher.
+
+---
+
+## 16. CE QUI A ÉTÉ LIVRÉ — 2026-07-31
+
+Quinze lots (12 modules + 3 d'intégration), tous fusionnés. Ce qui suit **fait foi** :
+en cas d'écart avec les sections précédentes, c'est ici que la vérité est écrite.
+
+### Écarts assumés par rapport au contrat initial
+
+| § | ce que disait le contrat | ce qui a été livré | pourquoi |
+|---|---|---|---|
+| 2 | « 18 types » | **19 types** | 12 conservés + 7 ajoutés = 19. Erreur d'addition dans la prose ; le tableau §2.2 en donnait bien 19. |
+| 2.1 | renommer `foudre`/`ombre` | ids **conservés**, alias dans `types3d.js` | `dex3d`, `moves3d` et les 3 fichiers de légendaires les utilisent encore. Renommer aurait touché 5 gros fichiers et cassé les sauvegardes. |
+| 6 | 6 pierres d'évolution | **8 pierres**, toutes utiles | `pierre_lune` et `pierre_nuit` ajoutées ; chaque pierre vendue fait évoluer au moins une créature — vérifié par test. |
+| 11.3 | compagnon sur `B` | **touche `F`** | `B` lance déjà une Ball. |
+| 11.2 | sélecteur de Ball | touche **`X`**, pilotée par le **HUD** | `hud3d.js` consomme la touche et `game3d.js` lit `hud.activeBall()`. Une seule source, pas de double rotation. |
+| 12 | clé `robinGame3d_v2` | idem, **migration v1 testée** | une sauvegarde v1 se relit sans aucune perte ; la v1 n'est jamais effacée. |
+
+### Corrections de bugs préexistants trouvées en chemin
+
+1. **`core3d.js` — `idleCreature()` n'appelait jamais `anim.update`.** `LL.animateAura()`
+   était du code mort : les auras des 36 légendaires étaient **figées depuis leur création**.
+2. **`quest3d.js` — `window.R3` vaut `undefined`.** `core3d.js` déclare `const R3` au niveau
+   d'un script classique : un `const` de haut niveau ne crée pas de propriété sur `window`.
+   Le module ne s'enregistrait jamais. Les modules lisent l'identifiant global directement.
+3. **`hud3d.js` — la boîte refusait le transfert** alors que `team3d.toTeam()` l'acceptait
+   (demande n° 1 de Robin). Le même piège existait à l'envers sur « Renvoyer à la Boîte ».
+4. **`hud3d.js` — le filtre du Pokédex** comparait `'electrique'` à `'foudre'` : les filtres
+   Électrique et Spectre ne renvoyaient jamais rien.
+5. **`game3d.js` — `_resumePosition` était calculé mais jamais lu** : Robin était renvoyé au
+   point d'apparition **à chaque ouverture du jeu**.
+6. **`game3d.js` — double décompte des potions** entre le menu Sac et `shop.useFrom()`.
+7. **`battle3d.js` — aura payée deux fois** sur les légendaires : −8 à −16 draw calls.
+8. **`hud3d.js` — le journal laissait `state.screen` à `'world'`** : Robin marchait derrière
+   l'overlay.
+
+### Budgets mesurés
+
+- **Légendaires : 20 à 24 draw calls** chacun (36/36 construits, aucun dépassement).
+  Avant la vague : 40 à 80. La primitive `llib.bake()` fusionne les pièces immobiles en un
+  mesh par matériau.
+- **Formes évoluées : 20 au maximum**, moyenne 19,0.
+- **Académie-château : 20** (305 meshes bruts) · **arène : 10 à 17** · **Centre : 10**.
+- **Combat contre un légendaire : 180** (250 autorisés).
+
+### Vérifié dans le navigateur
+
+43 scripts chargés sans erreur · 21 modules enregistrés · boîte → équipe **en un clic** ·
+`X` fait tourner la Ball d'un cran · journal ouvert avec `state.screen = 'journal'` ·
+compagnon sorti sur `F` et suivant à **1,66 tuile**.
+
+⚠️ Pour tester dans un onglet d'arrière-plan, Chrome gèle `requestAnimationFrame` :
+utiliser **`GAME3D.tick(16)`** (§23.7) pour avancer le jeu à la main.
