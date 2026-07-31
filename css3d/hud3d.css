@@ -1448,10 +1448,489 @@ html, body {
 .toast-icon { font-size: 16px; }
 
 /* =============================================================================
+   SÉLECTEUR DE BALL (CONTRAT3 §11.2 — demande n°9 de Robin)
+   ----------------------------------------------------------------------------
+   Il remplace l'ancien compteur muet, à la même place : coin haut droit, sous
+   le compteur de collection. On y lit la Ball choisie, son nom, ce qu'il en
+   reste, et le rappel de la touche X.
+   ============================================================================= */
+
+.ball-picker {
+  position: absolute;
+  top: 62px;
+  right: 68px;
+  display: flex !important;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 14px 6px 8px !important;
+  background: rgba(20, 22, 40, .82) !important;
+  border: 2px solid var(--ball-color, rgba(252, 236, 108, .55)) !important;
+  border-radius: 999px !important;
+  box-shadow: var(--ombre-douce) !important;
+  color: var(--creme) !important;
+  font-size: 14px !important;
+  text-align: left;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.ball-picker:hover { transform: translateY(-2px); filter: brightness(1.1); }
+.ball-picker:active { transform: translateY(1px); }
+.ball-picker.vide { opacity: .55; }
+
+.bp-icon {
+  font-size: 18px;
+  line-height: 1;
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, .5));
+  flex: none;
+}
+
+.bp-body { display: flex; flex-direction: column; line-height: 1.15; }
+.bp-name { font-size: 13px; font-weight: 800; color: var(--creme); white-space: nowrap; }
+.bp-key  { font-size: 9.5px; font-weight: 700; color: var(--gris); letter-spacing: .3px; }
+
+.bp-qty {
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--jaune-clair);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+/* --- L'argent, discret, juste en dessous ---------------------------------- */
+.money-count {
+  position: absolute;
+  top: 112px;
+  right: 68px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px 5px 10px;
+  background: rgba(20, 22, 40, .74);
+  border: 2px solid rgba(252, 236, 108, .35);
+  border-radius: 999px;
+  box-shadow: var(--ombre-douce);
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--creme);
+}
+
+.money-count .mc-icon { font-size: 14px; }
+.money-count .mc-num { color: var(--jaune-clair); font-variant-numeric: tabular-nums; }
+.money-count.pop { animation: pastille-pop .5s ease; }
+
+/* Le sac : la Ball choisie porte une étoile et une bordure dorée. */
+.bag-item.active-ball { border-color: var(--jaune-clair) !important; box-shadow: 0 0 0 2px rgba(252, 236, 108, .28) !important; }
+
+/* =============================================================================
+   ÉCRAN ÉQUIPE — sortir une créature de la Boîte (demande n°1, la priorité)
+   ============================================================================= */
+
+.box-tip {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--jaune-clair);
+  background: rgba(252, 236, 108, .12);
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+
+/* Le petit rappel « ⬆️ Dans l'équipe » sur chaque créature de la Boîte : il
+   apparaît au survol et sous le curseur, pour qu'on comprenne sans lire. */
+.box-slot .bs-go {
+  font-size: 9px;
+  font-weight: 800;
+  color: var(--nuit);
+  background: var(--vert-clair);
+  border-radius: 999px;
+  padding: 1px 6px;
+  opacity: 0;
+  transition: opacity .12s ease;
+}
+.box-slot:hover .bs-go,
+.box-slot.cursor .bs-go { opacity: 1; }
+
+/* Le bouton explicite, symétrique de « Renvoyer à la Boîte ». */
+.td-toteam {
+  width: 100%;
+  margin-top: 8px;
+  font-size: 13px !important;
+  font-weight: 800 !important;
+  padding: 11px 12px !important;
+  background: linear-gradient(180deg, #86e6a1, var(--vert)) !important;
+  color: var(--nuit) !important;
+  border-radius: 14px !important;
+  box-shadow: 0 4px 0 #24713f, var(--ombre-douce) !important;
+}
+.td-toteam:not(:disabled):hover { transform: translateY(-2px); filter: brightness(1.06); }
+.td-toteam:disabled { opacity: .5; box-shadow: none !important; cursor: default; }
+
+/* =============================================================================
+   Combat : le bouton TÉRA, cinquième entrée du menu
+   ============================================================================= */
+
+.bm-tera {
+  grid-column: 1 / -1;
+  border-color: var(--type-color, #d896ff) !important;
+  background: linear-gradient(120deg, rgba(18, 20, 42, .9), rgba(60, 40, 90, .82)) !important;
+}
+.bm-tera-body { display: flex; flex-direction: column; line-height: 1.2; text-align: left; }
+.bm-tera-sub { font-size: 11px; font-weight: 700; color: var(--gris); }
+.bm-tera:not(:disabled) .bm-tera-sub { color: var(--jaune-clair); }
+.bm-tera:not(:disabled) { animation: tera-respire 2.4s ease-in-out infinite; }
+
+/* =============================================================================
+   BOUTIQUE DU CENTRE POKÉMON (§6 / §11.3 — demande n°8)
+   ============================================================================= */
+
+.shop-frame {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(940px, 95vw);
+  max-height: 92vh;
+  padding: clamp(14px, 2vw, 24px);
+  background: var(--verre);
+  border: 3px solid rgba(255, 107, 157, .65);
+  border-radius: var(--rayon);
+  box-shadow: var(--ombre);
+  animation: carte-arrivee .3s ease both;
+}
+
+.shop-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.shop-head h2 { margin: 0; }
+
+.shop-money {
+  padding: 6px 16px;
+  font-size: clamp(15px, 1.8vw, 19px);
+  font-weight: 800;
+  color: var(--nuit);
+  background: linear-gradient(180deg, #ffe9a0, var(--jaune-clair));
+  border-radius: 999px;
+  box-shadow: 0 3px 0 #b7900a;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.shop-welcome { margin: 0; font-size: 13.5px; color: var(--creme); opacity: .92; }
+
+.shop-tabs { display: flex; gap: 8px; }
+.shop-tabs button {
+  font-size: 13px !important;
+  padding: 8px 18px !important;
+  background: rgba(18, 20, 42, .85) !important;
+  color: var(--gris) !important;
+  border: 2px solid rgba(61, 94, 140, .8) !important;
+  box-shadow: none !important;
+}
+.shop-tabs button.on {
+  background: linear-gradient(180deg, #ffe066, var(--jaune)) !important;
+  color: var(--nuit) !important;
+  border-color: transparent !important;
+}
+
+.shop-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(226px, 1fr));
+  gap: 10px;
+  overflow-y: auto;
+  padding: 4px 2px;
+}
+
+.shop-card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 12px;
+  background: rgba(18, 20, 42, .86);
+  border: 2px solid var(--item-color, rgba(61, 94, 140, .8));
+  border-radius: var(--rayon-petit);
+  box-shadow: var(--ombre-douce);
+}
+
+.sc-top { display: flex; align-items: center; gap: 10px; }
+.sc-icon { font-size: 30px; line-height: 1; flex: none; }
+.sc-titles { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
+.sc-name { font-size: 14.5px; font-weight: 800; color: var(--jaune-clair); }
+.sc-price { font-size: 12px; font-weight: 700; color: var(--creme); }
+.sc-desc { margin: 0; font-size: 11.5px; color: var(--gris); line-height: 1.4; }
+.sc-tag { margin: 0; font-size: 11px; font-style: italic; color: var(--rose); }
+.sc-owned { font-size: 11px; font-weight: 700; color: var(--vert-clair); }
+
+.sc-qty { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 2px; }
+.sc-step {
+  width: 30px;
+  height: 30px;
+  padding: 0 !important;
+  font-size: 18px !important;
+  border-radius: 50% !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sc-n { font-size: 16px; font-weight: 800; color: var(--creme); min-width: 26px; text-align: center; }
+
+.sc-buy {
+  width: 100%;
+  font-size: 12.5px !important;
+  padding: 10px 8px !important;
+  border-radius: 12px !important;
+  background: linear-gradient(180deg, #86e6a1, var(--vert)) !important;
+  box-shadow: 0 4px 0 #24713f !important;
+}
+.sc-buy:disabled { opacity: .5; }
+
+.shop-empty { grid-column: 1 / -1; text-align: center; color: var(--gris); font-size: 13px; }
+.shop-close { align-self: center; }
+
+/* =============================================================================
+   JOURNAL DES LÉGENDES (touche J — demande n°3)
+   ============================================================================= */
+
+.journal-frame {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(820px, 95vw);
+  max-height: 92vh;
+  padding: clamp(14px, 2vw, 24px);
+  background: var(--verre);
+  border: 3px solid rgba(65, 166, 246, .65);
+  border-radius: var(--rayon);
+  box-shadow: var(--ombre);
+  animation: carte-arrivee .3s ease both;
+}
+
+.journal-list { display: flex; flex-direction: column; gap: 10px; overflow-y: auto; padding: 2px; }
+
+.quest-card {
+  padding: 12px 14px;
+  background: rgba(18, 20, 42, .86);
+  border: 2px solid rgba(61, 94, 140, .8);
+  border-left: 6px solid var(--quest-color, #f1c40f);
+  border-radius: var(--rayon-petit);
+}
+
+.quest-card.inconnue { opacity: .62; }
+.quest-card.ouverte { border-color: rgba(252, 236, 108, .6); }
+.quest-card.accomplie { border-color: rgba(56, 183, 100, .8); background: rgba(22, 44, 32, .8); }
+
+.qc-head { display: flex; align-items: center; gap: 10px; }
+.qc-icon { font-size: 26px; line-height: 1; flex: none; }
+.qc-titles { display: flex; flex-direction: column; line-height: 1.2; flex: 1; min-width: 0; }
+.qc-title { font-size: 15px; font-weight: 800; color: var(--jaune-clair); }
+.qc-region { font-size: 11.5px; color: var(--gris); }
+
+.qc-state {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--nuit);
+  background: var(--quest-color, #f1c40f);
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+  flex: none;
+}
+
+.qc-line { margin: 8px 0 0; font-size: 13px; line-height: 1.45; color: var(--creme); }
+.qc-sanct { margin: 4px 0 0; font-size: 11.5px; color: var(--gris); }
+
+.qc-bar {
+  margin-top: 8px;
+  height: 9px;
+  background: rgba(10, 12, 26, .8);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.qc-bar-fill { height: 100%; background: linear-gradient(90deg, var(--vert), var(--vert-clair)); border-radius: 999px; transition: width .3s ease; }
+.qc-count { display: inline-block; margin-top: 4px; font-size: 11px; font-weight: 700; color: var(--gris); }
+.qc-done { margin-top: 6px; font-size: 12.5px; font-weight: 800; color: var(--vert-clair); }
+
+/* =============================================================================
+   ÉVOLUTION — 2,5 s de gloire, plein écran, non interruptible (demande n°4)
+   ============================================================================= */
+
+.evo-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  background: radial-gradient(circle at 50% 45%, rgba(60, 50, 110, .92), rgba(8, 10, 26, .97));
+  animation: fondu-entree .25s ease both;
+}
+
+.evo-stage { position: relative; width: 200px; height: 200px; display: flex; align-items: center; justify-content: center; }
+
+.evo-thumb canvas {
+  width: 168px;
+  height: 168px;
+  border-radius: 20px;
+  image-rendering: auto;
+}
+
+.evo-flash {
+  position: absolute;
+  inset: -20px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, .95), rgba(255, 255, 255, 0) 68%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Phase 1 : la créature blanchit et vibre. */
+.evo-stage.phase-blanchit .evo-thumb { animation: evo-blanchit 1.2s ease-in-out both; }
+/* Phase 2 : l'éclat blanc qui cache l'échange de silhouette. */
+.evo-stage.phase-eclat .evo-flash { animation: evo-eclat .55s ease-out both; }
+.evo-stage.phase-eclat .evo-thumb { filter: brightness(4) saturate(0); transform: scale(1.2); }
+/* Phase 3 : la nouvelle forme se révèle, plus grande. */
+.evo-stage.phase-revele .evo-thumb { animation: evo-revele .8s cubic-bezier(.2, 1.5, .4, 1) both; }
+
+.evo-title {
+  font-size: clamp(22px, 4vw, 40px);
+  font-weight: 800;
+  color: var(--jaune-clair);
+  text-shadow: 0 4px 0 rgba(0, 0, 0, .45);
+  text-align: center;
+}
+
+.evo-text {
+  max-width: min(620px, 90vw);
+  font-size: clamp(14px, 2vw, 20px);
+  font-weight: 700;
+  color: var(--creme);
+  text-align: center;
+  line-height: 1.45;
+}
+
+/* =============================================================================
+   ACADÉMIE — le choix du type Téra (demande n°10)
+   ============================================================================= */
+
+.academy-frame {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(1000px, 96vw);
+  max-height: 92vh;
+  padding: clamp(14px, 2vw, 24px);
+  background: var(--verre);
+  border: 3px solid rgba(216, 150, 255, .7);
+  border-radius: var(--rayon);
+  box-shadow: var(--ombre);
+  animation: carte-arrivee .3s ease both;
+}
+
+.academy-intro { margin: 0; font-size: 13.5px; color: var(--gris); text-align: center; }
+
+.academy-lock {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 22px 18px;
+  text-align: center;
+}
+.academy-lock p { margin: 0; max-width: 560px; font-size: 14.5px; line-height: 1.5; color: var(--creme); }
+
+.academy-body {
+  display: grid;
+  grid-template-columns: minmax(200px, 300px) 1fr;
+  gap: 14px;
+  overflow: hidden;
+}
+.academy-body h3 { margin: 0 0 8px; }
+
+.academy-team, .academy-types { display: flex; flex-direction: column; min-height: 0; }
+.academy-team-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; overflow-y: auto; padding: 2px; }
+
+.academy-mon {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 6px;
+  background: rgba(18, 20, 42, .86) !important;
+  border: 2px solid rgba(61, 94, 140, .8) !important;
+  border-radius: 12px !important;
+  box-shadow: none !important;
+  color: var(--creme) !important;
+}
+.academy-mon canvas { width: 56px; height: 56px; border-radius: 10px; }
+.academy-mon .am-name { font-size: 11.5px; font-weight: 800; }
+.academy-mon .am-note { font-size: 9.5px; color: var(--gris); }
+.academy-mon.choisie { border-color: var(--jaune-clair) !important; box-shadow: 0 0 0 3px rgba(252, 236, 108, .32) !important; }
+.academy-mon.servie { opacity: .45; }
+
+.academy-type-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(122px, 1fr));
+  gap: 7px;
+  overflow-y: auto;
+  padding: 2px;
+  align-content: start;
+}
+
+.academy-type {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 12px !important;
+  background: var(--type-color, #94b0c2) !important;
+  color: var(--nuit) !important;
+  border: 2px solid rgba(10, 12, 26, .35) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, .28) !important;
+  font-size: 12.5px !important;
+}
+.academy-type:not(:disabled):hover { transform: translateY(-2px); filter: brightness(1.1); }
+.at-icon { font-size: 17px; line-height: 1; }
+.at-label { font-weight: 800; }
+
+@media (max-width: 860px) {
+  .academy-body { grid-template-columns: 1fr; }
+  .academy-team-grid { grid-template-columns: repeat(3, 1fr); max-height: 180px; }
+}
+
+@media (max-width: 620px) {
+  .ball-picker { right: 12px; }
+  .money-count { right: 12px; }
+  .bp-key { display: none; }
+}
+
+/* =============================================================================
    Animations
    ============================================================================= */
 
 @keyframes fondu-entree { from { opacity: 0; } to { opacity: 1; } }
+
+@keyframes tera-respire {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(216, 150, 255, 0); }
+  50%      { box-shadow: 0 0 16px 2px rgba(216, 150, 255, .45); }
+}
+
+@keyframes evo-blanchit {
+  0%   { filter: none; transform: scale(1); }
+  50%  { filter: brightness(2.4) saturate(.3); transform: scale(1.04) translateX(-4px); }
+  75%  { filter: brightness(1.4) saturate(.6); transform: scale(1.02) translateX(4px); }
+  100% { filter: brightness(3.2) saturate(0); transform: scale(1.12); }
+}
+
+@keyframes evo-eclat {
+  0%   { opacity: 0; transform: scale(.4); }
+  35%  { opacity: 1; transform: scale(1.25); }
+  100% { opacity: 0; transform: scale(1.7); }
+}
+
+@keyframes evo-revele {
+  0%   { opacity: .2; transform: scale(.7); filter: brightness(3) saturate(0); }
+  60%  { opacity: 1; transform: scale(1.22); filter: brightness(1.2) saturate(1); }
+  100% { opacity: 1; transform: scale(1.12); filter: none; }
+}
 
 @keyframes carte-arrivee {
   from { opacity: 0; transform: translateY(16px) scale(.96); }
