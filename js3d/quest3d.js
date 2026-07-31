@@ -32,7 +32,10 @@
 (function () {
   'use strict';
 
-  var R3 = window.R3;
+  // `globalThis` plutôt que `window` : le module doit pouvoir se charger hors
+  // navigateur (script de vérification sous Node), comme types3d.js.
+  var G = (typeof globalThis !== 'undefined') ? globalThis : this;
+  var R3 = G.R3;
 
   // Accès tolérant aux autres modules : ils peuvent parfaitement manquer.
   function mod(name) {
@@ -938,13 +941,13 @@
   // Enregistrement — jamais d'exception, même si R3 n'est pas là.
   try {
     if (R3 && typeof R3.register === 'function') R3.register('quest', API);
-    else window.Quest3D = API;
+    else G.Quest3D = API;
   } catch (e) {
     try { console.warn('[quest3d] enregistrement impossible :', e); } catch (e2) { /* rien */ }
-    window.Quest3D = API;
+    G.Quest3D = API;
   }
 
   // Toujours accessible pour déboguer depuis la console, même enregistré.
-  window.Quest3D = window.Quest3D || API;
+  G.Quest3D = G.Quest3D || API;
 
 })();
