@@ -633,17 +633,24 @@ Les trois points laissés ouverts sont traités, plus deux retours de Robin arri
 
 | | ce qui a changé |
 |---|---|
-| **Vue FPS** | « c'est trop compliqué » : la rotation se faisait par crans de 90°. L'angle est désormais **libre et continu** (3 rad/s) ;  devient la cardinale la plus proche du regard, donc toute la mécanique de grille est inchangée.  suit  s'il est fourni. |
-| **Musique** | « la musique ordinateur c'est usant » : nouveau module  — guitare en Karplus-Strong, basse, batterie, réverbe à convolution, grille pop, 5 ambiances selon le biome. Entièrement procédural.  n'est pas modifié : music3d coupe son ancienne piste et prend le relais. |
-| **Navigation clavier** | Boutique, Journal et Académie se pilotent aux flèches (fonction , éléments marqués ). |
-| **Sac hors combat** | Bouton « 🎒 Utiliser un objet » (touche ) dans l'écran Équipe.  pilote ; une pierre enchaîne sur l'écran d'évolution. |
-| **Répulsif** | Il ne faisait rien (il visait des rencontres aléatoires supprimées en juillet). Il écarte maintenant les créatures de la carte sous le niveau 12, pendant 200 pas. |
+| **Vue FPS** | « c'est trop compliqué » : la rotation se faisait par crans de 90°, donc quatre directions et un saut brusque à chaque appui. L'angle est désormais **libre et continu** (3 rad/s) ; `player.dir` devient la cardinale la plus proche du regard, ce qui laisse toute la mécanique de grille inchangée. `camera3d` suit `player.fpsYaw` s'il est fourni, sinon les quatre directions comme avant. |
+| **Musique** | « la musique ordinateur c'est usant » : nouveau module `js3d/music3d.js` — guitare en Karplus-Strong, basse, batterie, réverbe à convolution, grille pop, 5 ambiances selon le biome. Entièrement procédural. `js/audio.js` n'est pas modifié (§1.2) : music3d coupe son ancienne piste et prend le relais, avec repli sur elle s'il manque. |
+| **Navigation clavier** | Boutique, Journal et Académie se pilotent aux flèches — fonction `navEcran()`, éléments marqués `data-nav`, curseur `.nav-cursor`. Une seule fonction pour les trois écrans. |
+| **Sac hors combat** | Bouton « 🎒 Utiliser un objet » (touche `U`) dans l'écran Équipe. `GAME3D.useItem()` pilote, `shop.useFrom()` applique ; une pierre enchaîne sur l'écran d'évolution. |
+| **Répulsif** | Il ne faisait rien : il visait les rencontres en hautes herbes, supprimées le 2026-07-30 (`ENCOUNTER_CHANCE` vaut 0). Il écarte maintenant les créatures de la carte sous le niveau 12, pendant 200 pas — `roamers.setRepel(niveau)`, filtre au spawn. |
 
 Trois pièges rencontrés, à connaître avant de rejouer sur ces sujets :
 
-1. **Un  naît suspendu** et un  hors geste utilisateur échoue **en silence** : le module croit jouer, l'horloge reste à zéro, pas un son ne sort.  arme donc un filet sur la première interaction.  mesure le niveau réel — sans elle, ce bug est invisible.
-2. **Le volume se règle à la mesure, pas à l'oreille** : 0,22 donnait un RMS de crête de 0,027, c'est-à-dire presque rien. 0,55 place les crêtes vers 0,07.
-3. **Le Répulsif filtre au spawn** : les créatures déjà posées restent. Pour le vérifier, il faut repartir d'une population neuve (), sinon on mesure les survivantes.
+1. **Un `AudioContext` naît suspendu**, et un `resume()` appelé hors geste utilisateur échoue
+   **en silence** : le module croit jouer, l'horloge reste à zéro et pas un son ne sort.
+   `music3d.reveille()` arme donc un filet sur la première interaction réelle.
+   `music.level()` mesure le niveau de sortie — sans cette sonde, le bug est invisible.
+2. **Le volume se règle à la mesure, jamais à l'oreille** (on ne peut pas écouter depuis un
+   script) : 0,22 donnait un RMS de crête de 0,027, c'est-à-dire presque rien. 0,55 place les
+   crêtes vers 0,07 — présent mais discret.
+3. **Le Répulsif filtre au spawn** : les créatures déjà posées ne s'évaporent pas. Pour le
+   vérifier, il faut repartir d'une population neuve (`roamers.setRegion()`), sinon on mesure
+   les survivantes de l'ancienne et le filtre paraît inopérant.
 
 ⚠️ Pour tester dans un onglet d'arrière-plan, Chrome gèle `requestAnimationFrame` :
 utiliser **`GAME3D.tick(16)`** (§23.7) pour avancer le jeu à la main.
