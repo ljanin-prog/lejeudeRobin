@@ -146,10 +146,13 @@
     manor: [3, 3], townhouse: [1, 1], marketStall: [1, 1],
     grandFountain: [3, 3], statue: [1, 1], lamp: [1, 1], banner: [1, 1],
     hedge: [1, 1], roseBed: [1, 1],
-    arena: [9, 9], healCenter: [4, 3], shop: [3, 3], portal: [1, 1],
+    arena: [9, 9], healCenter: [7, 5], shop: [3, 3], portal: [1, 1],
     lighthouse: [2, 2], observatory: [5, 5],
     dock: [1, 1], bridge: [1, 1], signpost: [1, 1], legendAltar: [1, 1],
     airshipMast: [3, 3], airshipDock: [1, 1],
+    // v3 §8.2 — l'Académie-château. La plus grande emprise du jeu : c'est un
+    // REPÈRE, il faut qu'on la voie d'un bout à l'autre de la région.
+    academy: [23, 19],
   };
 
   // Monuments construits à l'unité pour tout un bloc de tuiles (cf. tiles3d).
@@ -157,7 +160,7 @@
     wall: 1, wallTower: 1, gateArch: 1, castle: 1, castleTower: 1, castleGate: 1,
     church: 1, churchTower: 1, manor: 1, arena: 1, grandFountain: 1, statue: 1,
     healCenter: 1, shop: 1, portal: 1, lighthouse: 1, observatory: 1,
-    airshipMast: 1,
+    airshipMast: 1, academy: 1,
   };
 
   // ==========================================================================
@@ -1243,41 +1246,12 @@
   }
 
   // --------------------------------------------------------------------------
-  //  ARÈNE — un petit colisée avec l'emblème de la ville au-dessus de la porte.
-  // --------------------------------------------------------------------------
-  function buildArena(st, o, g) {
-    const R = Math.max(2.6, Math.min(o.W, o.D) * 0.46), hs = o.hs;
-    const H = 3.2 * hs;
-    g.add(cy(R + 0.24, R + 0.4, 0.34, st.stoneDark, 0, 0.17, 0, { seg: 20 }));
-    g.add(cy(R, R + 0.16, H, st.stone, 0, 0.34 + H / 2, 0, { seg: 20 }));
-    g.add(ring(R + 0.06, 0.14, st.stoneDark, 0, 0.34 + H, 0, { seg: 20 }));
-    // Gradins (couronne creuse suggérée par un anneau en retrait).
-    g.add(cy(R - 0.5, R - 0.5, 0.3, st.ground, 0, 0.34 + H + 0.1, 0, { seg: 18 }));
-    // Arcades : 10 colonnes engagées, c'est ce qui fait « colisée ».
-    for (let i = 0; i < 10; i++) {
-      const a = (i / 10) * PI * 2;
-      const x = Math.cos(a) * (R + 0.1), z = Math.sin(a) * (R + 0.1);
-      const col = cy(0.16, 0.18, H * 0.86, st.trim, x, 0.34 + H * 0.43, z, { seg: 8 });
-      g.add(col);
-      if (i % 2 === 0) g.add(bx(0.16, 0.5, 0.1, '#ffe9b0', x, 0.34 + H * 0.72, z, { glow: 'warm' }));
-    }
-    crenelRing(g, R + 0.05, 0.34 + H + 0.14, 14, 0.2, 0.34, st.stone);
-    // Grande porte au sud, emblème au-dessus.
-    g.add(bx(1.5, 1.9, 0.4, st.woodDark, 0, 0.34 + 0.95, R - 0.02));
-    archTop(g, 1.7, 0.34 + 1.9, R - 0.02, 0.44, st.stoneDark, 5);
-    g.add(ring(0.36, 0.09, st.gold, 0, 0.34 + H * 0.86, R + 0.04, { metal: 0.8, rough: 0.28 }));
-    g.add(cy(0.3, 0.3, 0.06, st.banner, 0, 0.34 + H * 0.86, R + 0.02, { seg: 12 }));
-    // Bannières tout autour : une arène doit claquer au vent.
-    for (let i = 0; i < 6; i++) {
-      const a = (i / 6) * PI * 2 + 0.3;
-      g.add(bannerPole(st, Math.cos(a) * (R - 0.2), 0.34 + H + 0.2, Math.sin(a) * (R - 0.2), 1.2, 0.85, i % 2 ? st.banner : st.banner2, 1));
-    }
-    if (st.braziers) { g.add(brazier(st, 1.2, 0.34, R + 0.5, 1.1)); g.add(brazier(st, -1.2, 0.34, R + 0.5, 1.1)); }
-    if (st.snowy) g.add(ring(R + 0.3, 0.1, st.snow, 0, 0.36, 0, { seg: 20 }));
-  }
-
-  // --------------------------------------------------------------------------
-  //  CENTRE DE SOINS et BOUTIQUE — reconnaissables à leur emblème.
+  //  BOUTIQUE (et repli générique) — reconnaissable à son emblème.
+  //  L'arène et le Centre de soins avaient ici, en v2, un petit colisée et une
+  //  maison à croix. Ils étaient corrects mais INVISIBLES à dix tuiles : ils
+  //  sont remplacés au §6 bis par des monuments faits pour être repérés de
+  //  loin. `civic()` reste, elle sert toujours la boutique — et le branchement
+  //  `emblem: 'croix'` est conservé comme repli si jamais quelqu'un l'appelle.
   // --------------------------------------------------------------------------
   function civic(st, o, g, roofColor, emblem) {
     const W = Math.max(2.0, o.W - 0.4), D = Math.max(1.8, o.D - 0.4), hs = o.hs;
@@ -1514,6 +1488,587 @@
   }
 
   // ==========================================================================
+  //  6 bis. LES TROIS GRANDS REPÈRES  (contrat v3, §8)
+  // --------------------------------------------------------------------------
+  //  Le constat qui a déclenché tout ce chapitre : les six arènes existaient
+  //  déjà, avec leurs champions et leurs badges — et Robin ne les a JAMAIS
+  //  trouvées. Un bâtiment qu'on ne voit pas n'existe pas. Les trois monuments
+  //  ci-dessous partagent donc trois partis pris :
+  //
+  //   1. UNE SILHOUETTE QU'ON LIT DE LOIN : un dôme coloré (arène), un toit
+  //      rouge arrondi (Centre), quatre tours et un donjon (Académie).
+  //   2. UNE COLONNE DE LUMIÈRE insensible au brouillard (`halo()`), calquée
+  //      sur celle de gates3d.js : c'est elle, et elle seule, qui porte le
+  //      repère au-delà de la distance de brouillard.
+  //   3. UNE ICÔNE FLOTTANTE (sprite dessiné au canvas, aucun fichier disque)
+  //      qui dit d'un coup d'œil de quoi il s'agit : ➕, le type du champion,
+  //      ou 🏰.
+  // ==========================================================================
+
+  // --------------------------------------------------------------------------
+  //  Renseignements demandés aux voisins — TOUJOURS avec un repli, ces modules
+  //  peuvent manquer (règle n°4 du contrat).
+  // --------------------------------------------------------------------------
+
+  // Style de ville -> région. C'est la seule information dont on dispose dans
+  // build() pour retrouver le champion d'une arène : world3d.js ne transmet que
+  // `style`. La table est le miroir exact de REGION_STYLE (world3d.js).
+  const REGION_OF_STYLE = {
+    emeraude: 'val', ambrelune: 'sylve', saphir: 'saphir',
+    cimefroide: 'givre', fournaise: 'braise', aurore: 'aurore',
+  };
+
+  // Repli local : les six types d'arène du jeu, au cas où types3d manquerait.
+  // (`foudre` est l'ancien identifiant de `electrique` — v3 §2.1.)
+  const TYPE_FALLBACK = {
+    plante: { color: '#38b764', icon: '🌿', label: 'Plante' },
+    foudre: { color: '#f1c40f', icon: '⚡', label: 'Électrique' },
+    electrique: { color: '#f1c40f', icon: '⚡', label: 'Électrique' },
+    eau: { color: '#41a6f6', icon: '💧', label: 'Eau' },
+    glace: { color: '#a8e6ff', icon: '❄️', label: 'Glace' },
+    feu: { color: '#ff6b3d', icon: '🔥', label: 'Feu' },
+    lumiere: { color: '#ffe066', icon: '✨', label: 'Lumière' },
+  };
+
+  function typeInfo(id) {
+    const fb = TYPE_FALLBACK[id] || { color: '#94b0c2', icon: '◇', label: 'Neutre' };
+    const T = R3.get('types');
+    if (!T) return fb;
+    let color = fb.color, icon = fb.icon, label = fb.label;
+    try { if (typeof T.color === 'function') color = T.color(id) || color; } catch (e) { /* repli */ }
+    try { if (typeof T.icon === 'function') icon = T.icon(id) || icon; } catch (e) { /* repli */ }
+    try { if (typeof T.label === 'function') label = T.label(id) || label; } catch (e) { /* repli */ }
+    return { color: color, icon: icon, label: label };
+  }
+
+  /** Badge de la région : { name, icon, color }. Jamais null. */
+  function badgeInfo(regionId) {
+    const A = R3.get('arenas');
+    if (A && typeof A.badgeOf === 'function') {
+      try {
+        const b = A.badgeOf(regionId);
+        if (b) return { name: b.name || 'Badge', icon: b.icon || '★', color: b.color || '#ffe066' };
+      } catch (e) { /* repli ci-dessous */ }
+    }
+    return { name: 'Badge', icon: '★', color: '#ffe066' };
+  }
+
+  /** Type du champion de la région (repli : le type d'arène de cities3d). */
+  function arenaTypeOf(regionId) {
+    const A = R3.get('arenas');
+    if (A && typeof A.get === 'function') {
+      try { const a = A.get(regionId); if (a && a.type) return a.type; } catch (e) { /* repli */ }
+    }
+    const C = R3.get('cities');
+    if (C && typeof C.get === 'function') {
+      try { const c = C.get(regionId); if (c && c.arenaType) return c.arenaType; } catch (e) { /* repli */ }
+    }
+    return 'lumiere';
+  }
+
+  // --------------------------------------------------------------------------
+  //  ICÔNE FLOTTANTE — un sprite dessiné au canvas. Le cache est indispensable :
+  //  une CanvasTexture par monument coûterait plus cher que le monument.
+  // --------------------------------------------------------------------------
+  const _iconCache = new Map();
+
+  function iconTexture(glyph, color) {
+    const key = glyph + '|' + color;
+    let tex = _iconCache.get(key);
+    if (tex) return tex;
+    let cv = null;
+    try { cv = document.createElement('canvas'); } catch (e) { return null; }
+    if (!cv) return null;
+    cv.width = 256; cv.height = 256;
+    const c = cv.getContext('2d');
+    if (!c) return null;
+
+    // Pastille pleine + liseré clair : lisible sur ciel bleu comme sur forêt.
+    c.beginPath();
+    c.arc(128, 128, 108, 0, Math.PI * 2);
+    c.fillStyle = 'rgba(12, 14, 26, 0.72)';
+    c.fill();
+    c.lineWidth = 14;
+    c.strokeStyle = color;
+    c.stroke();
+    c.font = '128px system-ui, -apple-system, "Segoe UI Emoji", sans-serif';
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillText(glyph, 128, 138);
+
+    tex = new THREE.CanvasTexture(cv);
+    if ('colorSpace' in tex && THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
+    _iconCache.set(key, tex);
+    return tex;
+  }
+
+  /** Sprite d'icône, à `y` unités au-dessus du sol du monument. */
+  function iconMarker(glyph, color, y, size) {
+    const tex = iconTexture(glyph, color);
+    if (!tex) return null;
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: tex, transparent: true, depthWrite: false, fog: false,
+    }));
+    const k = size || 2.6;
+    s.scale.set(k, k, 1);
+    s.position.set(0, y, 0);
+    s.userData.dyn = true;                 // un sprite n'est pas un mesh : jamais cuit
+    reg({ t: 'marker', g: s, base: y, ph: y });
+    return s;
+  }
+
+  // --------------------------------------------------------------------------
+  //  COLONNE DE LUMIÈRE — le vrai repère longue portée.
+  //  `fog: false` est ESSENTIEL : sans lui, le brouillard de sky3d.js mange la
+  //  colonne exactement à la distance où l'on en a le plus besoin. R3.mat() ne
+  //  sait pas produire un matériau insensible au brouillard : on CLONE le sien
+  //  (même astuce que bakeMat() plus haut) pour hériter de tous ses réglages.
+  // --------------------------------------------------------------------------
+  const _haloMats = new Map();
+
+  function haloMat(color) {
+    let m = _haloMats.get(color);
+    if (m) return m;
+    m = R3.mat(color, {
+      transparent: true, opacity: 0.30, rough: 0.4,
+      emissive: color, emissiveIntensity: 1.0,
+      depthWrite: false, side: THREE.DoubleSide,
+    }).clone();
+    m.fog = false;
+    m.blending = THREE.AdditiveBlending;
+    m.name = 'citybuild-halo';
+    _haloMats.set(color, m);
+    return m;
+  }
+
+  /** Colonne de lumière + disque au sol. 2 draw calls, jamais plus. */
+  function halo(color, h, r, y0) {
+    const g = new THREE.Group();
+    g.userData.dyn = true;                 // exclue de la cuisson : elle respire
+    const mtl = haloMat(color);
+    const beam = meshOf(R3.geo.cyl(r * 0.5, r, h, 10), mtl, 0, (y0 || 0) + h / 2, 0);
+    beam.castShadow = false; beam.receiveShadow = false;
+    beam.frustumCulled = false;            // sa base est loin sous le haut de l'écran
+    g.add(beam);
+    const disc = meshOf(R3.geo.cyl(r * 2.6, r * 2.6, 0.05, 18), mtl, 0, 0.09, 0);
+    disc.castShadow = false; disc.receiveShadow = false;
+    g.add(disc);
+    reg({ t: 'halo', g: g, beam: beam, disc: disc, ph: h });
+    return g;
+  }
+
+  // --------------------------------------------------------------------------
+  //  ARBRE STYLISÉ — l'allée de l'Académie et sa cour (demande n° 10 bis :
+  //  « des tours, des ponts et des arbres »). 3 meshes, tous cuits.
+  // --------------------------------------------------------------------------
+  function tree(st, x, y, z, s) {
+    s = s || 1;
+    const leaf = st.snowy ? '#3f6b52' : (st.braziers ? '#5a4a2c' : '#2f8f4f');
+    const leaf2 = st.snowy ? st.snow : (st.braziers ? '#7a5a2c' : '#3fae62');
+    return R3.group(
+      cy(0.16 * s, 0.24 * s, 1.5 * s, st.woodDark, x, y + 0.75 * s, z, { seg: 6 }),
+      cn(0.95 * s, 1.9 * s, leaf, x, y + 2.2 * s, z, { seg: 8 }),
+      cn(0.70 * s, 1.5 * s, leaf2, x, y + 3.1 * s, z, { seg: 8 })
+    );
+  }
+
+  // ==========================================================================
+  //  §8.1 — LE CENTRE POKÉMON  (demande n° 8 : « un Centre par région »)
+  // --------------------------------------------------------------------------
+  //  Signes distinctifs imposés par le contrat : toit ROUGE ARRONDI, grande
+  //  CROIX BLANCHE LUMINEUSE au fronton, BAIES VITRÉES chaudes, PORTE
+  //  AUTOMATIQUE. On garde la palette de la ville pour les murs (une ville
+  //  reste reconnaissable), mais le toit et la croix, eux, ne changent JAMAIS :
+  //  c'est à ça qu'un enfant reconnaît un Centre, dans n'importe quelle région.
+  //
+  //  Budget mesuré : 4 pièces cuites + 2 battants + 2 (halo) + 1 sprite
+  //  + 1 bannière (2 pièces) = 11 draw calls.
+  // ==========================================================================
+
+  const CENTRE_ROUGE = '#e8453c';        // le rouge du toit, jamais négociable
+  const CENTRE_ROSE = '#ff6b9d';         // la couleur de repère du contrat §8.1
+
+  function buildPokeCenter(st, o, g) {
+    const W = Math.max(4.6, o.W - 0.8), D = Math.max(3.4, o.D - 0.8), hs = o.hs;
+    const h = 2.7 * hs;
+    const roofColor = o.roof || CENTRE_ROUGE;
+    const baseY = podium(g, st, W, D, 0);
+
+    // --- Corps : un volume clair, presque blanc, pour que le toit claque -----
+    const mur = st.gilded ? st.trim : '#f4efe4';
+    g.add(bx(W, h, D, mur, 0, baseY + h / 2, 0));
+    g.add(bx(W + 0.10, 0.16, D + 0.10, st.stoneDark, 0, baseY + h + 0.06, 0));
+
+    // --- TOIT ROUGE ARRONDI : un demi-cylindre couché selon X. Un cylindre R3
+    //     a son axe en Y ; rotation.z = π/2 le couche. La moitié basse est
+    //     noyée dans le corps : invisible, et ça évite une géométrie sur mesure.
+    const rr = D * 0.56;
+    const dome = cy(rr, rr, W * 1.03, roofColor, 0, baseY + h + 0.06, 0, { seg: 18 });
+    dome.rotation.z = PI / 2;
+    g.add(dome);
+    // Pignons ronds aux deux bouts : sans eux, on voit à travers le toit.
+    for (let s = -1; s <= 1; s += 2) {
+      const p = cy(rr * 0.99, rr * 0.99, 0.14, roofColor, s * W * 0.515, baseY + h + 0.06, 0, { seg: 18 });
+      p.rotation.z = PI / 2;
+      g.add(p);
+    }
+    if (st.snowy) {
+      const neige = cy(rr * 0.94, rr * 0.94, W * 0.92, st.snow, 0, baseY + h + 0.30, 0, { seg: 18 });
+      neige.rotation.z = PI / 2;
+      g.add(neige);
+    }
+
+    // --- Baies vitrées chaudes : une longue verrière, pas trois hublots ------
+    g.add(bx(W * 0.80, 1.35, 0.10, '#ffe3a8', 0, baseY + 1.05, D / 2 + 0.03, { glow: 'warm' }));
+    g.add(bx(W * 0.82, 0.14, 0.14, st.stoneDark, 0, baseY + 1.78, D / 2 + 0.05));
+    for (let s = -1; s <= 1; s += 2) {
+      g.add(bx(0.10, 1.4, D * 0.74, '#ffe3a8', s * (W / 2 + 0.02), baseY + 1.05, 0, { glow: 'warm' }));
+    }
+    // Auvent d'entrée soutenu par deux colonnes.
+    g.add(bx(W * 0.52, 0.14, 1.0, roofColor, 0, baseY + 2.05, D / 2 + 0.45));
+    for (let s = -1; s <= 1; s += 2) {
+      g.add(cy(0.09, 0.10, 2.0, st.trim, s * W * 0.22, baseY + 1.0, D / 2 + 0.85, { seg: 8 }));
+    }
+
+    // --- Porte automatique : deux battants qui coulissent (animés) -----------
+    const porte = new THREE.Group();
+    porte.userData.dyn = true;
+    const vitre = R3.mat('#bfe9ff', { transparent: true, opacity: 0.62, rough: 0.15, emissive: '#8fd6ff', emissiveIntensity: 0.5 });
+    const gauche = meshOf(R3.geo.box(0.62, 1.7, 0.09), vitre, -0.32, baseY + 0.85, D / 2 + 0.09);
+    const droite = meshOf(R3.geo.box(0.62, 1.7, 0.09), vitre, 0.32, baseY + 0.85, D / 2 + 0.09);
+    gauche.castShadow = false; droite.castShadow = false;
+    porte.add(gauche, droite);
+    g.add(porte);
+    reg({ t: 'slide', a: gauche, b: droite, x: 0.32, ph: (o.seed || 0) % 7 });
+
+    // --- LA GRANDE CROIX BLANCHE LUMINEUSE, au fronton ----------------------
+    // Elle est portée par un cartouche rond de la couleur du toit : c'est le
+    // contraste rouge/blanc qui se lit à cent tuiles, pas la croix seule.
+    const cy0 = baseY + h + rr * 0.72;
+    g.add(cy(0.86, 0.86, 0.12, roofColor, 0, cy0, D * 0.30, { seg: 16 }));
+    g.add(bx(1.22, 0.36, 0.16, '#ffffff', 0, cy0, D * 0.30 + 0.06, { glow: 'warm' }));
+    g.add(bx(0.36, 1.22, 0.16, '#ffffff', 0, cy0, D * 0.30 + 0.06, { glow: 'warm' }));
+
+    // --- La croix hissée au-dessus du toit : ce qui dépasse des maisons ------
+    const mat = baseY + h + rr + 1.5;
+    g.add(cy(0.09, 0.11, 1.6, st.stoneDark, 0, baseY + h + rr + 0.8, 0, { seg: 8 }));
+    g.add(bx(1.5, 0.42, 0.42, '#ffffff', 0, mat, 0, { glow: 'warm' }));
+    g.add(bx(0.42, 1.5, 0.42, '#ffffff', 0, mat, 0, { glow: 'warm' }));
+
+    g.add(bannerPole(st, -W / 2 + 0.3, baseY + 0.1, D / 2 + 0.3, 2.4, 1.0, CENTRE_ROSE, 1));
+
+    // --- Le repère de loin (contrat §8.1 : icône ➕, couleur #ff6b9d) --------
+    // gates3d.js ne sait poser des phares que sur `plan.castle` et `plan.arena`
+    // (et on n'a pas le droit d'y toucher) : le Centre porte donc SON PROPRE
+    // phare. `cities3d.beacons()` publie la même information pour le lot I.
+    g.add(halo(CENTRE_ROSE, 34, 0.55, baseY));
+    const mk = iconMarker('➕', CENTRE_ROSE, mat + 2.4, 2.8);
+    if (mk) g.add(mk);
+  }
+
+  // ==========================================================================
+  //  §8.3 — L'ARÈNE, ENFIN REPÉRABLE  (demande n° 6)
+  // --------------------------------------------------------------------------
+  //  Tout est calé sur le TYPE DU CHAMPION : la couleur du dôme, celle des
+  //  arcades, celle du halo, et l'icône qui flotte au-dessus. Deux statues de
+  //  créatures gardent l'entrée, un mât porte la bannière du badge. On doit
+  //  pouvoir dire « c'est l'arène Plante » depuis l'autre bout de la carte.
+  //
+  //  Budget mesuré : 4 pièces cuites + 2 (halo) + 1 sprite + 3 bannières
+  //  (2 pièces chacune) + 2 braseros (2 pièces) = 17 draw calls.
+  // ==========================================================================
+
+  /** Statue de créature : un fauve assis, stylisé. 11 meshes, tous cuits. */
+  function creatureStatue(st, color, face) {
+    const c = st.gilded ? st.gold : st.stone;
+    const mo = st.gilded ? { metal: 0.7, rough: 0.3 } : undefined;
+    const f = face || 1;
+    const g = R3.group(
+      bx(1.5, 0.34, 1.5, st.stoneDark, 0, 0.17, 0),                   // socle
+      bx(1.25, 0.9, 1.25, c, 0, 0.79, 0, mo),                         // piédestal
+      bx(1.4, 0.14, 1.4, st.stoneDark, 0, 1.31, 0),
+      el(0.42, 0.44, 0.62, c, 0, 1.82, -0.06, mo),                    // poitrail
+      el(0.30, 0.30, 0.30, c, 0, 2.36, f * 0.16, mo),                 // tête
+      cn(0.11, 0.34, c, -0.17, 2.62, f * 0.12, mo),                   // oreilles
+      cn(0.11, 0.34, c, 0.17, 2.62, f * 0.12, mo),
+      el(0.11, 0.34, 0.11, c, -0.28, 1.66, f * 0.34, mo),             // pattes avant
+      el(0.11, 0.34, 0.11, c, 0.28, 1.66, f * 0.34, mo),
+      el(0.09, 0.09, 0.42, c, 0, 1.86, -f * 0.62, mo)                 // queue
+    );
+    // Les yeux prennent la couleur du type : la statue « appartient » à l'arène.
+    g.add(sp(0.075, color, -0.12, 2.40, f * 0.42, { glow: 'cool', seg: 6 }));
+    g.add(sp(0.075, color, 0.12, 2.40, f * 0.42, { glow: 'cool', seg: 6 }));
+    return g;
+  }
+
+  function buildArena(st, o, g) {
+    const hs = o.hs;
+    const R = Math.max(3.0, Math.min(o.W, o.D) * 0.46);
+    const H = 4.4 * hs;                                  // plus haut qu'avant : ça compte
+    const region = o.regionId || REGION_OF_STYLE[st.id] || 'val';
+    const type = o.arenaType || arenaTypeOf(region);
+    const ti = typeInfo(type);
+    const badge = badgeInfo(region);
+
+    // --- Soubassement et corps ---------------------------------------------
+    g.add(cy(R + 0.5, R + 0.8, 0.5, st.stoneDark, 0, 0.25, 0, { seg: 20 }));
+    g.add(cy(R + 0.26, R + 0.42, 0.24, st.stone, 0, 0.62, 0, { seg: 20 }));
+    g.add(cy(R, R + 0.18, H, st.stone, 0, 0.74 + H / 2, 0, { seg: 20 }));
+
+    // --- Arcades typées : 12 colonnes, une lucarne colorée sur deux ---------
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * PI * 2;
+      const x = Math.cos(a) * (R + 0.12), z = Math.sin(a) * (R + 0.12);
+      g.add(cy(0.19, 0.22, H * 0.88, st.trim, x, 0.74 + H * 0.44, z, { seg: 8 }));
+      if (i % 2 === 0) {
+        const lu = bx(0.30, 0.9, 0.14, ti.color, x * 0.985, 0.74 + H * 0.66, z * 0.985, { glow: 'cool' });
+        lu.rotation.y = -a;
+        g.add(lu);
+      }
+    }
+    g.add(ring(R + 0.10, 0.20, st.stoneDark, 0, 0.74 + H, 0, { seg: 20 }));
+    crenelRing(g, R + 0.06, 0.74 + H + 0.18, 16, 0.24, 0.40, st.stone);
+
+    // --- LE DÔME, à la couleur du type : la silhouette qu'on reconnaît ------
+    const dr = R * 0.94;
+    const dy = 0.74 + H + 0.30;
+    g.add(cy(dr * 1.04, dr * 1.10, 0.34, st.stoneDark, 0, dy + 0.17, 0, { seg: 20 }));
+    g.add(el(dr, dr * 0.78, dr, ti.color, 0, dy + 0.34, 0, { rough: 0.42, metal: 0.25, seg: 18 }));
+    g.add(ring(dr * 0.62, 0.09, st.gold, 0, dy + 0.34 + dr * 0.55, 0, { metal: 0.8, rough: 0.26 }));
+    // Oculus : le dôme est percé et la lumière du type en sort.
+    g.add(cy(dr * 0.26, dr * 0.26, 0.22, ti.color, 0, dy + dr * 0.78 + 0.30, 0, { glow: 'cool', seg: 14 }));
+
+    // --- Entrée monumentale au sud, sous une arche de claveaux --------------
+    const zf = R + 0.10;
+    g.add(bx(2.4, 3.0, 0.6, st.woodDark, 0, 0.74 + 1.5, zf));
+    archTop(g, 2.7, 0.74 + 3.0, zf, 0.62, st.stoneDark, 6);
+    // Emblème du type au-dessus de la porte.
+    g.add(cy(0.62, 0.62, 0.10, ti.color, 0, 0.74 + H * 0.80, zf + 0.10, { glow: 'cool', seg: 16 }));
+    g.add(ring(0.68, 0.11, st.gold, 0, 0.74 + H * 0.80, zf + 0.12, { metal: 0.8, rough: 0.26 }));
+    // Marches : on monte vers l'arène, on n'y entre pas de plain-pied.
+    for (let i = 0; i < 3; i++) {
+      g.add(bx(3.4 - i * 0.3, 0.18, 0.5, st.stone, 0, 0.09 + i * 0.18, zf + 1.3 - i * 0.4));
+    }
+
+    // --- LES DEUX STATUES DE CRÉATURES, de part et d'autre de l'entrée ------
+    for (let s = -1; s <= 1; s += 2) {
+      const stt = creatureStatue(st, ti.color, 1);
+      stt.position.set(s * (R * 0.72), 0.5, zf + 1.5);
+      stt.rotation.y = -s * 0.25;
+      g.add(stt);
+    }
+
+    // --- LE MÂT ET LA BANNIÈRE DU BADGE ------------------------------------
+    const my = dy + dr * 0.78 + 0.4;
+    g.add(cy(0.10, 0.13, 3.4, st.stoneDark, 0, my + 1.7, 0, { seg: 8 }));
+    g.add(cy(0.44, 0.44, 0.14, badge.color, 0, my + 3.3, 0, { glow: 'warm', seg: 14 }));
+    g.add(bannerPole(st, 0, my + 0.1, 0, 3.2, 1.9, badge.color, 1));
+    // Deux bannières de plus, en bas, pour animer la façade.
+    for (let s = -1; s <= 1; s += 2) {
+      g.add(bannerPole(st, s * (R * 0.62), 0.74 + H * 0.5, zf * 0.55, 1.5, 1.1, ti.color, 1));
+    }
+    if (st.braziers) {
+      g.add(brazier(st, 1.9, 0.5, zf + 1.9, 1.3));
+      g.add(brazier(st, -1.9, 0.5, zf + 1.9, 1.3));
+    }
+    if (st.snowy) g.add(ring(R + 0.7, 0.14, st.snow, 0, 0.52, 0, { seg: 20 }));
+
+    // --- LE HALO : ce qui manquait, et qui change tout ----------------------
+    g.add(halo(ti.color, 46, 0.75, 0.3));
+    const mk = iconMarker(ti.icon, ti.color, my + 5.2, 3.4);
+    if (mk) g.add(mk);
+  }
+
+  // ==========================================================================
+  //  §8.2 — L'ACADÉMIE-CHÂTEAU  (demandes n° 10 et 10 bis)
+  // --------------------------------------------------------------------------
+  //  Robin a demandé « un immense château avec des tours, des ponts et des
+  //  arbres ». Tout y est : donjon central, quatre tours d'angle à toits
+  //  coniques, ponts suspendus entre les tours, cour intérieure, arbres. Le
+  //  fossé, le pont-levis et l'allée bordée d'arbres sont posés EN TUILES par
+  //  cities3d.js — ils appartiennent au terrain, pas au monument.
+  //
+  //  CONTRAINTE DURE DU CONTRAT : moins de 40 draw calls pour le château
+  //  ENTIER. C'est ce qui interdit un mesh par créneau. Tout ce qui ne bouge
+  //  pas est cuit (bake) en quatre pièces ; seuls les quatre étendards, les
+  //  deux braseros, le halo, le cristal et le sprite restent séparés.
+  //
+  //  Budget mesuré : 4 pièces cuites + 4 étendards (2) + 2 braseros (2)
+  //  + 2 (halo) + 1 cristal + 1 sprite = 24 draw calls.
+  // ==========================================================================
+
+  const ACADEMIE_VIOLET = '#a678f0';     // la couleur de la Téracristallisation
+
+  function buildAcademy(st, o, g) {
+    const hs = o.hs;
+    const W = Math.max(14, o.W), D = Math.max(12, o.D);
+    const hw = W / 2, hd = D / 2;
+
+    // --- La cour et sa terrasse --------------------------------------------
+    g.add(bx(W, 0.34, D, st.stoneDark, 0, 0.17, 0));
+    g.add(bx(W - 1.6, 0.22, D - 1.6, st.ground, 0, 0.42, 0));
+    // Allée dallée qui traverse la cour, de la porte au donjon.
+    g.add(bx(2.6, 0.10, D * 0.42, st.trim, 0, 0.56, hd * 0.55));
+
+    // --- LA COURTINE : quatre pans, pas un mur par tuile ---------------------
+    const mh = 6.2 * hs;                       // hauteur de la courtine
+    const mt = 1.1;                            // épaisseur
+    for (let s = -1; s <= 1; s += 2) {
+      g.add(bx(W - 0.4, mh, mt, st.stone, 0, 0.34 + mh / 2, s * (hd - mt / 2)));
+      g.add(bx(mt, mh, D - 0.4, st.stone, s * (hw - mt / 2), 0.34 + mh / 2, 0));
+    }
+    // Cordon mouluré + créneaux : le relief qui dit « château » de loin.
+    g.add(bx(W + 0.3, 0.28, D + 0.3, st.stoneDark, 0, 0.34 + mh + 0.14, 0));
+    crenelRect(g, W + 0.2, D + 0.2, 0.34 + mh + 0.28, 0.46, 0.62, st.stone, 1.4);
+
+    // --- LES QUATRE TOURS D'ANGLE, à toits coniques -------------------------
+    const tr = 2.1;                            // rayon
+    const th = 11.5 * hs;                      // hauteur du fût
+    const tx = hw - tr * 0.72, tz = hd - tr * 0.72;
+    const tops = [];
+    for (let sx = -1; sx <= 1; sx += 2) {
+      for (let sz = -1; sz <= 1; sz += 2) {
+        const px = sx * tx, pz = sz * tz;
+        g.add(cy(tr, tr * 1.16, th, st.stone, px, 0.34 + th / 2, pz, { seg: 14 }));
+        g.add(ring(tr * 1.10, 0.16, st.stoneDark, px, 0.34 + th * 0.52, pz, { seg: 14 }));
+        // Galerie en encorbellement, puis le toit conique demandé par Robin.
+        g.add(cy(tr * 1.26, tr * 1.10, 0.5, st.stoneDark, px, 0.34 + th + 0.25, pz, { seg: 14 }));
+        crenelRing(g, tr * 1.20, 0.34 + th + 0.5, 10, 0.30, 0.46, st.stone);
+        const cap = towerCap(st, tr * 1.05, 0.34 + th + 0.96, { kind: 'cone_haut' });
+        cap.g.position.set(px, 0, pz);
+        g.add(cap.g);
+        // Meurtrières éclairées : de nuit, on sait que quelqu'un y travaille.
+        for (let k = 0; k < 3; k++) {
+          const a = k * 2.1 + (sx + sz);
+          g.add(bx(0.24, 0.7, 0.16, '#ffe3a8', px + Math.cos(a) * tr, 0.34 + th * (0.34 + k * 0.2), pz + Math.sin(a) * tr, { glow: 'warm' }));
+        }
+        tops.push({ x: px, z: pz, y: 0.34 + th + 0.5 });
+      }
+    }
+
+    // --- LES PONTS SUSPENDUS entre les tours (demande n° 10 bis) ------------
+    // Quatre travées : un tablier, deux garde-corps, des suspentes et deux
+    // câbles en chaînette approchée par trois segments inclinés. Tout est cuit.
+    const by = 0.34 + th + 0.15;
+    function pont(x0, z0, x1, z1) {
+      const dx = x1 - x0, dz = z1 - z0;
+      const len = Math.sqrt(dx * dx + dz * dz);
+      const ang = Math.atan2(dx, dz);
+      const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
+      const tablier = bx(1.5, 0.16, len - tr * 1.6, st.wood, mx, by, mz);
+      tablier.rotation.y = ang;
+      g.add(tablier);
+      for (let s = -1; s <= 1; s += 2) {
+        const rail = bx(0.10, 0.62, len - tr * 1.6, st.woodDark, mx + Math.cos(ang) * s * 0.72, by + 0.39, mz - Math.sin(ang) * s * 0.72);
+        rail.rotation.y = ang;
+        g.add(rail);
+      }
+      // Câble porteur : trois segments qui dessinent la chaînette.
+      const n = 3, seg = (len - tr * 1.6) / n;
+      for (let i = 0; i < n; i++) {
+        const t0 = -0.5 + i / n, t1 = -0.5 + (i + 1) / n;
+        const yy0 = by + 1.5 - 4 * 1.1 * t0 * t0, yy1 = by + 1.5 - 4 * 1.1 * t1 * t1;
+        const cxm = mx + Math.sin(ang) * ((t0 + t1) / 2) * (len - tr * 1.6);
+        const czm = mz + Math.cos(ang) * ((t0 + t1) / 2) * (len - tr * 1.6);
+        const cab = bx(0.10, 0.10, Math.sqrt(seg * seg + (yy1 - yy0) * (yy1 - yy0)), st.stoneDark, cxm, (yy0 + yy1) / 2, czm);
+        cab.rotation.y = ang;
+        cab.rotation.x = Math.atan2(yy1 - yy0, seg);
+        g.add(cab);
+      }
+    }
+    pont(tops[0].x, tops[0].z, tops[1].x, tops[1].z);
+    pont(tops[2].x, tops[2].z, tops[3].x, tops[3].z);
+    pont(tops[0].x, tops[0].z, tops[2].x, tops[2].z);
+    pont(tops[1].x, tops[1].z, tops[3].x, tops[3].z);
+
+    // --- LE DONJON : la pièce maîtresse, il domine tout le reste ------------
+    const kw = Math.min(7.6, W * 0.36), kd = Math.min(7.0, D * 0.40);
+    const kh = 15.5 * hs;
+    g.add(bx(kw + 1.1, 0.6, kd + 1.1, st.stoneDark, 0, 0.64, 0));
+    g.add(bx(kw, kh, kd, st.stone, 0, 0.94 + kh / 2, 0));
+    // Contreforts d'angle : ce qui empêche le donjon de ressembler à une boîte.
+    for (let sx = -1; sx <= 1; sx += 2) {
+      for (let sz = -1; sz <= 1; sz += 2) {
+        g.add(bx(0.9, kh * 0.92, 0.9, st.stoneDark, sx * kw / 2, 0.94 + kh * 0.46, sz * kd / 2));
+      }
+    }
+    // Trois registres de fenêtres en ogive, sur les quatre faces.
+    for (let f = 0; f < 4; f++) {
+      const a = f * PI / 2;
+      const nx = Math.sin(a), nz = Math.cos(a);
+      const ex = (f % 2 === 0) ? kd / 2 : kw / 2;
+      for (let k = 0; k < 3; k++) {
+        for (let i = -1; i <= 1; i++) {
+          if (k === 2 && i !== 0) continue;
+          const px = nx * (ex + 0.05) + nz * i * 1.5;
+          const pz = nz * (ex + 0.05) - nx * i * 1.5;
+          const wnd = bx(0.5, 1.05, 0.14, '#ffe3a8', px, 0.94 + kh * (0.24 + k * 0.24), pz, { glow: 'warm' });
+          wnd.rotation.y = a;
+          g.add(wnd);
+        }
+      }
+    }
+    g.add(bx(kw + 1.4, 0.36, kd + 1.4, st.stoneDark, 0, 0.94 + kh + 0.18, 0));
+    crenelRect(g, kw + 1.3, kd + 1.3, 0.94 + kh + 0.36, 0.42, 0.58, st.stone, 1.3);
+    // Flèche : un cône très élancé, la pointe de tout le paysage.
+    const fh = 8.5 * hs;
+    g.add(cn(Math.min(kw, kd) * 0.66, fh, st.roof, 0, 0.94 + kh + 1.0 + fh / 2, 0, { seg: 10 }));
+    if (st.snowy) g.add(cn(Math.min(kw, kd) * 0.42, fh * 0.5, st.snow, 0, 0.94 + kh + 1.0 + fh * 0.72, 0, { seg: 10 }));
+    const sommet = 0.94 + kh + 1.0 + fh;
+    g.add(cy(0.09, 0.11, 1.2, st.gold, 0, sommet + 0.6, 0, { metal: 0.8, rough: 0.26 }));
+
+    // --- LE CHÂTELET D'ENTRÉE, face au sud (côté +z) ------------------------
+    const gz = hd - mt / 2;
+    for (let s = -1; s <= 1; s += 2) {
+      g.add(cy(1.35, 1.5, mh + 2.6, st.stone, s * 2.5, 0.34 + (mh + 2.6) / 2, gz, { seg: 12 }));
+      const cap = towerCap(st, 1.42, 0.34 + mh + 2.6, { kind: 'cone_haut' });
+      cap.g.position.set(s * 2.5, 0, gz);
+      g.add(cap.g);
+    }
+    g.add(bx(3.2, 3.8, mt + 0.8, st.woodDark, 0, 0.34 + 1.9, gz));
+    archTop(g, 3.6, 0.34 + 3.8, gz + mt * 0.55, 0.8, st.stoneDark, 6);
+    g.add(portcullis(2.8, 2.2, 0.34 + 3.7, gz + mt * 0.4, st.stoneDark));
+    // Écusson de l'Académie au-dessus de l'arche : un cristal violet.
+    g.add(cy(0.9, 0.9, 0.14, ACADEMIE_VIOLET, 0, 0.34 + mh + 0.9, gz + mt * 0.6, { glow: 'cool', seg: 14 }));
+    g.add(ring(0.98, 0.14, st.gold, 0, 0.34 + mh + 0.9, gz + mt * 0.62, { metal: 0.8, rough: 0.26 }));
+
+    // --- LES ARBRES DE LA COUR (demande n° 10 bis) --------------------------
+    for (let i = 0; i < 6; i++) {
+      const a = i * (PI / 3) + 0.4;
+      const rx = (hw - tr * 2.3) * Math.cos(a), rz = (hd - tr * 2.3) * Math.sin(a);
+      if (Math.abs(rx) < kw * 0.8 && Math.abs(rz) < kd * 0.8) continue;   // pas dans le donjon
+      g.add(tree(st, rx, 0.5, rz, 0.85));
+    }
+
+    // --- Étendards et braseros : le peu de mouvement qu'on s'autorise -------
+    for (let i = 0; i < 4; i++) {
+      const t = tops[i];
+      g.add(bannerPole(st, t.x, t.y + 1.0, t.z, 2.6, 1.7, i % 2 ? ACADEMIE_VIOLET : st.banner, 1));
+    }
+    g.add(brazier(st, 4.6, 0.56, gz + 1.8, 1.5));
+    g.add(brazier(st, -4.6, 0.56, gz + 1.8, 1.5));
+
+    // --- LE CRISTAL DE TÉRACRISTALLISATION, en lévitation au-dessus de la
+    //     flèche. C'est la promesse de l'Académie, lisible de très loin.
+    const cris = new THREE.Group();
+    cris.userData.dyn = true;
+    const cm = meshOf(R3.geo.cone(1.05, 2.4, 6), R3.mat(ACADEMIE_VIOLET, {
+      emissive: ACADEMIE_VIOLET, emissiveIntensity: 1.1, rough: 0.2, metal: 0.3,
+      transparent: true, opacity: 0.9,
+    }), 0, 0, 0);
+    cm.castShadow = false;
+    cris.add(cm);
+    cris.position.set(0, sommet + 3.2, 0);
+    g.add(cris);
+    reg({ t: 'orbit', g: cris, base: sommet + 3.2, ph: 0 });
+
+    // --- Le halo : on doit apercevoir l'Académie de plusieurs régions --------
+    g.add(halo(ACADEMIE_VIOLET, 78, 1.15, 0.4));
+    const mk = iconMarker('🏰', ACADEMIE_VIOLET, sommet + 6.4, 4.2);
+    if (mk) g.add(mk);
+  }
+
+  // ==========================================================================
   //  7. build(kind, opts)
   // ==========================================================================
 
@@ -1538,8 +2093,12 @@
     },
     hedge: buildHedge,
     roseBed: buildRoseBed,
+    // --- v3 §8 : les trois repères. `arena` et `healCenter` gardent leur CLÉ
+    //     (c'est elle que tiles3d.js écrit dans `deco`, on n'a pas le droit d'y
+    //     toucher) mais changent complètement de bâtiment.
     arena: buildArena,
-    healCenter: function (st, o, g) { civic(st, o, g, o.roof || '#f06a8a', 'croix'); },
+    healCenter: buildPokeCenter,
+    academy: buildAcademy,
     shop: function (st, o, g) { civic(st, o, g, o.roof || '#3aa6d8', 'sac'); },
     portal: buildPortal,
     lighthouse: buildLighthouse,
@@ -1574,6 +2133,11 @@
         roof: opts.roof || null,
         rnd: R3.rng(seed || 1),
         seed: seed,
+        // v3 §8.3 : le type du champion. world3d.js ne le transmet pas — l'arène
+        // le déduit alors du style de ville. `opts.type` reste prioritaire, pour
+        // que buildArena(type, opts) puisse forcer n'importe quel type.
+        arenaType: opts.type || opts.arenaType || null,
+        regionId: opts.regionId || null,
       };
       root = new THREE.Group();
       make(st, o, root);
@@ -1668,6 +2232,37 @@
           a.g.position.y = a.base + Math.sin(T * 1.5) * 0.12;
           break;
         }
+        // --- v3 §8 : les repères visibles de loin ---------------------------
+        case 'halo': {
+          // La colonne « respire » lentement. Elle ne s'éteint JAMAIS
+          // complètement : un repère qui clignote est un repère qu'on rate.
+          const p = 0.80 + Math.sin(T * 1.5 + a.ph) * 0.20;
+          a.beam.material.opacity = 0.30 * p;
+          a.disc.material.opacity = 0.30 * (1.3 - p * 0.5);
+          a.disc.rotation.y = T * 0.25;
+          break;
+        }
+        case 'marker': {
+          // L'icône flotte : le mouvement attire l'œil bien mieux que la taille.
+          a.g.position.y = a.base + Math.sin(T * 1.1 + a.ph) * 0.35;
+          break;
+        }
+        case 'orbit': {
+          a.g.rotation.y = T * 0.5;
+          a.g.rotation.x = Math.sin(T * 0.7) * 0.12;
+          a.g.position.y = a.base + Math.sin(T * 0.9) * 0.5;
+          break;
+        }
+        case 'slide': {
+          // Porte automatique : elle s'ouvre quand on approche… mais on n'a pas
+          // la position du joueur ici. Elle s'ouvre donc au rythme d'un vrai
+          // Centre : un cycle lent, largement ouvert la moitié du temps.
+          const c = Math.sin(T * 0.55 + a.ph);
+          const k = a.x + Math.max(0, c) * 0.62;
+          a.a.position.x = -k;
+          a.b.position.x = k;
+          break;
+        }
       }
     }
 
@@ -1687,16 +2282,74 @@
   //  9. ENREGISTREMENT
   // ==========================================================================
 
+  // --------------------------------------------------------------------------
+  //  Où sont les portes ? On répond TOUJOURS, même si cities3d manque : une
+  //  fonction du contrat qui renvoie null oblige l'appelant à se débrouiller,
+  //  et c'est comme ça qu'on casse le lot Intégration.
+  // --------------------------------------------------------------------------
+
+  // Repli codé en dur : la position calculée par cities3d.js pour l'Académie.
+  // Si cities3d répond, c'est LUI qui fait autorité.
+  // (valeur relevée sur le plan réel : cities3d.academyDoorTile() renvoie ceci)
+  const ACADEMY_FALLBACK = { regionId: 'sylve', x: 129, y: 80 };
+
+  function citiesApi() { try { return R3.get('cities') || null; } catch (e) { return null; } }
+
+  /** Tuile ACADEMY_DOOR : { regionId, x, y }. Le lot I y branchera la tuile. */
+  function academyDoorTile() {
+    const C = citiesApi();
+    if (C && typeof C.academyDoorTile === 'function') {
+      try { const t = C.academyDoorTile(); if (t && typeof t.x === 'number') return t; } catch (e) { /* repli */ }
+    }
+    return { regionId: ACADEMY_FALLBACK.regionId, x: ACADEMY_FALLBACK.x, y: ACADEMY_FALLBACK.y };
+  }
+
+  /** Tuile HEAL_DOOR du Centre Pokémon d'une région : { x, y } ou null. */
+  function centerDoorTile(regionId) {
+    const C = citiesApi();
+    if (!C) return null;
+    try {
+      if (typeof C.centerDoorTile === 'function') {
+        const t = C.centerDoorTile(regionId);
+        if (t && typeof t.x === 'number') return { x: t.x, y: t.y };
+      }
+      const c = (typeof C.get === 'function') ? C.get(regionId) : null;
+      if (c && c.heal && typeof c.heal.x === 'number') return { x: c.heal.x, y: c.heal.y };
+    } catch (e) { /* repli ci-dessous */ }
+    return null;
+  }
+
+  // Les trois constructeurs publics du §8 : mêmes signatures que le contrat.
+  // Ils passent par build(), donc ils héritent de la cuisson et de la rotation.
+  function buildCenterPublic(opts) { return build('healCenter', opts || {}); }
+  function buildAcademyPublic(opts) { return build('academy', opts || {}); }
+  function buildArenaPublic(type, opts) {
+    const o = Object.assign({}, opts || {});
+    if (type) o.type = type;
+    return build('arena', o);
+  }
+
   R3.register('citybuild', {
     // --- signature exacte du contrat §14 ---
     build: build,
     isMonument: isMonument,
     update: update,
+    // --- signature exacte du contrat v3 §8 ---
+    buildCenter: buildCenterPublic,
+    buildAcademy: buildAcademyPublic,
+    buildArena: buildArenaPublic,
+    academyDoorTile: academyDoorTile,
+    centerDoorTile: centerDoorTile,
     // --- ajouts utiles à world3d.js / cities3d.js (jamais en remplacement) ---
     STYLES: STYLES,
     KINDS: Object.keys(BUILDERS),
     isGrand: isGrand,
     footprint: footprint,
     animCount: function () { return ANIM.length; },
+    // Pratique pour vérifier le budget depuis la console du navigateur.
+    drawCallsOf: function (kind, opts) {
+      const g = build(kind, opts);
+      return g ? (g.userData.drawCalls || 0) : 0;
+    },
   });
 })();

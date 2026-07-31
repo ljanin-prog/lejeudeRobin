@@ -64,7 +64,7 @@
   // ---------------------------------------------------------------------------
   const WALKABLE = new Set([
     // circulations de ville
-    'GATE_ARCH', 'CASTLE_GATE', 'ARENA_DOOR', 'HEAL_DOOR', 'SHOP_DOOR',
+    'GATE_ARCH', 'CASTLE_GATE', 'ARENA_DOOR', 'HEAL_DOOR', 'SHOP_DOOR', 'ACADEMY_DOOR',
     'PLAZA', 'PLAZA_GRAND', 'PAVED_ROAD', 'BRIDGE', 'PORTAL', 'DOCK', 'STAR_PATH',
     'OBSERVATORY_FLOOR',
     // sols naturels que les villes posent dans leurs cours et jardins
@@ -79,6 +79,59 @@
   // Les tuiles de circulation à proprement parler (ce qui peut devenir une rue,
   // porter un lampadaire, ou être élagué si ça finit en impasse).
   const STREETY = new Set(['PAVED_ROAD', 'BRIDGE', 'PLAZA', 'PLAZA_GRAND', 'STAR_PATH', 'DOCK']);
+
+  // ---------------------------------------------------------------------------
+  //  GREFFE DES DEUX TUILES DE L'ACADÉMIE  (contrat v3, §8.2)
+  //
+  //  L'Académie a besoin de deux tuiles que `tiles3d.js` ne connaît pas encore —
+  //  et `tiles3d.js` appartient au lot Intégration, on n'a pas le droit d'y
+  //  écrire. On les lui GREFFE donc au chargement, exactement comme
+  //  `regions3d.js` greffe déjà celles du port aérien : on ajoute, on n'écrase
+  //  jamais. Le jour où le lot I les déclarera pour de bon, ce bloc ne fera
+  //  plus rien du tout.
+  //
+  //  ORDRE DE CHARGEMENT — c'est le point critique : `regions3d.js` fige ses
+  //  tables « marchable / rencontre / biome / couleur » AU CHARGEMENT, à partir
+  //  de `tiles3d.NAMES`. Une tuile ajoutée après lui aurait un indice hors des
+  //  tableaux et serait donc considérée comme INFRANCHISSABLE. `cities3d.js`
+  //  se charge avant `regions3d.js` (index3d.html) : la greffe arrive à temps.
+  // ---------------------------------------------------------------------------
+  const ACADEMY_TILES = {
+    ACADEMY_WALL: {
+      walkable: false, encounter: false, biome: 'citadel', ground: '#8e8b84',
+      h: 0.55, deco: 'academy', roof: null, water: null, label: 'Académie du Cristal',
+    },
+    ACADEMY_DOOR: {
+      walkable: true, encounter: false, biome: 'citadel', ground: '#a09a90',
+      h: 0.06, deco: null, roof: null, water: null, label: "Portail de l'Académie",
+    },
+  };
+
+  (function grefferTuilesAcademie() {
+    try {
+      let T = null;
+      if (HAS_R3 && typeof R3.get === 'function') T = R3.get('tiles');
+      if (!T && typeof window !== 'undefined' && window.TILES3D) T = window.TILES3D;
+      if (!T || !T.TILES) return;                       // tiles3d absent : repli plus bas
+      for (const k in ACADEMY_TILES) {
+        if (!Object.prototype.hasOwnProperty.call(ACADEMY_TILES, k)) continue;
+        const d = ACADEMY_TILES[k];
+        if (!T.TILES[k]) T.TILES[k] = d;
+        if (T.NAMES && T.NAMES.indexOf(k) < 0) T.NAMES.push(k);
+        const st = { ground: d.ground, h: d.h, deco: d.deco, roof: d.roof, water: d.water };
+        if (T.STYLE && !T.STYLE[k]) T.STYLE[k] = st;
+        if (HAS_R3 && R3.TILE_STYLE && !R3.TILE_STYLE[k]) R3.TILE_STYLE[k] = st;
+        // `citybuild3d.js` fait autorité sur ce qui est un monument, mais
+        // tiles3d expose la même table : on la garde cohérente.
+        if (T.MONUMENTS && d.deco) T.MONUMENTS[d.deco] = true;
+        if (T.GRAND_MONUMENTS && d.deco) T.GRAND_MONUMENTS[d.deco] = true;
+      }
+    } catch (e) {
+      // Règle n°4 : jamais d'exception au chargement. Sans les tuiles,
+      // l'Académie ne s'affiche pas — le reste du jeu tourne à l'identique.
+      if (typeof console !== 'undefined') console.warn('cities3d : greffe des tuiles de l\'Académie impossible —', e);
+    }
+  })();
 
   // ---------------------------------------------------------------------------
   //  Styles — c'est ce qui rend les six villes reconnaissables au premier regard
@@ -730,6 +783,66 @@
 
   // --- Outils communs aux six -------------------------------------------------
 
+  // ---------------------------------------------------------------------------
+  //  LE CENTRE POKÉMON  (contrat v3, §8.1 — demande n° 8 de Robin)
+  //
+  //  Deux changements par rapport au « centre de soins » de la v2 :
+  //   · il est PLUS GRAND (6×4 au lieu de 4×3) — un Centre est le deuxième
+  //     bâtiment de la ville après le château, pas une cabane ;
+  //   · il DONNE SUR LA PLACE CENTRALE. C'est là qu'un enfant regarde en
+  //     premier quand il entre dans une ville, et c'est là qu'il doit le
+  //     trouver sans qu'on lui explique.
+  //
+  //  `def.heal` reste la tuile HEAL_DOOR (regions3d.js, arenas3d.js et game3d.js
+  //  la lisent déjà) ; `def.center` est le nouveau nom, plus juste, et pointe
+  //  exactement au même endroit.
+  // ---------------------------------------------------------------------------
+  //  POURQUOI UNE RECHERCHE, ET PAS UN RECTANGLE FIGÉ ?
+  //  Parce que les six villes n'ont pas la même trame : Ambrelune est un
+  //  peigne de pontons de 3 tuiles de large, Aurore un damier d'îlots de 7,
+  //  Fournaise un plan radial coupé de coulées de lave. Un rectangle codé en
+  //  dur tombe forcément sur une avenue protégée dans deux villes sur six —
+  //  mesuré : à Ambrelune et à Aurore, le Centre était intégralement mangé, il
+  //  ne restait QUE sa porte. On part donc d'un ancrage (le bord de la grande
+  //  place) et on retient l'assise qui garde le plus de tuiles.
+
+  const CENTER_R = 7;                     // rayon de recherche autour de l'ancrage
+
+  /** Nombre de tuiles libres d'un rectangle, ou -1 s'il sort du rempart. */
+  function freeArea(C, x, y, w, h) {
+    let n = 0;
+    for (let j = y; j < y + h; j++) {
+      for (let i = x; i < x + w; i++) {
+        if (!inb(C, i, j)) return -1;
+        const k = I(C, i, j);
+        if (!C.inside[k]) return -1;                 // un Centre est INTRA-MUROS
+        if (!C.hard[k] && !C.prot[k]) n++;
+      }
+    }
+    return n;
+  }
+
+  function pokeCenter(C, def, ax, ay, w, h, side, off) {
+    let best = null;
+    for (let dy = -CENTER_R; dy <= CENTER_R; dy++) {
+      for (let dx = -CENTER_R; dx <= CENTER_R; dx++) {
+        const x = ax + dx, y = ay + dy;
+        const free = freeArea(C, x, y, w, h);
+        if (free < 0) continue;
+        // On veut du volume d'abord, la proximité de la place ensuite.
+        const score = free * 10 - (Math.abs(dx) + Math.abs(dy));
+        if (!best || score > best.score) best = { x: x, y: y, free: free, score: score };
+      }
+    }
+    const p = (best && best.free >= Math.ceil(w * h * 0.5)) ? best : { x: ax, y: ay };
+    const hc = building(C, p.x, p.y, w, h, 'HEAL_CENTER', { door: 'HEAL_DOOR', side: side, off: off });
+    if (!hc) return null;
+    def.heal = { x: hc.x, y: hc.y };
+    def.center = { x: hc.x, y: hc.y, front: { x: hc.fx, y: hc.fy } };
+    def.landmarks.push({ kind: 'center', x: hc.x, y: hc.y, label: 'Centre Pokémon de ' + def.name });
+    return hc;
+  }
+
   function addSign(C, def, x, y, label, text) {
     if (!inb(C, x, y) || C.prot[I(C, x, y)]) return;
     hard(C, x, y, 'SIGN');
@@ -854,9 +967,8 @@
     const ar = building(C, 9, 24, 9, 7, 'ARENA_WALL', { door: 'ARENA_DOOR', side: 'N' });
     def.arena = { x: ar.x, y: ar.y };
 
-    // Centre de soins et boutique, de part et d'autre de l'avenue sud.
-    const hc = building(C, 26, 27, 4, 3, 'HEAL_CENTER', { door: 'HEAL_DOOR', side: 'W' });
-    def.heal = { x: hc.x, y: hc.y };
+    // Centre Pokémon : plein sud de la grande place, façade tournée vers elle.
+    pokeCenter(C, def, 25, 27, 6, 4, 'N');
     const sh = building(C, 17, 15, 3, 3, 'SHOP', { door: 'SHOP_DOOR', side: 'S' });
     def.shop = { x: sh.x, y: sh.y };
 
@@ -943,8 +1055,8 @@
 
     const ar = building(C, 30, 20, 9, 7, 'ARENA_WALL', { door: 'ARENA_DOOR', side: 'N' });
     def.arena = { x: ar.x, y: ar.y };
-    const hc = building(C, 13, 22, 4, 3, 'HEAL_CENTER', { door: 'HEAL_DOOR', side: 'N' });
-    def.heal = { x: hc.x, y: hc.y };
+    // Centre Pokémon : au bord est du grand ponton, porte tournée vers la place.
+    pokeCenter(C, def, 27, 15, 6, 4, 'W');
     const sh = building(C, 29, 12, 3, 3, 'SHOP', { door: 'SHOP_DOOR', side: 'S' });
     def.shop = { x: sh.x, y: sh.y };
 
@@ -1040,8 +1152,8 @@
 
     const ar = building(C, 38, 12, 9, 8, 'ARENA_WALL', { door: 'ARENA_DOOR', side: 'W' });
     def.arena = { x: ar.x, y: ar.y };
-    const hc = building(C, 14, 22, 4, 3, 'HEAL_CENTER', { door: 'HEAL_DOOR', side: 'N' });
-    def.heal = { x: hc.x, y: hc.y };
+    // Centre Pokémon : l'îlot nord-est de la place, sur la grande rue.
+    pokeCenter(C, def, 31, 7, 5, 4, 'S');
     const sh = building(C, 34, 22, 3, 3, 'SHOP', { door: 'SHOP_DOOR', side: 'N' });
     def.shop = { x: sh.x, y: sh.y };
 
@@ -1106,8 +1218,9 @@
 
     const ar = building(C, 31, 24, 9, 7, 'ARENA_WALL', { door: 'ARENA_DOOR', side: 'N' });
     def.arena = { x: ar.x, y: ar.y };
-    const hc = building(C, 31, 8, 4, 3, 'HEAL_CENTER', { door: 'HEAL_DOOR', side: 'S' });
-    def.heal = { x: hc.x, y: hc.y };
+    // Centre Pokémon : flanc est de la place d'armes — le premier toit rouge
+    // qu'on voit en entrant par la Porte de l'Arête.
+    pokeCenter(C, def, 30, 15, 6, 4, 'W');
     const sh = building(C, 10, 8, 3, 3, 'SHOP', { door: 'SHOP_DOOR', side: 'S' });
     def.shop = { x: sh.x, y: sh.y };
 
@@ -1209,8 +1322,8 @@
 
     const ar = building(C, 6, 22, 9, 7, 'ARENA_WALL', { door: 'ARENA_DOOR', side: 'N' });
     def.arena = { x: ar.x, y: ar.y };
-    const hc = building(C, 28, 8, 4, 3, 'HEAL_CENTER', { door: 'HEAL_DOOR', side: 'S' });
-    def.heal = { x: hc.x, y: hc.y };
+    // Centre Pokémon : au nord de la place annulaire, bien à l'écart des coulées.
+    pokeCenter(C, def, 26, 6, 6, 4, 'S');
     const sh = building(C, 17, 6, 3, 3, 'SHOP', { door: 'SHOP_DOOR', side: 'S' });
     def.shop = { x: sh.x, y: sh.y };
 
@@ -1318,8 +1431,8 @@
 
     const ar = building(C, 10, 33, 11, 8, 'ARENA_WALL', { door: 'ARENA_DOOR', side: 'N' });
     def.arena = { x: ar.x, y: ar.y };
-    const hc = building(C, 44, 33, 5, 4, 'HEAL_CENTER', { door: 'HEAL_DOOR', side: 'N' });
-    def.heal = { x: hc.x, y: hc.y };
+    // Centre Pokémon : à l'est de la place d'apparat, sur l'avenue est-ouest.
+    pokeCenter(C, def, 42, 29, 7, 5, 'W');
     const sh = building(C, 12, 20, 4, 4, 'SHOP', { door: 'SHOP_DOOR', side: 'E' });
     def.shop = { x: sh.x, y: sh.y };
 
@@ -1357,6 +1470,183 @@
   ];
 
   // ===========================================================================
+  //  L'ACADÉMIE-CHÂTEAU  (contrat v3, §8.2 — demandes n° 10 et 10 bis)
+  // ===========================================================================
+  //  POURQUOI LA SYLVE D'AMBRE ?
+  //  Trois raisons, dans cet ordre :
+  //   1. C'est la région la plus CENTRALE du graphe des portes : avec Aurore,
+  //      c'est la seule de degré 3 (val, saphir, aurore lui sont voisines) et
+  //      elle atteint les cinq autres en deux sauts au plus.
+  //   2. C'est la DEUXIÈME région de la progression. L'Académie enseigne la
+  //      Téracristallisation : elle doit être atteignable tôt, sinon la moitié
+  //      du jeu se joue sans. Aurore, aussi centrale, est la sixième région —
+  //      on l'y aurait découverte le jour où elle ne sert plus à rien.
+  //   3. Elle est posée à l'ouest d'Ambrelune, en terrain dégagé, LOIN de la
+  //      ville, des six autels et du port aérien : rien ne peut la recouvrir,
+  //      et sa silhouette se détache sur la jungle.
+  //
+  //  Ce qui est posé ici, ce sont les TUILES : le fossé, le château, la porte,
+  //  le pont-levis, l'allée bordée d'arbres et l'avenue qui rejoint Ambrelune.
+  //  Le château en 3D, lui, est bâti par `citybuild3d.build('academy', …)`, qui
+  //  se déclenche tout seul sur le décor `academy` des tuiles ACADEMY_WALL.
+  // ===========================================================================
+
+  const ACADEMY = {
+    regionId: 'sylve',
+    name: 'Académie du Cristal',
+    kx: 118, ky: 62, kw: 23, kh: 19,     // emprise du château (ACADEMY_WALL)
+    moat: 2,                              // largeur du fossé, en tuiles
+    alley: 10,                            // longueur de l'allée bordée d'arbres
+    road: 'PAVED_ROAD',
+    moatTile: 'WATER',
+    tree: 'JUNGLE_TREE',
+  };
+
+  // Direction « vers l'extérieur » d'une porte de rempart. `dir` renvoyé par
+  // placeGate() pointe vers l'INTÉRIEUR : on prend donc l'opposé.
+  const OUTWARD = { up: [0, 1], down: [0, -1], left: [1, 0], right: [-1, 0] };
+
+  /** Cette case appartient-elle déjà à la ville, et bloque-t-elle le passage ? */
+  function cityTileAt(city, x, y) {
+    const lx = x - city.ox, ly = y - city.oy;
+    if (lx < 0 || ly < 0 || lx >= city.w || ly >= city.h) return null;
+    return city.grid[ly * city.w + lx];
+  }
+
+  /** Points d'un segment aligné sur un axe, extrémités comprises. */
+  function segmentPts(a, b) {
+    const pts = [{ x: a.x, y: a.y }];
+    const sx = Math.sign(b.x - a.x), sy = Math.sign(b.y - a.y);
+    let x = a.x, y = a.y, guard = 0;
+    while ((x !== b.x || y !== b.y) && guard++ < 800) {
+      if (x !== b.x) x += sx; else y += sy;
+      pts.push({ x, y });
+    }
+    return pts;
+  }
+
+  function polyline(waypoints) {
+    const pts = [];
+    for (let i = 1; i < waypoints.length; i++) {
+      const seg = segmentPts(waypoints[i - 1], waypoints[i]);
+      for (let k = (i === 1 ? 0 : 1); k < seg.length; k++) pts.push(seg[k]);
+    }
+    return pts;
+  }
+
+  // ---------------------------------------------------------------------------
+  //  L'avenue de l'Académie -> la ville.
+  //  LA RÈGLE D'OR du module (« un enfant coincé, c'est un jeu cassé ») veut
+  //  qu'on puisse ALLER À PIED de la ville à l'Académie. On vise donc la case
+  //  juste devant une porte du rempart : cette porte, elle, est déjà une cible
+  //  de connectivité pour regions3d.js. Par transitivité, l'Académie l'est.
+  //
+  //  On essaie plusieurs tracés et on garde le PREMIER qui ne traverse aucune
+  //  case bloquante déjà écrite par la ville — contourner par le sud plutôt que
+  //  de creuser à travers un rempart.
+  // ---------------------------------------------------------------------------
+  function academyAvenue(city, from) {
+    const def = city.def;
+    const gates = (def.gates || []).slice();
+    if (!gates.length) return null;
+    const d2 = (g) => Math.abs(g.x - from.x) + Math.abs(g.y - from.y);
+    gates.sort((a, b) => d2(a) - d2(b));
+
+    const dyS = city.oy + city.h + 3, dyN = city.oy - 3;
+    const dxW = city.ox - 4, dxE = city.ox + city.w + 3;
+
+    for (const g of gates) {
+      const o = OUTWARD[g.dir] || [0, 1];
+      const target = { x: g.x + o[0], y: g.y + o[1] };
+      const cands = [
+        [from, { x: from.x, y: dyS }, { x: target.x, y: dyS }, target],
+        [from, { x: from.x, y: dyN }, { x: target.x, y: dyN }, target],
+        [from, { x: dxW, y: from.y }, { x: dxW, y: target.y }, target],
+        [from, { x: dxE, y: from.y }, { x: dxE, y: target.y }, target],
+        [from, { x: target.x, y: from.y }, target],
+        [from, { x: from.x, y: target.y }, target],
+      ];
+      for (const c of cands) {
+        const pts = polyline(c);
+        let ok = true;
+        for (const p of pts) {
+          // L'anneau de bordure de regions3d (3 tuiles) est infranchissable.
+          if (p.x < 4 || p.y < 4 || p.x > 379 || p.y > 219) { ok = false; break; }
+          const t = cityTileAt(city, p.x, p.y);
+          if (t != null && !walkable(t)) { ok = false; break; }
+        }
+        if (ok) return { pts: pts, gate: g, target: target };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Le plan de tuiles complet de l'Académie, en coordonnées ABSOLUES.
+   * @returns {{tiles:Array, door:{x,y}, approach:{x,y}, box:object, avenue:object}|null}
+   */
+  function makeAcademy(city) {
+    const A = ACADEMY;
+    const tiles = [];
+    const put = (x, y, t) => { tiles.push({ x: x, y: y, t: t }); };
+    const x0 = A.kx, y0 = A.ky;
+    const x1 = x0 + A.kw - 1, y1 = y0 + A.kh - 1;
+
+    // 1. LE FOSSÉ — un anneau d'eau. C'est lui qui isole le château du décor
+    //    et qui rend le pont-levis nécessaire : sans fossé, pas de château.
+    for (let y = y0 - A.moat; y <= y1 + A.moat; y++) {
+      for (let x = x0 - A.moat; x <= x1 + A.moat; x++) {
+        if (x >= x0 && x <= x1 && y >= y0 && y <= y1) continue;
+        put(x, y, A.moatTile);
+      }
+    }
+
+    // 2. LE CHÂTEAU — un bloc plein. C'est son emprise (et elle seule) qui dit
+    //    à world3d.js quelle taille donner au monument 3D : il fusionne toutes
+    //    les tuiles portant le décor `academy` en une seule boîte englobante.
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) put(x, y, 'ACADEMY_WALL');
+
+    // 3. LA PORTE, au milieu de la façade sud, face à l'allée.
+    const dx = x0 + (A.kw >> 1);
+    const door = { x: dx, y: y1 };
+    put(door.x, door.y, 'ACADEMY_DOOR');
+
+    // 4. LE PONT D'ENTRÉE, qui franchit le fossé.
+    for (let k = 1; k <= A.moat; k++) put(dx, y1 + k, 'BRIDGE');
+
+    // 5. L'ALLÉE BORDÉE D'ARBRES (demande n° 10 bis). Trois tuiles de large :
+    //    une allée d'honneur, pas un sentier — et aucun risque de s'y coincer.
+    const ay0 = y1 + A.moat + 1, ay1 = ay0 + A.alley - 1;
+    for (let y = ay0; y <= ay1; y++) for (let i = -1; i <= 1; i++) put(dx + i, y, A.road);
+    for (let y = ay0 + 1; y <= ay1; y += 3) {
+      put(dx - 3, y, A.tree); put(dx - 3, y + 1, A.tree);
+      put(dx + 3, y, A.tree); put(dx + 3, y + 1, A.tree);
+    }
+    // Deux parvis dallés : au pied du pont et au bout de l'allée.
+    for (let i = -2; i <= 2; i++) { put(dx + i, ay0, A.road); put(dx + i, ay1, A.road); }
+
+    // 6. L'AVENUE jusqu'à la ville.
+    const approach = { x: dx, y: ay1 };
+    const av = academyAvenue(city, approach);
+    if (av) {
+      for (const p of av.pts) {
+        // On ne recouvre JAMAIS une case déjà écrite par la ville : si elle est
+        // là, c'est qu'elle est marchable (academyAvenue l'a vérifié).
+        if (cityTileAt(city, p.x, p.y) != null) continue;
+        put(p.x, p.y, A.road);
+      }
+    }
+
+    return {
+      regionId: A.regionId, name: A.name,
+      tiles: tiles, door: door, approach: approach,
+      box: { x: x0 - A.moat, y: y0 - A.moat, w: A.kw + A.moat * 2, h: A.kh + A.moat * 2 },
+      keep: { x: x0, y: y0, w: A.kw, h: A.kh },
+      avenue: av ? { gate: av.gate, target: av.target, length: av.pts.length } : null,
+    };
+  }
+
+  // ===========================================================================
   //  Construction d'une ville
   // ===========================================================================
   function makeCity(spec) {
@@ -1389,6 +1679,16 @@
     if (def.plaza) def.plaza = { x: def.plaza.x + spec.x, y: def.plaza.y + spec.y, w: def.plaza.w, h: def.plaza.h };
     def.castle = abs(def.castle); def.church = abs(def.church); def.arena = abs(def.arena);
     def.heal = abs(def.heal); def.shop = abs(def.shop); def.fountain = abs(def.fountain);
+    // `center` porte en plus la case du parvis : on la convertit aussi, sinon
+    // le lot Intégration recevrait un mélange de local et d'absolu.
+    if (def.center) {
+      def.center = {
+        x: def.center.x + spec.x, y: def.center.y + spec.y,
+        front: def.center.front
+          ? { x: def.center.front.x + spec.x, y: def.center.front.y + spec.y }
+          : null,
+      };
+    }
     def.airship = def.airship ? { x: def.airship.x + spec.x, y: def.airship.y + spec.y, name: def.airship.name } : null;
     def.landmarks = def.landmarks.map((l) => Object.assign({}, l, { x: l.x + spec.x, y: l.y + spec.y }));
 
@@ -1402,6 +1702,7 @@
   const POI_OF_TILE = {
     ARENA_DOOR: { kind: 'arena', data: { entry: 'arena' } },
     HEAL_DOOR: { kind: 'heal', data: { entry: 'heal' } },
+    ACADEMY_DOOR: { kind: 'academy', data: { entry: 'academy' } },
     SHOP_DOOR: { kind: 'shop', data: { entry: 'shop' } },
     CASTLE_GATE: { kind: 'landmark', data: { entry: 'castle' } },
     GATE_ARCH: { kind: 'landmark', data: { entry: 'citygate' } },
@@ -1459,6 +1760,8 @@
   const BY_REGION = {};
   const POIS = {};
 
+  let ACADEMY_PLAN = null;
+
   try {
     for (const spec of SPECS) {
       const city = makeCity(spec);
@@ -1469,6 +1772,41 @@
   } catch (e) {
     // Règle n°7 du contrat : jamais d'exception au chargement.
     if (typeof console !== 'undefined') console.warn('cities3d : plan non généré —', e);
+  }
+
+  // --- L'Académie, une fois les six villes prêtes (elle a besoin des portes
+  //     d'Ambrelune pour tracer son avenue). Si elle échoue, tout le reste du
+  //     jeu continue exactement comme avant : c'est un ajout, pas une brique.
+  try {
+    const host = BY_REGION[ACADEMY.regionId];
+    if (host) {
+      ACADEMY_PLAN = makeAcademy(host);
+      host.def.academy = {
+        name: ACADEMY_PLAN.name,
+        x: ACADEMY_PLAN.door.x, y: ACADEMY_PLAN.door.y,
+        door: { x: ACADEMY_PLAN.door.x, y: ACADEMY_PLAN.door.y },
+        approach: ACADEMY_PLAN.approach,
+        box: ACADEMY_PLAN.box, keep: ACADEMY_PLAN.keep,
+      };
+      host.def.landmarks.push({
+        kind: 'academy', x: ACADEMY_PLAN.door.x, y: ACADEMY_PLAN.door.y,
+        label: ACADEMY_PLAN.name,
+      });
+      // Le POI de la porte : `regions3d.poiAt()` nous délègue déjà la question,
+      // le lot Intégration n'a donc rien à câbler pour l'obtenir.
+      const m = POIS[ACADEMY.regionId];
+      if (m) {
+        m.set(ACADEMY_PLAN.door.x + ',' + ACADEMY_PLAN.door.y, {
+          kind: 'academy', label: ACADEMY_PLAN.name,
+          x: ACADEMY_PLAN.door.x, y: ACADEMY_PLAN.door.y,
+          regionId: ACADEMY.regionId,
+          data: { entry: 'academy', tile: 'ACADEMY_DOOR', cityId: host.def.id, city: host.def.name },
+        });
+      }
+    }
+  } catch (e) {
+    if (typeof console !== 'undefined') console.warn('cities3d : Académie non construite —', e);
+    ACADEMY_PLAN = null;
   }
 
   function get(regionId) { return CITIES[regionId] || null; }
@@ -1488,6 +1826,12 @@
         put(x + city.ox, y + city.oy, t);
       }
     }
+    // L'Académie est posée APRÈS la ville : elle est hors du rempart, elle ne
+    // peut donc rien lui prendre — et son avenue a déjà été vérifiée.
+    if (ACADEMY_PLAN && regionId === ACADEMY_PLAN.regionId) {
+      const T = ACADEMY_PLAN.tiles;
+      for (let i = 0; i < T.length; i++) put(T[i].x, T[i].y, T[i].t);
+    }
     return city.def;
   }
 
@@ -1503,6 +1847,82 @@
   API.tilesOf = function (regionId) {
     const c = BY_REGION[regionId];
     return c ? { grid: c.grid, w: c.w, h: c.h, ox: c.ox, oy: c.oy } : null;
+  };
+
+  // ===========================================================================
+  //  API v3 §8 — où sont les portes, et que faut-il signaler de loin
+  // ===========================================================================
+
+  /** L'Académie : { regionId, name, door, approach, box, keep } ou null. */
+  API.academy = function () {
+    if (!ACADEMY_PLAN) return null;
+    return {
+      regionId: ACADEMY_PLAN.regionId, name: ACADEMY_PLAN.name,
+      x: ACADEMY_PLAN.door.x, y: ACADEMY_PLAN.door.y,
+      door: { x: ACADEMY_PLAN.door.x, y: ACADEMY_PLAN.door.y },
+      approach: { x: ACADEMY_PLAN.approach.x, y: ACADEMY_PLAN.approach.y },
+      box: ACADEMY_PLAN.box, keep: ACADEMY_PLAN.keep,
+      avenue: ACADEMY_PLAN.avenue,
+    };
+  };
+
+  /** La tuile ACADEMY_DOOR : { regionId, x, y }. C'est là que le lot I doit
+   *  brancher l'entrée de l'Académie (§8.2 du contrat v3). */
+  API.academyDoorTile = function () {
+    if (!ACADEMY_PLAN) return null;
+    return { regionId: ACADEMY_PLAN.regionId, x: ACADEMY_PLAN.door.x, y: ACADEMY_PLAN.door.y };
+  };
+
+  /** La tuile HEAL_DOOR du Centre Pokémon d'une région : { x, y } ou null. */
+  API.centerDoorTile = function (regionId) {
+    const d = CITIES[regionId];
+    if (!d || !d.heal) return null;
+    return { x: d.heal.x, y: d.heal.y };
+  };
+
+  /** La tuile ARENA_DOOR d'une région : { x, y } ou null. */
+  API.arenaDoorTile = function (regionId) {
+    const d = CITIES[regionId];
+    if (!d || !d.arena) return null;
+    return { x: d.arena.x, y: d.arena.y };
+  };
+
+  // ---------------------------------------------------------------------------
+  //  LES REPÈRES À SIGNALER  (contrat v3, §8.1 — icône ➕, couleur #ff6b9d)
+  //
+  //  `gates3d.js` ne sait poser un phare que sur `plan.castle` et `plan.arena`,
+  //  et il appartient à un autre lot : on ne peut pas le lui apprendre. Les
+  //  trois monuments portent donc DÉJÀ leur propre colonne de lumière (voir
+  //  `citybuild3d.js`, §6 bis) — ça marche sans que personne ne branche rien.
+  //  Cette fonction publie la même information sous la forme qu'attend
+  //  `gates3d.setRegion()` : le jour où le lot I ajoute
+  //  `cities.beacons(regionId)` à sa boucle, les repères se doublent d'un
+  //  panneau nommé, sans une ligne à changer ici.
+  // ---------------------------------------------------------------------------
+  API.beacons = function (regionId) {
+    const d = CITIES[regionId];
+    const out = [];
+    if (!d) return out;
+    if (d.heal) {
+      out.push({
+        kind: 'center', x: d.heal.x, y: d.heal.y,
+        label: 'Centre Pokémon', icon: '➕', color: '#ff6b9d',
+      });
+    }
+    if (d.arena) {
+      out.push({
+        kind: 'arena', x: d.arena.x, y: d.arena.y,
+        label: 'Arène de ' + d.name, icon: '⚔️', color: '#ff6b3d',
+        arenaType: d.arenaType,
+      });
+    }
+    if (d.academy) {
+      out.push({
+        kind: 'academy', x: d.academy.x, y: d.academy.y,
+        label: d.academy.name, icon: '🏰', color: '#a678f0',
+      });
+    }
+    return out;
   };
 
   if (HAS_R3 && typeof R3.register === 'function') R3.register('cities', API);
