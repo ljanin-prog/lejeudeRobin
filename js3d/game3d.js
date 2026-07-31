@@ -117,7 +117,7 @@
   // ---------------------------------------------------------------------------
   const state = {
     // title|starter|world|battle|team|dex|map|airship|transition
-    // |shop|journal|academy|evolution
+    // |shop|journal|academy
     screen: 'title',
     playerName: '',
     regionId: START_REGION,
@@ -171,6 +171,7 @@
   let started = false;
   let lastTime = 0;
   let fpsTurnT = 0;         // minuterie de rotation sur place (vue FPS)
+  let evolving = false;     // une évolution est en cours : le clavier est gelé
 
   const camPos = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
   const camAim = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
@@ -386,6 +387,13 @@
         hud.onStarterPick(function (i) { state.starterCursor = i; confirmStarter(); });
       });
     }
+    // Le sélecteur de Ball du HUD nous prévient de chaque changement : c'est
+    // ainsi que le choix de Robin part dans la sauvegarde (§11.2).
+    if (hud && hud.onBallChange) {
+      safeCall('hud.onBallChange', function () {
+        hud.onBallChange(function (id) { setActiveBall(id); });
+      });
+    }
   }
 
   /** Ciel/lumière de secours si sky3d.js manque : il faut TOUJOURS y voir clair. */
@@ -503,6 +511,10 @@
     // (airship3d capture Espace tout seul pour sauter la cinématique).
     if (state.screen === 'title' || state.screen === 'transition') return;
 
+    // L'ÉVOLUTION NE S'INTERROMPT PAS (§11.3) : c'est LE moment de gloire, il
+    // dure moins de trois secondes, on le laisse jouer. Aucune touche ne passe.
+    if (evolving) { e.preventDefault(); return; }
+
     // --- Menu du dirigeable : il se pilote AUSSI au clavier ------------------
     // Sans ça, on pouvait rester bloqué dedans (aucune touche ne répondait,
     // pas même Échap) — c'est ce qui rendait le dirigeable inutilisable.
@@ -553,9 +565,6 @@
       return;
     }
 
-    // L'ÉVOLUTION NE S'INTERROMPT PAS (§11.3) : c'est le moment de gloire, il
-    // dure 2,5 s et on le laisse jouer. Aucune touche ne passe.
-    if (state.screen === 'evolution') { e.preventDefault(); return; }
 
     // --- Monde ouvert ---------------------------------------------------------
     // Shift + ←/→ : pivoter la vue RPG. À tester AVANT le déplacement.
@@ -579,8 +588,12 @@
       case 'b': case 'B':
         e.preventDefault(); throwBallInWorld(); break;
       case 'x': case 'X':
-        // §11.2 : changer de Ball. Le choix vaut sur la carte ET en combat.
-        e.preventDefault(); cycleBall(1); break;
+        // §11.2 : changer de Ball. Le sélecteur du HUD consomme déjà `X` en
+        // phase de capture (avec stopPropagation) : on n'arrive ici que s'il
+        // est absent — sinon la Ball tournerait DEUX FOIS par appui.
+        e.preventDefault();
+        if (!hudFait('activeBall')) cycleBall(1);
+        break;
       case 'f': case 'F':
         // Compagnon (demande n° 2). `B` lance déjà une Ball — le conflit
         // annoncé par le contrat est réel, c'est donc `F`.
@@ -590,7 +603,11 @@
       case 'c': case 'C':
         e.preventDefault(); openDexScreen(); break;
       case 'j': case 'J':
-        e.preventDefault(); openJournalScreen(); break;
+        // Même chose : le HUD ouvre le journal lui-même sur `J`. On ne prend le
+        // relais que s'il n'est pas là.
+        e.preventDefault();
+        if (!hudFait('openJournal')) openJournalScreen();
+        break;
       case 'n': case 'N':
         e.preventDefault(); openMapScreen(); break;
       case 'v': case 'V':
@@ -2452,7 +2469,7 @@
       if (b.canCatch === false) { showToast('On ne capture pas la créature d\'un dresseur !', '🚫'); return; }
       // §11.2 : le sélecteur vaut AUSSI ici. Choisir une Ball dans le sac
       // devient donc le choix courant, il n'y a plus deux vérités.
-      state.activeBall = id;
+      setActiveBall(id);
       throwBallInBattle(id);
       return;
     }
@@ -2593,7 +2610,6 @@
     }
 
     let i = 0;
-    const ecranAvant = state.screen;
 
     function suivant() {
       while (i < list.length) {
@@ -2602,7 +2618,7 @@
         if (st) { faireEvoluer(mon); return; }
         i++;
       }
-      state.screen = ecranAvant;
+      evolving = false;
       if (onDone) onDone();
     }
 
@@ -2613,7 +2629,10 @@
       if (!r) { i++; suivant(); return; }
 
       sfx('rare');
-      state.screen = 'evolution';
+      // On NE change PAS `state.screen` : le décor de combat (ou du monde)
+      // doit continuer à être rendu derrière l'écran d'évolution. On lève un
+      // simple drapeau, qui suffit à bloquer le clavier.
+      evolving = true;
       markSeen(r.to);
       state.collection[r.to] = state.collection[r.to] || 1;
 
@@ -2645,17 +2664,27 @@
 
       const hud = mod('hud');
       if (hud && hud.showEvolution) {
+        // FILET DE SÉCURITÉ : le clavier est gelé tant qu'`onDone` n'est pas
+        // revenu. Si l'animation se perdait en route, Robin se retrouverait
+        // devant un jeu qui ne répond plus — impensable. On rend la main tout
+        // seul au bout de 6 s, et une seule fois.
+        let rendu = false;
+        const uneSeuleFois = function () { if (rendu) return; rendu = true; apres(); };
+        setTimeout(uneSeuleFois, 6000);
         const ok = safeCall('hud.showEvolution', function () {
           hud.showEvolution({
             fromName: r.fromName || r.from,
             toName: r.toName || r.to,
             message: r.message || '',
             speciesId: r.to,
-            onDone: apres,
+            fromSpeciesId: r.from,   // le HUD montre l'ancienne forme d'abord
+            onDone: uneSeuleFois,
           });
           return true;
         });
         if (ok) return;
+        uneSeuleFois();
+        return;
       }
       // Repli sans écran d'évolution : le texte suffit à ne rien perdre.
       showMessage('✨ ' + (r.fromName || r.from) + ' évolue en ' + (r.toName || r.to) + ' !' +
@@ -3119,11 +3148,14 @@
     const uniques = Object.keys(state.collection).length;
     call('hud', 'setCollectionCount', [uniques, total]);
     call('hud', 'showBallCount', [state.items.pokeball | 0]);
+    // On passe la RÉFÉRENCE VIVE de `state.items`, jamais une copie : le
+    // sélecteur de Ball du HUD suit alors les quantités tout seul, sans qu'on
+    // ait à le rafraîchir après chaque achat ou chaque lancer.
     call('hud', 'setItems', [state.items]);
+    call('hud', 'setBallInventory', [state.items]);
     // §6 et §11.2 : l'argent et la Ball active sont affichés en permanence.
     call('hud', 'setMoney', [state.money | 0]);
     call('hud', 'setActiveBall', [state.activeBall]);
-    call('hud', 'setBallInventory', [state.items]);
   }
 
   // ===========================================================================
@@ -3219,12 +3251,42 @@
   function itemName(id) { const it = itemOf(id); return (it && it.name) || id; }
   function itemIcon(id) { const it = itemOf(id); return (it && it.icon) || '⚪'; }
 
-  /** La Ball à lancer, ici et maintenant. */
+  /** Le HUD assure-t-il lui-même cette fonction ? */
+  function hudFait(nom) {
+    const hud = mod('hud');
+    return !!(hud && typeof hud[nom] === 'function');
+  }
+
+  /**
+   * LA Ball à lancer, ici et maintenant — carte ouverte comme menu Sac.
+   * Le sélecteur du HUD est l'interface, `state.activeBall` est ce qui part
+   * dans la sauvegarde : on lit d'abord le HUD (il peut avoir changé de Ball
+   * sans nous, au clic), on le recopie dans l'état, et on ne garde jamais deux
+   * vérités en parallèle.
+   */
   function currentBall() {
+    const hud = mod('hud');
+    if (hud && hud.activeBall) {
+      const id = safeCall('hud.activeBall', function () { return hud.activeBall(); });
+      if (id && (state.items[id] | 0) > 0) { state.activeBall = id; return id; }
+    }
     ensureActiveBall();
     if ((state.items[state.activeBall] | 0) > 0) return state.activeBall;
     const dispo = ownedBalls();
     return dispo.length ? dispo[0] : null;
+  }
+
+  /**
+   * Le joueur a changé de Ball depuis le HUD (touche X ou clic). Le HUD nous
+   * prévient par `onBallChange`, et appelle aussi `GAME3D.setActiveBall(id)` :
+   * les deux chemins arrivent ici, et cette fonction est idempotente.
+   */
+  function setActiveBall(id) {
+    if (!id || typeof id !== 'string') return state.activeBall;
+    if (state.activeBall === id) return id;
+    state.activeBall = id;
+    saveGame();      // un choix qui ne survit pas au rechargement n'est pas un choix
+    return id;
   }
 
   // ===========================================================================
@@ -3616,6 +3678,8 @@
       ensureActiveBall(); refreshHudCounters(); saveGame();
       return state.items[id];
     },
+    // Appelée PAR LE HUD quand Robin change de Ball (touche X ou clic).
+    setActiveBall: setActiveBall,
     shop: openShopScreen,
     academy: openAcademyScreen,
     journal: openJournalScreen,
