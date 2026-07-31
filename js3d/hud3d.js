@@ -2373,11 +2373,20 @@
     const regionView = el('div', 'map-region-view', frame);
     const wrap = el('div', 'map-canvas-wrap', regionView);
     ui.mapCanvas = el('canvas', null, wrap);
+    // L'id est INDISPENSABLE : toute la mise en page de la carte tient dans la
+    // règle `#map-canvas` (position absolue, inset 6px, taille du conteneur).
+    // Sans lui, le canvas s'affichait à sa taille brute de 768×448 dans le flux
+    // pendant que les marqueurs couvraient tout le conteneur : l'image et les
+    // repères étaient à deux échelles différentes, et la carte montrait
+    // n'importe quoi. Bug présent depuis l'écriture de l'écran.
+    ui.mapCanvas.id = 'map-canvas';
     ui.mapCanvas.width = 768; ui.mapCanvas.height = 448;
     ui.mapOverlayMarkers = el('div', 'map-markers', wrap);
     ui.mapCtx = ui.mapCanvas.getContext('2d');
     const legend = el('div', 'map-legend', regionView);
-    [['#e74c3c', 'Toi'], ['#f1c40f', 'Porte'], ['#a5aab0', 'Ville'], ['#ff6b3d', 'Arène'], ['#41a6f6', 'Port aérien']]
+    [['#e74c3c', 'Toi'], ['#f1c40f', 'Porte'], ['#a5aab0', 'Ville'],
+     ['#ff6b3d', '⚔️ Arène'], ['#ff6b9d', '➕ Centre Pokémon'],
+     ['#a678f0', '🔮 Académie'], ['#41a6f6', '⚓ Port aérien']]
       .forEach(function (item) {
         const s = el('span', null, legend);
         el('i', null, s).style.background = item[0];
