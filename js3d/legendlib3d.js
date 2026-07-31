@@ -47,6 +47,42 @@
 //   refresh(g)                       à appeler si on ajoute des primitives à un
 //                                    modèle DÉJÀ animé (voir animateAura)
 //
+//  AJOUTS DE LA VAGUE v3 (§9 : 25 DRAW CALLS PAR LÉGENDAIRE, MAXIMUM)
+//  --------------------------------------------------------------------------
+//  Le budget est passé de « 90 meshes » (v2) à « 25 draw calls » (v3). Or dans
+//  three.js, un mesh = un draw call : on ne peut plus se contenter d'empiler des
+//  ellipsoïdes. D'où la primitive centrale de cette vague :
+//
+//   bake(root, opts)                 FUSIONNE les meshes statiques de `root` :
+//                                    un seul mesh par matériau, en place.
+//                                    30 formes de 4 teintes -> 4 draw calls.
+//   drawCalls(obj)                   compte les draw calls d'un modèle (pour
+//                                    mesurer le budget, pas pour le deviner)
+//   autoAnimate(g)                   accroche l'idle + animateAura au cycle de
+//                                    rendu (sinon un légendaire se fige en combat)
+//   nobleEyes(spread,y,z,r,opts)     bigEyes fusionné : 3 draw calls au lieu
+//                                    de 8, et 2 avec `lean: true`
+//   crown(color, r, points, opts)    couronne de pointes flottante      1 à 2
+//   runeBand(color, r, n, opts)      ceinture de runes qui tourne       1 à 2
+//   arcRings(color, r, n, opts)      anneaux inclinés en orbite         n (2)
+//   crestFin(len, color, n, opts)    crête dorsale de lames             1
+//   boltArc(len, color, opts)        éclair en zigzag                   1
+//   petalSkirt(color, n, r, opts)    corolle / robe de pétales          1 à 2
+//   antler(len, color, opts)         ramure de branches                 1 à 2
+//   mane(color, r, n, opts)          crinière rayonnante                1 à 2
+//
+//  …et une option `bake: true` sur orbitRing, crystalCluster, halo et
+//  majesticWing : le contenu est fusionné, le groupe continue de tourner ou de
+//  battre. On perd le frémissement de CHAQUE fragment, on gagne 4 à 10 draw
+//  calls. Aucune signature existante n'a changé — les lots P2 et P3 qui codent
+//  contre le §13 de v2 en ce moment même ne voient aucune différence.
+//
+//  RÈGLE D'OR DE LA FUSION : dans un groupe destiné à `bake()`, une teinte =
+//  UN SEUL jeu d'options. R3.mat() met en cache sur `couleur + JSON(options)`,
+//  donc `{rough:0.8}` et `{rough:0.8, seg:12}` donnent DEUX matériaux, donc DEUX
+//  draw calls après fusion. Ne jamais passer `seg` dans les options d'une pièce
+//  qui sera fusionnée.
+//
 //  CONVENTIONS
 //  -----------
 //   * Chaque primitive renvoie un THREE.Group, jamais null, jamais d'exception.
@@ -330,9 +366,12 @@
    *   color2 : couleur du guide                                (= color)
    *   wobble : amplitude du balancement vertical des fragments    (0.12)
    *   glow   : fragments lumineux plutôt que minéraux              (true)
+   *   bake   : true -> fragments fusionnés (v3)                  (false)
    *   x, y, z
    * }
    * Coût : n meshes (+1 si guide). n plafonné à 12.
+   *        avec `bake: true` : 1 draw call (2 avec le guide) — l'anneau tourne
+   *        toujours, seul le frémissement de chaque éclat disparaît.
    *
    * Sert : les menhirs de Monolithe, les sabliers d'Éternia, les éclats de
    * Cristallia, les lunes de Vortexis.
@@ -385,6 +424,11 @@
       frags.push({ m: m, a: a, rad: rad, ph: a + phase() * 0.1, base: m.rotation.z });
     }
 
+    // Fusion facultative (v3 §9) : les n fragments ne font plus qu'un mesh qui
+    // tourne en bloc. C'est ce qui rend « des anneaux en orbite » abordable
+    // dans un budget de 25 draw calls.
+    if (o.bake) { bake(spin); frags.length = 0; }
+
     g.userData.ll = {
       kind: 'orbit', spin: spin, frags: frags, ph: phase(),
       sp: num(o.speed, 0.5), wob: num(o.wobble, 0.12) * rad,
@@ -405,9 +449,12 @@
    *   base     : true -> socle rocheux sous la grappe               (true)
    *   glow     : true -> petite lueur au cœur de la grappe          (true)
    *   flat     : facettes dures                                     (true)
+   *   bake     : true -> grappe fusionnée (v3)                     (false)
    *   x, y, z
    * }
    * Coût : n (+1 socle) (+1 lueur). n plafonné à 10.
+   *        avec `bake: true` : 1 draw call (2 teintes -> 2), plus 1 pour la
+   *        lueur, qui reste séparée pour continuer de battre.
    *
    * Sert : le dos de Banquisor, les bois de Cristallia, les épines de Cryonix,
    * le socle de Monolithe.
@@ -465,6 +512,15 @@
     } else {
       g.userData.ll = { kind: 'crystal', ph: phase(), shards: shards, glow: null, s: s };
     }
+
+    // Fusion facultative (v3 §9). La lueur centrale est marquée `llKeep` : elle
+    // survit à la fusion et continue de pulser, sinon la grappe devient morte.
+    if (o.bake) {
+      const d = g.userData.ll;
+      if (d.glow) d.glow.userData.llKeep = true;
+      bake(g);
+      d.shards = [];                    // les cônes n'existent plus séparément
+    }
     return place(g, o);
   }
 
@@ -493,9 +549,14 @@
    *               le battement d'aile reste à la charge de la créature via
    *               userData.anim.wingL/wingR — les deux se superposent sans
    *               se marcher dessus.)
+   *   bake     : true -> aile fusionnée (v3)                 (false)
    *   x, y, z
    * }
    * Coût : segments + 1 épaule (+1 bras) -> 7 par défaut, 11 au maximum.
+   *        avec `bake: true` : 1 draw call par teinte employée (1 à 3). L'aile
+   *        bat toujours — c'est la créature qui tourne sa racine — elle ne
+   *        frémit simplement plus plume par plume. Deux ailes majestueuses pour
+   *        2 draw calls : c'est ce qui rend le budget v3 tenable.
    *
    * Les six styles, et pour qui :
    *   feather  : Emberyx, Bourrasca, Éclipsion, Solaria — grandes rémiges.
@@ -532,8 +593,26 @@
     const boneCol = o.boneColor || col2;
     const thick = Math.max(0.012, L * 0.030);
 
+    // Les options des segments, style par style. Elles servent AUSSI à l'épaule
+    // et aux os : c'est ce qui permet à toute l'aile de tenir en un ou deux
+    // matériaux, donc en un ou deux draw calls après `bake` (v3 §9). Sans cette
+    // mise en commun, l'épaule d'une aile d'éclair coûtait un draw call à elle
+    // seule, pour une bosse de la taille d'un pouce.
+    const SEG_EXTRA = {
+      crystal: { flat: true },
+      ray: { emissiveIntensity: 1.3 },
+      flame: { emissiveIntensity: 1.15 },
+      bolt: { emissiveIntensity: 1.35 },
+    };
+    const extraSeg = SEG_EXTRA[style] || null;
+    /** Matériau d'os / d'épaule : identique à celui des segments opaques, pour
+     *  qu'ils fusionnent ensemble quand la couleur est la même. */
+    function boneMat(c) {
+      return solidMat(c, { rough: 0.6, emissiveIntensity: 0.14, side: THREE.DoubleSide });
+    }
+
     // --- Épaule : la petite masse qui raccorde l'aile au corps ---------------
-    g.add(solid(ell(L * 0.12, H * 0.16, L * 0.10, segMat(col2), L * 0.06, 0, 0, 10)));
+    g.add(solid(ell(L * 0.12, H * 0.16, L * 0.10, segMat(col2, extraSeg), L * 0.06, 0, 0, 10)));
 
     if (style === 'membrane') {
       // Voile tendu : un grand lobe + deux festons au bord de fuite + doigts.
@@ -549,14 +628,14 @@
       }
       if (o.arm !== false) {
         const arm = put(R3.geo.cyl(thick * 1.1, thick * 1.9, L * 0.94, 7),
-          solidMat(boneCol, { rough: 0.55, emissiveIntensity: 0.1 }), L * 0.46, H * 0.14, 0);
+          boneMat(boneCol), L * 0.46, H * 0.14, 0);
         arm.rotation.z = -Math.PI / 2 + 0.20;
         g.add(solid(arm));
       }
       // Doigts : ce sont eux qui font lire « aile » et pas « pétale ».
       [[0.30, 0.70], [0.85, 0.54]].forEach(function (f) {
         const dgt = put(R3.geo.cyl(thick * 0.6, thick * 1.1, L * f[1], 6),
-          solidMat(boneCol, { rough: 0.55, emissiveIntensity: 0.1 }), L * 0.52, -H * 0.04, thick);
+          boneMat(boneCol), L * 0.52, -H * 0.04, thick);
         dgt.rotation.z = -Math.PI / 2 - f[0];
         g.add(dgt);
       });
@@ -623,6 +702,11 @@
       base: segs.map(function (m) { return m.rotation.z; }),
     };
     g.userData.segments = segs;
+
+    // Fusion facultative (v3 §9) — faite AVANT le retournement de l'aile gauche
+    // pour que la géométrie fusionnée reste dans le repère « aile droite ».
+    if (o.bake) { bake(g); segs.length = 0; }
+
     if (num(o.side, 1) < 0) g.rotation.y = Math.PI;
     return place(g, o);
   }
@@ -725,9 +809,12 @@
    *   rayLen  : longueur des rayons                     (0.55 × r)
    *   tube    : grosseur de l'anneau                    (0.09 × r)
    *   solid   : true -> disque plein derrière l'anneau        (false)
+   *   bake    : true -> auréole fusionnée (v3)                (false)
    *   x, y, z
    * }
    * Coût : 1 anneau + rays (+1 disque) -> 9 par défaut, 15 au maximum.
+   *        avec `bake: true` : 1 à 3 draw calls ; l'auréole tourne toujours,
+   *        seuls les rayons cessent de respirer un à un.
    *
    * Sert : Auréol (le nom vient de là), Solaria, Éclipsion (anneau sombre :
    * passer une couleur sombre et rays = 0), Chronoss, Éternia.
@@ -770,6 +857,10 @@
       spin.add(m);
       raysArr.push({ m: m, ph: a });
     }
+
+    // Fusion facultative (v3 §9) : l'anneau et ses rayons ne font plus qu'une
+    // ou deux pièces, qui tournent ensemble.
+    if (o.bake) { bake(spin); raysArr.length = 0; }
 
     if (o.plane === 'flat') g.rotation.x = -Math.PI / 2;
 
@@ -1071,9 +1162,12 @@
    *   color2 : couleur du nimbe                       (= color)
    *   spikes : 0..8 éclats en croix autour du cœur         (0)
    *   speed  : vitesse du battement                      (2.0)
+   *   shells : 1 à 3 coques concentriques (v3)             (3)
    *   x, y, z
    * }
-   * Coût : 3 meshes (+ spikes).
+   * Coût : `shells` meshes (+ spikes) -> 3 par défaut, 1 en version économe.
+   * `shells: 1` sert quand le cœur n'est qu'un détail parmi d'autres et que le
+   * budget de 25 draw calls du légendaire est déjà bien entamé.
    *
    * Sert : le cœur de magma de Pyrathos, le noyau d'Ondinaë, l'œil d'Orageon,
    * la gemme au front de Sylvaros, le trou noir d'Éclipsion.
@@ -1085,12 +1179,22 @@
     const rr = Math.max(0.03, num(r, 0.25));
     const g = new THREE.Group();
 
-    const core = put(R3.geo.sphere(rr * 0.55, 12),
-      glowMat(col, 0.98, { emissiveIntensity: 1.5, side: THREE.FrontSide }), 0, 0, 0);
-    const mid = put(R3.geo.sphere(rr * 0.82, 12), glowMat(col, 0.34, { emissiveIntensity: 1.1 }), 0, 0, 0);
-    const out = put(R3.geo.sphere(rr * 1.18, 12), glowMat(col2, 0.14, { emissiveIntensity: 0.8 }), 0, 0, 0);
-    core.renderOrder = 3; mid.renderOrder = 2; out.renderOrder = 2;
-    g.add(core, mid, out);
+    const nSh = clampi(num(o.shells, 3), 1, 3);
+    // En version à 1 coque, le cœur grossit : sans son nimbe il paraîtrait
+    // riquiqui au milieu de la créature.
+    const core = put(R3.geo.sphere(rr * (nSh === 1 ? 0.92 : 0.55), 12),
+      glowMat(col, nSh === 1 ? 0.80 : 0.98, { emissiveIntensity: 1.5, side: THREE.FrontSide }), 0, 0, 0);
+    core.renderOrder = 3;
+    g.add(core);
+    let mid = null, out = null;
+    if (nSh >= 2) {
+      mid = put(R3.geo.sphere(rr * 0.82, 12), glowMat(col, 0.34, { emissiveIntensity: 1.1 }), 0, 0, 0);
+      mid.renderOrder = 2; g.add(mid);
+    }
+    if (nSh >= 3) {
+      out = put(R3.geo.sphere(rr * 1.18, 12), glowMat(col2, 0.14, { emissiveIntensity: 0.8 }), 0, 0, 0);
+      out.renderOrder = 2; g.add(out);
+    }
 
     const spikes = [];
     const nS = clampi(num(o.spikes, 0), 0, 8);
@@ -1414,6 +1518,579 @@
   }
 
   // ===========================================================================
+  //  BONUS 5. bake(root, opts) — LA FUSION.  C'est elle qui tient le budget v3.
+  // ===========================================================================
+  /**
+   * Le §9 de CONTRACT3 impose **25 draw calls par légendaire**. Dans three.js,
+   * un mesh = un draw call : un dragon fait de 60 ellipsoïdes coûte 60 draw
+   * calls, quel que soit le nombre de matériaux. Impossible de faire majestueux
+   * à ce prix-là.
+   *
+   * `bake()` renverse le problème : on modélise librement (60 formes, c'est
+   * confortable), puis on FUSIONNE tout ce qui ne bouge pas les unes par
+   * rapport aux autres. Une seule géométrie par matériau, donc un seul draw
+   * call par teinte. Un dragon de 60 formes en 4 teintes coûte 4 draw calls.
+   *
+   * La fusion se fait EN PLACE : `root` garde sa position, sa rotation et son
+   * rôle dans `userData.anim` — on peut donc fusionner une aile et continuer de
+   * la faire battre, fusionner une tête et continuer de la tourner.
+   *
+   * Ce qui SURVIT à la fusion :
+   *   - tout objet portant `userData.llKeep = true` (et sa descendance) ;
+   *   - les THREE.Points / Line / Sprite (starfield, notamment).
+   * Ils sont simplement re-parentés à `root` avec leur transformation composée.
+   *
+   * opts = { shadow: false -> le mesh fusionné ne projette plus d'ombre }
+   *
+   * PIÈGE À CONNAÎTRE : R3.mat() met en cache sur `couleur + JSON(options)`.
+   * `{rough: 0.8}` et `{rough: 0.8, seg: 12}` sont DEUX matériaux, donc DEUX
+   * draw calls après fusion, alors que `seg` ne concerne que la géométrie.
+   * Dans un groupe à fusionner : une teinte, un seul jeu d'options, jamais de
+   * `seg`. C'est la seule discipline que la fusion demande.
+   */
+  function mergeGeos(list) {
+    const parts = [];
+    let vCount = 0, iCount = 0, hasUV = true;
+    for (let i = 0; i < list.length; i++) {
+      const src = list[i].g;
+      if (!src || !src.attributes || !src.attributes.position) continue;
+      const g = src.clone();                 // jamais toucher la géométrie du cache R3
+      g.applyMatrix4(list[i].m);             // transforme aussi les normales
+      if (!g.attributes.normal) g.computeVertexNormals();
+      if (!g.attributes.uv) hasUV = false;
+      const n = g.attributes.position.count;
+      vCount += n;
+      iCount += g.index ? g.index.count : n;
+      parts.push(g);
+    }
+    if (!parts.length || !vCount) return null;
+
+    const pos = new Float32Array(vCount * 3);
+    const nor = new Float32Array(vCount * 3);
+    const uv = hasUV ? new Float32Array(vCount * 2) : null;
+    // Au-delà de 65 535 sommets il faut des index 32 bits, sinon la moitié du
+    // modèle se replie sur elle-même (bug très joli, très incompréhensible).
+    const idx = (vCount > 65535) ? new Uint32Array(iCount) : new Uint16Array(iCount);
+    let vo = 0, io = 0;
+
+    for (let i = 0; i < parts.length; i++) {
+      const g = parts[i];
+      const n = g.attributes.position.count;
+      pos.set(g.attributes.position.array, vo * 3);
+      nor.set(g.attributes.normal.array, vo * 3);
+      if (uv) uv.set(g.attributes.uv.array, vo * 2);
+      if (g.index) {
+        const a = g.index.array;
+        for (let k = 0; k < a.length; k++) idx[io + k] = a[k] + vo;
+        io += a.length;
+      } else {
+        for (let k = 0; k < n; k++) idx[io + k] = k + vo;
+        io += n;
+      }
+      vo += n;
+      g.dispose();                            // le clone a fini son office
+    }
+
+    const out = new THREE.BufferGeometry();
+    out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+    if (uv) out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    out.setIndex(new THREE.BufferAttribute(idx, 1));
+    out.computeBoundingSphere();
+    out.computeBoundingBox();
+    return out;
+  }
+
+  function bake(root, opts) {
+    const o = opts || {};
+    if (!root || !root.isObject3D || !THREE.BufferGeometry) return root;
+    try {
+      root.updateMatrixWorld(true);
+      const inv = new THREE.Matrix4().copy(root.matrixWorld).invert();
+      const order = [];                       // matériaux dans l'ordre rencontré
+      const buckets = new Map();
+      const kept = [];
+
+      (function walk(node) {
+        if (node !== root) {
+          if (node.userData && node.userData.llKeep) {
+            kept.push({ o: node, m: new THREE.Matrix4().multiplyMatrices(inv, node.matrixWorld) });
+            return;
+          }
+          if (node.isPoints || node.isLine || node.isSprite) {
+            kept.push({ o: node, m: new THREE.Matrix4().multiplyMatrices(inv, node.matrixWorld) });
+            return;
+          }
+          if (node.isMesh && node.geometry && node.material && !Array.isArray(node.material)) {
+            let b = buckets.get(node.material);
+            if (!b) { b = { cast: false, recv: false, ro: 0, list: [] }; buckets.set(node.material, b); order.push(node.material); }
+            b.list.push({ g: node.geometry, m: new THREE.Matrix4().multiplyMatrices(inv, node.matrixWorld) });
+            b.cast = b.cast || node.castShadow;
+            b.recv = b.recv || node.receiveShadow;
+            if (node.renderOrder > b.ro) b.ro = node.renderOrder;
+          }
+        }
+        const kids = node.children.slice();
+        for (let i = 0; i < kids.length; i++) walk(kids[i]);
+      })(root);
+
+      if (!order.length && !kept.length) return root;
+
+      while (root.children.length) root.remove(root.children[0]);
+
+      for (let i = 0; i < order.length; i++) {
+        const mtl = order[i];
+        const b = buckets.get(mtl);
+        const geom = mergeGeos(b.list);
+        if (!geom) continue;
+        const mesh = new THREE.Mesh(geom, mtl);
+        mesh.castShadow = (o.shadow === false) ? false : b.cast;
+        mesh.receiveShadow = (o.shadow === false) ? false : b.recv;
+        mesh.renderOrder = b.ro;
+        root.add(mesh);
+      }
+      for (let i = 0; i < kept.length; i++) {
+        const k = kept[i];
+        if (k.o.parent) k.o.parent.remove(k.o);
+        k.m.decompose(k.o.position, k.o.quaternion, k.o.scale);
+        root.add(k.o);
+      }
+      if (root.userData) delete root.userData._llNodes;   // la liste animée a changé
+    } catch (e) {
+      console.warn('[llib] bake a échoué (le modèle reste correct, juste plus cher) :', e);
+    }
+    return root;
+  }
+
+  /** Compte les draw calls d'un modèle : un mesh, un Points, un Line = un draw
+   *  call. Sert à MESURER le budget du §9 plutôt qu'à l'estimer de tête. */
+  function drawCalls(obj) {
+    let n = 0;
+    if (obj && obj.traverse) {
+      obj.traverse(function (o) { if (o.isMesh || o.isPoints || o.isLine || o.isSprite) n++; });
+    }
+    return n;
+  }
+
+  // ===========================================================================
+  //  BONUS 6. nobleEyes(spread, y, z, r, opts) — les yeux nobles, fusionnés
+  // ===========================================================================
+  /**
+   * Mêmes arguments et mêmes options que `bigEyes`, mais les deux yeux sont
+   * FUSIONNÉS. `bigEyes` coûtait 6 à 8 draw calls — sur un budget de 25, c'était
+   * un tiers du légendaire dépensé en deux billes. Ici :
+   *
+   *   par défaut   -> 3 draw calls : globes (+ sourcils), iris, reflets ;
+   *   `lean: true` -> 2 draw calls : globes (+ sourcils) et iris seuls, le
+   *                   reflet blanc étant fondu dans l'iris. C'est la version à
+   *                   prendre quand le budget est serré ; à moins de deux
+   *                   mètres on ne voit pas la différence.
+   *
+   * Les sourcils partagent le matériau des globes tant que `browColor` n'est pas
+   * précisé — les préciser coûte 1 draw call de plus.
+   * Les deux yeux clignent ensemble, ce qui est de toute façon ce que font les
+   * yeux.
+   *
+   * `bigEyes` n'est PAS modifiée : les lots P2 et P3 codent contre elle.
+   */
+  function nobleEyes(spread, y, z, r, opts) {
+    const o = opts || {};
+    const sp = num(spread, 0.16);
+    const rr = Math.max(0.02, num(r, 0.075));
+    const iris = o.color || '#ffe066';
+    const dark = o.dark || '#141824';
+    const angry = clampf(num(o.angry, 0.6), 0, 1);
+    const tilt = num(o.tilt, 0.18);
+    const lean = !!o.lean;
+
+    const g = new THREE.Group();
+    const inner = new THREE.Group();          // c'est LUI qui cligne (scale.y)
+    g.add(inner);
+
+    const globeMat = R3.mat(dark, { rough: 0.35 });
+    const irisMat = glowMat(iris, 0.95, { emissiveIntensity: 1.35, side: THREE.FrontSide });
+    const hiMat = lean ? irisMat : R3.mat('#ffffff', { rough: 0.2, emissive: '#ffffff', emissiveIntensity: 0.5 });
+    const browMat = o.browColor ? R3.mat(o.browColor, { rough: 0.35 }) : globeMat;
+
+    [-1, 1].forEach(function (s) {
+      const globe = ell(rr * 1.15, rr * 0.72, rr * 0.55, globeMat, s * sp, 0, 0, 12);
+      globe.rotation.z = -s * tilt;
+      inner.add(globe);
+      const ir = ell(rr * 0.50, rr * 0.44, rr * 0.28, irisMat, s * sp, 0, rr * 0.34, 10);
+      ir.renderOrder = 2;
+      inner.add(ir);
+      // Reflet : minuscule, mais c'est lui qui rend le regard vivant. En mode
+      // `lean` il prend le matériau de l'iris et fusionne donc avec lui.
+      const hi = put(R3.geo.sphere(rr * (lean ? 0.20 : 0.17), 8), hiMat,
+        s * sp + s * rr * 0.22, rr * 0.20, rr * 0.46);
+      hi.renderOrder = 2;
+      inner.add(hi);
+      if (o.brow !== false) {
+        const br = ell(rr * 1.25, rr * 0.20, rr * 0.26, browMat, s * sp, rr * 0.62, rr * 0.12, 10);
+        br.rotation.z = -s * (tilt + angry * 0.45);   // sourcil qui plonge = regard décidé
+        inner.add(br);
+      }
+    });
+
+    bake(inner);
+    // Le décalage (y, z) est porté par le GROUPE et pas par la géométrie : le
+    // clignement, qui écrase `inner` sur Y, reste centré sur la ligne des yeux.
+    g.position.set(num(o.x, 0), num(o.y, 0) + num(y, 0.1), num(o.z, 0) + num(z, 0.28));
+    g.userData.ll = { kind: 'blink', inner: inner, ph: phase() };
+    g.userData.eyes = [inner];
+    return g;
+  }
+
+  // ===========================================================================
+  //  BONUS 7. crown(color, r, points, opts) — couronne de pointes flottante
+  // ===========================================================================
+  /**
+   * Ancrage : centre de la couronne à l'origine, à poser au-dessus de la tête.
+   * Elle tourne lentement et flotte : c'est l'attribut « royal » le moins cher
+   * du catalogue, et celui qui se lit le mieux de loin.
+   *
+   * opts = {
+   *   color2 : couleur des pointes courtes             (= color)
+   *   band   : true -> bandeau annulaire                  (true)
+   *   h      : hauteur des pointes                   (0.85 × r)
+   *   gem    : true -> une gemme au bout de chaque pointe (false)
+   *   speed  : rotation en rad/s                          (0.30)
+   *   bob    : amplitude du flottement              (0.06 × r)
+   *   tilt   : inclinaison de la couronne                    (0)
+   *   bake   : false -> pas de fusion                     (true)
+   *   x, y, z
+   * }
+   * Coût : 1 draw call, 2 si `color2` diffère de `color`.
+   */
+  function crown(color, r, points, opts) {
+    const o = opts || {};
+    const col = color || '#ffe066';
+    const col2 = o.color2 || col;
+    const rr = Math.max(0.05, num(r, 0.28));
+    const n = clampi(num(points, 6), 3, 12);
+    const h = num(o.h, rr * 0.85);
+
+    const g = new THREE.Group();
+    const spin = new THREE.Group();
+    g.add(spin);
+
+    const mA = solidMat(col, { flat: true, rough: 0.35, emissiveIntensity: 0.75 });
+    const mB = (col2 === col) ? mA : solidMat(col2, { flat: true, rough: 0.32, emissiveIntensity: 0.95 });
+
+    if (o.band !== false) {
+      const b = put(R3.geo.torus(rr, rr * 0.09, 18), mA, 0, 0, 0);
+      b.rotation.x = -Math.PI / 2;
+      solid(b);
+      spin.add(b);
+    }
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      // Pointes hautes et basses en alternance : une couronne toute régulière
+      // fait « roue dentée », l'alternance fait « couronne ».
+      const hh = h * ((i % 2) ? 0.58 : 1);
+      const c = put(R3.geo.cone(rr * 0.16, hh, 4), (i % 2) ? mB : mA,
+        Math.cos(a) * rr, hh * 0.5, Math.sin(a) * rr);
+      c.rotation.z = -Math.cos(a) * 0.13;
+      c.rotation.x = Math.sin(a) * 0.13;
+      solid(c);
+      spin.add(c);
+      if (o.gem) {
+        spin.add(put(R3.geo.sphere(rr * 0.11, 8), mB,
+          Math.cos(a) * rr, hh + rr * 0.08, Math.sin(a) * rr));
+      }
+    }
+
+    if (o.bake !== false) bake(spin);
+    g.rotation.x = num(o.tilt, 0);
+    g.userData.ll = { kind: 'spin', spin: spin, ph: phase(), sp: num(o.speed, 0.30), bob: num(o.bob, rr * 0.06) };
+    return place(g, o);
+  }
+
+  // ===========================================================================
+  //  BONUS 8. runeBand(color, r, n, opts) — ceinture de runes qui tourne
+  // ===========================================================================
+  /**
+   * Ancrage : centre de l'anneau à l'origine ; les runes se dressent dans le
+   * plan horizontal et tournent autour de la créature.
+   *
+   * opts = {
+   *   color2 : couleur de la gravure                   (= color)
+   *   size   : hauteur d'une rune                  (0.22 × r)
+   *   tilt   : inclinaison de l'anneau                      (0)
+   *   speed  : rotation en rad/s (négatif = sens inverse) (-0.28)
+   *   guide  : true -> fin anneau lumineux                (false)
+   *   bake   : false -> pas de fusion                      (true)
+   *   x, y, z
+   * }
+   * Coût : 1 draw call, 2 si `color2` diffère, 3 avec le guide.
+   */
+  function runeBand(color, r, n, opts) {
+    const o = opts || {};
+    const col = color || '#ffe066';
+    const col2 = o.color2 || col;
+    const rr = Math.max(0.08, num(r, 0.6));
+    const cnt = clampi(num(n, 6), 1, 12);
+    const s = num(o.size, rr * 0.22);
+
+    const g = new THREE.Group();
+    const spin = new THREE.Group();
+    g.add(spin);
+
+    const mA = glowMat(col, 0.80, { emissiveIntensity: 1.15, side: THREE.FrontSide });
+    const mB = (col2 === col) ? mA : glowMat(col2, 0.92, { emissiveIntensity: 1.4, side: THREE.FrontSide });
+
+    if (o.guide) {
+      const gd = ring(rr, Math.max(0.006, rr * 0.020), glowMat(col, 0.30, { emissiveIntensity: 1.0 }), 0);
+      gd.renderOrder = 2;
+      spin.add(gd);
+    }
+    for (let i = 0; i < cnt; i++) {
+      const a = (i / cnt) * Math.PI * 2;
+      const p = new THREE.Group();
+      p.position.set(Math.cos(a) * rr, 0, Math.sin(a) * rr);
+      p.rotation.y = -a;                       // la face gravée regarde dehors
+      const dalle = put(R3.geo.box(s * 0.10, s, s * 0.70), mA, 0, 0, 0);
+      // Deux barres croisées suffisent à faire lire « signe gravé ».
+      const t1 = put(R3.geo.box(s * 0.14, s * 0.58, s * 0.15), mB, s * 0.07, s * 0.12, 0);
+      const t2 = put(R3.geo.box(s * 0.14, s * 0.15, s * 0.44), mB, s * 0.07, -s * 0.18, 0);
+      dalle.renderOrder = 2; t1.renderOrder = 3; t2.renderOrder = 3;
+      p.add(dalle, t1, t2);
+      spin.add(p);
+    }
+
+    if (o.bake !== false) bake(spin);
+    g.rotation.x = num(o.tilt, 0);
+    g.userData.ll = { kind: 'spin', spin: spin, ph: phase(), sp: num(o.speed, -0.28), bob: num(o.bob, 0) };
+    return place(g, o);
+  }
+
+  // ===========================================================================
+  //  BONUS 9. arcRings(color, r, n, opts) — anneaux inclinés en orbite
+  // ===========================================================================
+  /**
+   * Ancrage : centre des anneaux à l'origine. Chaque anneau a sa propre
+   * inclinaison et tourne dans son sens : c'est la signature « Horizons » la
+   * plus reconnaissable, et elle ne coûte qu'un draw call par anneau.
+   *
+   * opts = { color2, tube (0.035), y0 (0), x, y, z }
+   * Coût : n draw calls (2 par défaut, 4 au maximum).
+   */
+  function arcRings(color, r, n, opts) {
+    const o = opts || {};
+    const col = color || '#a8e6ff';
+    const col2 = o.color2 || col;
+    const rr = Math.max(0.1, num(r, 0.9));
+    const cnt = clampi(num(n, 2), 1, 4);
+
+    const g = new THREE.Group();
+    const rings = [];
+    const tilts = [0.55, -0.72, 1.15, -0.20];
+    for (let i = 0; i < cnt; i++) {
+      const spin = new THREE.Group();
+      const R = rr * (1 + i * 0.17);
+      const m = ring(R, Math.max(0.010, rr * num(o.tube, 0.035)),
+        glowMat((i % 2) ? col2 : col, clampf(0.55 - i * 0.08, 0.1, 1), { emissiveIntensity: 1.15 }), 0);
+      m.renderOrder = 2;
+      const tilt = -Math.PI / 2 + tilts[i % 4];
+      m.rotation.x = tilt;
+      spin.position.y = num(o.y0, 0) + (i - (cnt - 1) * 0.5) * rr * 0.20;
+      spin.add(m);
+      g.add(spin);
+      rings.push({ spin: spin, mesh: m, tilt: tilt, sp: (i % 2 ? -0.62 : 0.48), ph: phase() });
+    }
+    g.userData.ll = { kind: 'arcs', rings: rings, ph: phase() };
+    return place(g, o);
+  }
+
+  // ===========================================================================
+  //  BONUS 10. crestFin(len, color, n, opts) — crête dorsale de lames
+  // ===========================================================================
+  /**
+   * Ancrage : pivot à la BASE (origine) ; la crête court vers -z, donc le long
+   * du DOS d'une créature qui regarde +z. Les lames sont plus hautes au milieu.
+   *
+   * opts = { h (0.34 × len), opacity (1), bake (true), x, y, z }
+   * Coût : 1 draw call.
+   */
+  function crestFin(len, color, n, opts) {
+    const o = opts || {};
+    const L = Math.max(0.1, num(len, 0.9));
+    const col = color || '#73eff7';
+    const cnt = clampi(num(n, 5), 1, 10);
+    const h = num(o.h, L * 0.34);
+    const opacity = clampf(num(o.opacity, 1), 0.1, 1);
+
+    const g = new THREE.Group();
+    const mtl = (opacity < 0.99)
+      ? glowMat(col, opacity, { emissiveIntensity: 0.85 })
+      : solidMat(col, { rough: 0.5, emissiveIntensity: 0.4, side: THREE.DoubleSide });
+
+    for (let i = 0; i < cnt; i++) {
+      const u = (i + 0.5) / cnt;
+      const hh = h * (0.25 + Math.sin(u * Math.PI) * 1.05);
+      const m = ell(Math.max(0.008, L * 0.022), hh * 0.5, L * (0.62 / cnt), mtl, 0, hh * 0.5, -u * L, 10);
+      if (opacity >= 0.99) solid(m);
+      g.add(m);
+    }
+    if (o.bake !== false) bake(g);
+    return place(g, o);
+  }
+
+  // ===========================================================================
+  //  BONUS 11. boltArc(len, color, opts) — éclair en zigzag
+  // ===========================================================================
+  /**
+   * Ancrage : pivot à la BASE (origine), l'éclair monte vers +y en zigzaguant
+   * dans le plan XY.
+   *
+   * opts = { segments (4), width (0.10 × len), zig (0.16 × len), bake (true) }
+   * Coût : 1 draw call.
+   */
+  function boltArc(len, color, opts) {
+    const o = opts || {};
+    const L = Math.max(0.1, num(len, 0.7));
+    const col = color || '#f1c40f';
+    const cnt = clampi(num(o.segments, 4), 2, 8);
+    const w = num(o.width, L * 0.10);
+    const zig = num(o.zig, L * 0.16);
+    const step = L / cnt;
+
+    const g = new THREE.Group();
+    const mtl = glowMat(col, 0.95, { emissiveIntensity: 1.45, side: THREE.FrontSide });
+    let x = 0, y = 0;
+    for (let i = 0; i < cnt; i++) {
+      const dx = ((i % 2) ? -1 : 1) * zig;
+      const m = put(R3.geo.box(w * (1 - i / (cnt * 1.7)), step * 1.15, w * 0.55), mtl,
+        x + dx * 0.5, y + step * 0.5, 0);
+      m.rotation.z = -Math.atan2(dx, step);   // la barre suit la diagonale
+      m.renderOrder = 2;
+      g.add(m);
+      x += dx; y += step;
+    }
+    if (o.bake !== false) bake(g);
+    return place(g, o);
+  }
+
+  // ===========================================================================
+  //  BONUS 12. petalSkirt(color, n, r, opts) — corolle / robe de pétales
+  // ===========================================================================
+  /**
+   * Ancrage : la taille (origine) ; les pétales retombent vers -y.
+   * opts = { color2, drop (1.1 × r), flare (0.35), bake (true), x, y, z }
+   * Coût : 1 draw call, 2 si `color2` diffère.
+   */
+  function petalSkirt(color, n, r, opts) {
+    const o = opts || {};
+    const col = color || '#ff6b9d';
+    const col2 = o.color2 || col;
+    const cnt = clampi(num(n, 8), 3, 14);
+    const rr = Math.max(0.05, num(r, 0.40));
+    const drop = num(o.drop, rr * 1.1);
+
+    const g = new THREE.Group();
+    const mA = solidMat(col, { rough: 0.55, side: THREE.DoubleSide, emissiveIntensity: 0.15 });
+    const mB = (col2 === col) ? mA : solidMat(col2, { rough: 0.55, side: THREE.DoubleSide, emissiveIntensity: 0.15 });
+
+    for (let i = 0; i < cnt; i++) {
+      const a = (i / cnt) * Math.PI * 2;
+      const p = new THREE.Group();
+      p.rotation.y = -a;
+      const pt = ell(rr * 0.46, drop * 0.52, Math.max(0.008, rr * 0.05), (i % 2) ? mB : mA,
+        0, -drop * 0.40, rr * 0.60, 12);
+      pt.rotation.x = -num(o.flare, 0.35);     // les pétales s'ouvrent vers le bas
+      solid(pt);
+      p.add(pt);
+      g.add(p);
+    }
+    if (o.bake !== false) bake(g);
+    return place(g, o);
+  }
+
+  // ===========================================================================
+  //  BONUS 13. antler(len, color, opts) — ramure de branches
+  // ===========================================================================
+  /**
+   * Ancrage : la base du merrain (origine), la ramure pousse vers +y.
+   * opts = { side (+1 droite, -1 gauche), tipColor (bourgeons), bake (true) }
+   * Coût : 1 draw call, 2 avec `tipColor`.
+   */
+  function antler(len, color, opts) {
+    const o = opts || {};
+    const L = Math.max(0.1, num(len, 0.5));
+    const col = color || '#8b5a2b';
+    const side = (num(o.side, 1) < 0) ? -1 : 1;
+
+    const g = new THREE.Group();
+    const mtl = solidMat(col, { rough: 0.9, emissiveIntensity: 0.04 });
+    const tipMtl = o.tipColor ? solidMat(o.tipColor, { rough: 0.6, emissiveIntensity: 0.45 }) : null;
+
+    const beam = put(R3.geo.cyl(L * 0.055, L * 0.090, L, 6), mtl, 0, L * 0.5, 0);
+    beam.rotation.z = -side * 0.22;
+    solid(beam);
+    g.add(beam);
+
+    // [hauteur d'attache, longueur, décalage z, écartement]
+    const tines = [[0.28, 0.52, -0.06, 0.80], [0.54, 0.40, 0.10, 0.55], [0.76, 0.34, 0.00, 1.00]];
+    for (let i = 0; i < tines.length; i++) {
+      const t = tines[i];
+      const bx = side * L * t[0] * 0.30;
+      const by = L * t[0];
+      const m = put(R3.geo.cyl(L * 0.028, L * 0.046, L * t[1], 5), mtl,
+        bx + side * Math.sin(t[3]) * L * t[1] * 0.5,
+        by + Math.cos(t[3]) * L * t[1] * 0.5, L * t[2]);
+      m.rotation.z = -side * t[3];
+      solid(m);
+      g.add(m);
+      if (tipMtl) {
+        const b = ell(L * 0.085, L * 0.07, L * 0.05, tipMtl,
+          bx + side * Math.sin(t[3]) * L * t[1],
+          by + Math.cos(t[3]) * L * t[1], L * t[2], 8);
+        solid(b);
+        g.add(b);
+      }
+    }
+    if (o.bake !== false) bake(g);
+    return place(g, o);
+  }
+
+  // ===========================================================================
+  //  BONUS 14. mane(color, r, n, opts) — crinière rayonnante
+  // ===========================================================================
+  /**
+   * Ancrage : centre du disque à l'origine, la crinière rayonne dans le plan XY
+   * (face à +z) — à poser derrière la tête d'un félin ou d'un oiseau.
+   *
+   * opts = { color2 (mèches vives), sweep (recul en -z), bake (true), x, y, z }
+   * Coût : 1 draw call, 2 si `color2` diffère.
+   */
+  function mane(color, r, n, opts) {
+    const o = opts || {};
+    const col = color || '#f4a259';
+    const col2 = o.color2 || col;
+    const rr = Math.max(0.06, num(r, 0.42));
+    const cnt = clampi(num(n, 10), 3, 16);
+
+    const g = new THREE.Group();
+    const mA = solidMat(col, { rough: 0.5, flat: true, emissiveIntensity: 0.5 });
+    const mB = (col2 === col) ? mA : solidMat(col2, { rough: 0.4, flat: true, emissiveIntensity: 0.95 });
+
+    for (let i = 0; i < cnt; i++) {
+      const a = (i / cnt) * Math.PI * 2;
+      // Mèches longues et courtes en alternance : une crinière régulière fait
+      // « soleil de dessin animé », l'alternance fait « fourrure hérissée ».
+      const l = rr * ((i % 2) ? 0.70 : 1.05);
+      const d = rr * 0.55 + l * 0.42;
+      const m = put(R3.geo.cone(rr * 0.17, l, 5), ((i % 3) === 1) ? mB : mA,
+        Math.cos(a) * d, Math.sin(a) * d, -num(o.sweep, rr * 0.10));
+      m.rotation.z = a - Math.PI / 2;          // la pointe part vers l'extérieur
+      solid(m);
+      g.add(m);
+    }
+    if (o.bake !== false) bake(g);
+    return place(g, o);
+  }
+
+  // ===========================================================================
   //  animateAura(g, t) — anime TOUT ce que la bibliothèque a posé
   // ===========================================================================
   /**
@@ -1520,8 +2197,8 @@
   ANIM.core = function (n, d, t) {
     const k = Math.sin(t * d.sp + d.ph);
     d.core.scale.setScalar(1 + k * 0.13);
-    d.mid.scale.setScalar(1 - k * 0.10);
-    d.out.scale.setScalar(1 + k * 0.07);
+    if (d.mid) d.mid.scale.setScalar(1 - k * 0.10);   // absentes si shells < 3
+    if (d.out) d.out.scale.setScalar(1 + k * 0.07);
     for (let i = 0; i < d.spikes.length; i++) {
       d.spikes[i].scale.y = 1 + Math.sin(t * 3 + i * 1.1 + d.ph) * 0.30;
     }
@@ -1581,6 +2258,30 @@
     }
   };
 
+  // --- Nouveaux mouvements de la vague v3 ------------------------------------
+
+  /** Couronne / ceinture de runes : rotation lente + léger flottement. */
+  ANIM.spin = function (n, d, t) {
+    d.spin.rotation.y = t * d.sp + d.ph;
+    if (d.bob) d.spin.position.y = Math.sin(t * 1.3 + d.ph) * d.bob;
+  };
+
+  /** Anneaux inclinés : chacun tourne dans son sens et gîte doucement. */
+  ANIM.arcs = function (n, d, t) {
+    for (let i = 0; i < d.rings.length; i++) {
+      const r = d.rings[i];
+      r.spin.rotation.y = t * r.sp + r.ph;
+      r.mesh.rotation.x = r.tilt + Math.sin(t * 0.5 + r.ph) * 0.18;
+    }
+  };
+
+  /** Clignement des yeux fusionnés : les deux paupières d'un seul coup. */
+  ANIM.blink = function (n, d, t) {
+    const c = (t * 0.23 + d.ph * 0.16) % 1;
+    const k = (c > 0.965) ? 1 - Math.abs(c - 0.9825) / 0.0175 : 0;
+    d.inner.scale.y = 1 - k * 0.92;
+  };
+
   function collect(g) {
     const list = [];
     g.traverse(function (o) { if (o.userData && o.userData.ll) list.push(o); });
@@ -1606,6 +2307,51 @@
   function refresh(g) { if (g && g.userData) delete g.userData._llNodes; }
 
   // ===========================================================================
+  //  autoAnimate(g) — brancher l'idle d'un légendaire sur le cycle de rendu
+  // ===========================================================================
+  /**
+   * POURQUOI CETTE FONCTION EXISTE
+   * ------------------------------
+   * Sur la carte, `roamers3d` appelle bien `animateAura()` sur chaque créature.
+   * Mais EN COMBAT, `battle3d` n'anime que sa PROPRE aura (`s.auraGroup`), pas
+   * le modèle : les anneaux du légendaire se figeaient, ses cristaux ne
+   * respiraient plus, et l'entrée en scène retombait à plat. Le lot Intégration
+   * pourrait le corriger, mais on ne peut pas en dépendre — et surtout on n'a
+   * pas le droit d'écrire dans `battle3d.js`.
+   *
+   * Le seul point d'accroche garanti à chaque frame, sans toucher au fichier de
+   * personne, est `updateMatrixWorld()` : le moteur l'appelle sur toute la scène
+   * juste avant de dessiner. On l'enveloppe, on anime, puis on laisse three.js
+   * faire son travail habituel. Le garde `t !== last` évite de recalculer deux
+   * fois dans la même frame quand `roamers3d` anime déjà de son côté.
+   *
+   * `g.userData.llIdle(t)`, s'il existe, porte l'idle propre à la créature
+   * (lévitation, respiration, battement d'aile lent). Il est mis en sommeil
+   * pendant une attaque, repérée par `g.userData.llAtk` que la créature pose
+   * elle-même dans son `userData.attack`.
+   */
+  function autoAnimate(g) {
+    if (!g || !g.isObject3D || g.userData._llAuto) return g;
+    g.userData._llAuto = true;
+    const proto = THREE.Object3D.prototype.updateMatrixWorld;
+    let last = -1;
+    g.updateMatrixWorld = function (force) {
+      const t = (R3.clock && typeof R3.clock.t === 'number') ? R3.clock.t : 0;
+      if (t !== last) {
+        last = t;
+        try {
+          const u = this.userData;
+          const enAttaque = (typeof u.llAtk === 'number') && (t - u.llAtk) < 0.10;
+          if (u.llIdle && !enAttaque) u.llIdle(t);
+          animateAura(this, t);
+        } catch (e) { /* une animation ne casse jamais une frame */ }
+      }
+      proto.call(this, force);
+    };
+    return g;
+  }
+
+  // ===========================================================================
   //  Enregistrement — signature EXACTE du §13, plus les bonus.
   // ===========================================================================
   const api = {
@@ -1621,13 +2367,28 @@
     glowCore: guard('glowCore', glowCore),
     bigEyes: guard('bigEyes', bigEyes),
     animateAura: animateAura,
-    // --- Bonus (hors contrat, utilisables si présents) ---
+    // --- Bonus v2 (hors contrat, utilisables si présents) ---
     serpentBody: guard('serpentBody', serpentBody),
     plateShell: guard('plateShell', plateShell),
     clockFace: guard('clockFace', clockFace),
     mistPuff: guard('mistPuff', mistPuff),
     refresh: refresh,
     TYPE_COLOR: TYPE_COLOR,
+    // --- Bonus v3 : le budget de 25 draw calls (CONTRACT3 §9) ---
+    bake: bake,                 // volontairement pas sous `guard` : bake modifie
+                                // `root` EN PLACE et le renvoie, il ne doit
+                                // jamais être remplacé par un groupe vide.
+    drawCalls: drawCalls,
+    autoAnimate: autoAnimate,
+    nobleEyes: guard('nobleEyes', nobleEyes),
+    crown: guard('crown', crown),
+    runeBand: guard('runeBand', runeBand),
+    arcRings: guard('arcRings', arcRings),
+    crestFin: guard('crestFin', crestFin),
+    boltArc: guard('boltArc', boltArc),
+    petalSkirt: guard('petalSkirt', petalSkirt),
+    antler: guard('antler', antler),
+    mane: guard('mane', mane),
   };
 
   R3.register('llib', api);
