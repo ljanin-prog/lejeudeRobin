@@ -633,7 +633,7 @@ Les trois points laissés ouverts sont traités, plus deux retours de Robin arri
 
 | | ce qui a changé |
 |---|---|
-| **Vue FPS** | « c'est trop compliqué » : la rotation se faisait par crans de 90°, donc quatre directions et un saut brusque à chaque appui. L'angle est désormais **libre et continu** (3 rad/s) ; `player.dir` devient la cardinale la plus proche du regard, ce qui laisse toute la mécanique de grille inchangée. `camera3d` suit `player.fpsYaw` s'il est fourni, sinon les quatre directions comme avant. |
+| **Vue FPS** | En deux temps. D'abord la rotation, qui se faisait par crans de 90° : elle est devenue **libre et continue** (3 rad/s). Mais le corps sautait toujours de tuile en tuile — « la gestion du déplacement en FPS est chaotique » — alors la **marche est devenue libre** elle aussi (§17). `camera3d` suit `player.fpsYaw` s'il est fourni, sinon les quatre directions comme avant. |
 | **Musique** | « la musique ordinateur c'est usant » : nouveau module `js3d/music3d.js` — guitare en Karplus-Strong, basse, batterie, réverbe à convolution, grille pop, 5 ambiances selon le biome. Entièrement procédural. `js/audio.js` n'est pas modifié (§1.2) : music3d coupe son ancienne piste et prend le relais, avec repli sur elle s'il manque. |
 | **Navigation clavier** | Boutique, Journal et Académie se pilotent aux flèches — fonction `navEcran()`, éléments marqués `data-nav`, curseur `.nav-cursor`. Une seule fonction pour les trois écrans. |
 | **Sac hors combat** | Bouton « 🎒 Utiliser un objet » (touche `U`) dans l'écran Équipe. `GAME3D.useItem()` pilote, `shop.useFrom()` applique ; une pierre enchaîne sur l'écran d'évolution. |
@@ -654,3 +654,45 @@ Trois pièges rencontrés, à connaître avant de rejouer sur ces sujets :
 
 ⚠️ Pour tester dans un onglet d'arrière-plan, Chrome gèle `requestAnimationFrame` :
 utiliser **`GAME3D.tick(16)`** (§23.7) pour avancer le jeu à la main.
+
+---
+
+## 17. LA MARCHE LIBRE DE LA VUE SUBJECTIVE — `game3d.js`
+
+Ce jeu déplace le joueur **de tuile en tuile** : c'est ce qui rend simples les portes, les
+biomes, les PNJ et la sauvegarde, et il n'y a aucune raison d'y toucher pour les vues de
+dos. Mais **une caméra libre posée sur une marche en grille ne peut pas donner autre chose
+que du chaos** : on regarde à 40°, on avance plein nord, et tourner en marchant fait
+basculer la direction du pas d'un coup — le trajet part en escalier. C'est le retour de
+Robin (« c'est chaotique »), et c'était structurel, pas un réglage à ajuster.
+
+En vue `fps`, et **seulement** dans cette vue, la marche devient continue :
+
+```js
+state.player.freeMove          // true en vue fps : la position continue fait autorité
+state.player.freeX, freeZ      // position en unités monde (1 tuile = 1 unité)
+const FPS_SPEED  = 4.6;        // unités par seconde
+const FPS_RADIUS = 0.34;       // demi-gabarit, pour les collisions
+```
+
+Quatre règles, dans l'ordre où elles comptent :
+
+1. **On avance dans l'axe du regard** : `dx = sin(yaw)`, `dz = cos(yaw)` — conforme au §1.4
+   de v2 (`'down'` = yaw 0 = +z, `'right'` = yaw +π/2 = +x).
+2. **Les deux axes sont tentés séparément.** C'est ce qui fait qu'on glisse le long d'un mur
+   au lieu de s'y arrêter net. Sans ça, marcher en biais contre une façade bloque
+   complètement — c'était l'autre moitié de la sensation de chaos.
+3. **Le gabarit se teste aux quatre coins** (`placeLibre`), sinon on entre dans les murs par
+   l'angle, ce qui se voit immédiatement en vue subjective.
+4. **`tileX/tileY` suit la position continue**, et `onStepFinished()` est appelé au
+   changement de tuile. Tout le reste du jeu continue donc de raisonner en tuiles sans
+   savoir que la marche a changé.
+
+`syncFpsPosition(fps)` fait la bascule dans les deux sens : en entrant on part de la tuile,
+en sortant on se recale sur la tuile la plus proche. La position continue **n'est pas
+sauvegardée** (elle ne vaut que le temps d'une session) : `teleport()` et le chargement
+remettent simplement `freeMove = false`, et la resynchronisation se fait à l'image suivante.
+
+Vérifié en jeu : sur quatre caps, le cap réel égale le cap visé **au degré près** (le
+quatrième était contre un mur, d'où le glissement) ; en tournant tout en avançant, la
+trajectoire est un arc régulier — segments de 0,72 à 0,73 unité, plus aucun escalier.
