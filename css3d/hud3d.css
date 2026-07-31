@@ -1986,3 +1986,29 @@ html, body {
     transition-duration: .01ms !important;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   CURSEUR CLAVIER DES ÉCRANS À CARTES (Boutique, Journal, Académie)
+   Ces trois écrans ne répondaient qu'à la souris. La navigation aux flèches
+   pose la classe `nav-cursor` sur la carte courante : il faut qu'on la repère
+   d'un coup d'œil, sans pour autant écraser la couleur propre de la carte
+   (--item-color, --quest-color, --type-color).
+--------------------------------------------------------------------------- */
+.nav-cursor {
+  outline: 3px solid #f1c40f;
+  outline-offset: 2px;
+  border-radius: 14px;
+  box-shadow: 0 0 0 6px rgba(241, 196, 15, .18), 0 6px 18px rgba(0, 0, 0, .35);
+  position: relative;
+  z-index: 1;
+}
+
+/* Sur les boutons déjà colorés de l'Académie, l'anneau jaune suffit : on
+   n'ajoute pas de fond, sinon le type devient illisible. */
+.academy-type.nav-cursor,
+.academy-mon.nav-cursor { transform: translateY(-2px); }
+
+@media (prefers-reduced-motion: reduce) {
+  .academy-type.nav-cursor,
+  .academy-mon.nav-cursor { transform: none; }
+}

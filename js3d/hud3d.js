@@ -2711,7 +2711,7 @@
 
     ui.shopGrid = el('div', 'shop-grid', frame);
 
-    el('p', 'hint', frame, 'Les flèches − et + choisissent la quantité · Échap : sortir de la boutique');
+    el('p', 'hint', frame, '↑↓ choisir · ←→ la quantité · Entrée : valider · Tab : acheter/vendre · Échap : sortir');
     const close = el('button', 'shop-close', frame, 'Au revoir !');
     close.type = 'button';
     close.addEventListener('click', closeShop);
@@ -2745,6 +2745,96 @@
   }
 
   function shopQty(id) { return Math.max(1, shopState.qty[id] || 1); }
+
+  // ===========================================================================
+  //  NAVIGATION AU CLAVIER DES ÉCRANS À CARTES
+  //  Les écrans Équipe et dirigeable se pilotaient déjà aux flèches, mais la
+  //  Boutique, le Journal et l'Académie ne répondaient qu'à la souris — un
+  //  enfant qui joue au clavier devait lâcher les touches pour attraper la
+  //  souris à chaque achat.
+  //
+  //  Une seule fonction sert les trois : tout élément marqué `data-nav` devient
+  //  une étape de navigation. C'est le DOM qui porte l'ordre (celui du rendu),
+  //  donc rien à resynchroniser quand une grille est reconstruite.
+  //  `data-col` (Académie) sépare deux colonnes : ←/→ changent de colonne au
+  //  lieu de régler une quantité.
+  // ===========================================================================
+  var navCourant = null;      // élément survolé par le clavier
+
+  function navElements(overlay) {
+    if (!overlay) return [];
+    var tous = Array.prototype.slice.call(overlay.querySelectorAll('[data-nav]'));
+    return tous.filter(function (e) { return !e.disabled && e.offsetParent !== null; });
+  }
+
+  function navMarque(el2) {
+    if (navCourant && navCourant !== el2) navCourant.classList.remove('nav-cursor');
+    navCourant = el2 || null;
+    if (!navCourant) return;
+    navCourant.classList.add('nav-cursor');
+    // `nearest` : on ne recentre pas brutalement l'écran à chaque flèche.
+    try { navCourant.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+    catch (e) { try { navCourant.scrollIntoView(false); } catch (e2) { /* rien */ } }
+  }
+
+  function navReset(overlay) {
+    var l = navElements(overlay);
+    navMarque(l.length ? l[0] : null);
+  }
+
+  /**
+   * Traite une touche pour un écran à cartes.
+   * @returns {boolean} true si la touche a été consommée.
+   */
+  function navEcran(overlay, ev) {
+    var key = ev.key;
+    var liste = navElements(overlay);
+    if (!liste.length) return false;
+
+    // Le curseur a pu disparaître (grille reconstruite après un achat).
+    var i = liste.indexOf(navCourant);
+    if (i < 0) { i = 0; navMarque(liste[0]); }
+
+    var col = navCourant ? navCourant.getAttribute('data-col') : null;
+
+    if (key === 'ArrowDown' || key === 'ArrowUp') {
+      var pas = (key === 'ArrowDown') ? 1 : -1;
+      if (col) {
+        // Deux colonnes : on ne descend que parmi les éléments de la sienne.
+        var meme = liste.filter(function (e) { return e.getAttribute('data-col') === col; });
+        var j = meme.indexOf(navCourant);
+        navMarque(meme[Math.max(0, Math.min(meme.length - 1, j + pas))]);
+      } else {
+        navMarque(liste[Math.max(0, Math.min(liste.length - 1, i + pas))]);
+      }
+      return true;
+    }
+
+    if (key === 'ArrowLeft' || key === 'ArrowRight') {
+      if (col) {
+        // Changer de colonne, en gardant à peu près la même hauteur.
+        var vise = (key === 'ArrowRight') ? 'type' : 'mon';
+        var autre = liste.filter(function (e) { return e.getAttribute('data-col') === vise; });
+        if (!autre.length) return true;
+        var memeCol = liste.filter(function (e) { return e.getAttribute('data-col') === col; });
+        var rang = memeCol.indexOf(navCourant);
+        navMarque(autre[Math.max(0, Math.min(autre.length - 1, rang))]);
+        return true;
+      }
+      // Boutique : les flèches règlent la quantité de la carte courante.
+      var b = (key === 'ArrowLeft') ? navCourant._moins : navCourant._plus;
+      if (b && !b.disabled) b.click();
+      return true;
+    }
+
+    if (key === 'Enter' || key === ' ') {
+      var cible = navCourant._valider || navCourant;
+      if (cible && !cible.disabled && typeof cible.click === 'function') cible.click();
+      return true;
+    }
+
+    return false;
+  }
 
   function renderShopGrid() {
     if (!ui.shopGrid) return;
@@ -2785,6 +2875,10 @@
       const possede = shopOwned(item.id);
       const card = el('div', 'shop-card', ui.shopGrid);
       card.style.setProperty('--item-color', item.color || '#41a6f6');
+      // Repère pour la navigation au clavier (voir navEcran()) : toutes les
+      // cartes d'un écran portent `data-nav`, et c'est la seule chose dont la
+      // navigation a besoin pour fonctionner sur n'importe lequel des écrans.
+      card.setAttribute('data-nav', '1');
 
       const top = el('div', 'sc-top', card);
       el('span', 'sc-icon', top, item.icon || '🎁');
@@ -2829,6 +2923,9 @@
 
       moins.addEventListener('click', function () { shopState.qty[item.id] = shopQty(item.id) - 1; refresh(); });
       plus.addEventListener('click', function () { shopState.qty[item.id] = shopQty(item.id) + 1; refresh(); });
+      // La navigation au clavier pilote ces trois boutons sans les chercher
+      // dans le DOM : ←/→ règlent la quantité, Entrée valide.
+      card._moins = moins; card._plus = plus; card._valider = bouton;
       bouton.addEventListener('click', function () {
         const q = shopQty(item.id);
         const cb = vente ? shopState.onSell : shopState.onBuy;
@@ -2871,6 +2968,7 @@
 
     setShopMode('buy');
     show(ui.shopOverlay);
+    navReset(ui.shopOverlay);
     replayAnim(ui.shopOverlay, 'overlay');
     showCompass(false);
   }
@@ -2901,7 +2999,7 @@
     const frame = el('div', 'journal-frame', ov);
     el('h2', null, frame, '📖 Le journal des légendes');
     ui.journalList = el('div', 'journal-list', frame);
-    el('p', 'hint', frame, 'J ou Échap : refermer le journal');
+    el('p', 'hint', frame, '↑↓ parcourir les légendes · J ou Échap : refermer le journal');
     ov.addEventListener('click', function (ev) { if (ev.target === ov) closeJournal(); });
     ui.journalOverlay = ov;
   }
@@ -2924,6 +3022,7 @@
         const etat = QUEST_ETAT[q.etat] || QUEST_ETAT.inconnue;
         const card = el('div', 'quest-card ' + etat.cls, ui.journalList);
         card.style.setProperty('--quest-color', q.couleur || '#f1c40f');
+        card.setAttribute('data-nav', '1');     // navigation au clavier
 
         const head = el('div', 'qc-head', card);
         el('span', 'qc-icon', head, q.icone || '🏅');
@@ -2948,6 +3047,7 @@
       });
     }
     show(ui.journalOverlay);
+    navReset(ui.journalOverlay);
     replayAnim(ui.journalOverlay, 'overlay');
     showCompass(false);
   }
@@ -3092,7 +3192,7 @@
     ui.academyTypeGrid = el('div', 'academy-type-grid', right);
     ui.academyBody = body;
 
-    el('p', 'hint', frame, 'Échap : quitter l’Académie');
+    el('p', 'hint', frame, '↑↓ choisir · ←→ changer de colonne · Entrée : valider · Échap : quitter');
     const close = el('button', null, frame, 'Merci, au revoir !');
     close.type = 'button';
     close.addEventListener('click', closeAcademy);
@@ -3143,6 +3243,10 @@
       const card = el('button', 'academy-mon' + (libre ? '' : ' servie') +
         (monUid(mon) === academyState.pick ? ' choisie' : ''), ui.academyTeamGrid);
       card.type = 'button';
+      // Deux colonnes navigables : ←/→ passent de l'une à l'autre, ↑/↓ montent
+      // et descendent dans celle où l'on est.
+      card.setAttribute('data-nav', '1');
+      card.setAttribute('data-col', 'mon');
       card.appendChild(thumbFor(sp, 56));
       el('div', 'am-name', card, monLabel(mon));
       const badge = el('div', 'am-tera', card);
@@ -3161,6 +3265,8 @@
     academyTypeList().forEach(function (t) {
       const b = el('button', 'academy-type', ui.academyTypeGrid);
       b.type = 'button';
+      b.setAttribute('data-nav', '1');
+      b.setAttribute('data-col', 'type');
       b.style.setProperty('--type-color', t.color || typeInfo(t.id).color);
       el('span', 'at-icon', b, t.icon || typeInfo(t.id).icon || '◇');
       el('span', 'at-label', b, t.label || typeInfo(t.id).label || t.id);
@@ -3197,6 +3303,7 @@
     academyState.pick = null;
     renderAcademy();
     show(ui.academyOverlay);
+    navReset(ui.academyOverlay);
     replayAnim(ui.academyOverlay, 'overlay');
     showCompass(false);
   }
@@ -3322,7 +3429,14 @@
     }
 
     if (ui.shopOverlay && !ui.shopOverlay.classList.contains('hidden')) {
-      if (key === 'Escape') { closeShop(); ev.preventDefault(); ev.stopPropagation(); }
+      if (key === 'Escape') { closeShop(); ev.preventDefault(); ev.stopPropagation(); return; }
+      // Tab bascule Acheter / Vendre, comme les onglets à la souris.
+      if (key === 'Tab' && ui.shopTabSell && ui.shopTabBuy) {
+        (shopState.mode === 'sell' ? ui.shopTabBuy : ui.shopTabSell).click();
+        navReset(ui.shopOverlay);
+        ev.preventDefault(); ev.stopPropagation(); return;
+      }
+      if (navEcran(ui.shopOverlay, ev)) { ev.preventDefault(); ev.stopPropagation(); }
       return;
     }
     if (ui.journalOverlay && !ui.journalOverlay.classList.contains('hidden')) {
@@ -3331,11 +3445,14 @@
         // à 'world' — même schéma que l'écran Équipe juste en dessous.
         closeJournal(); fakeKey('Escape');
         ev.preventDefault(); ev.stopPropagation();
+        return;
       }
+      if (navEcran(ui.journalOverlay, ev)) { ev.preventDefault(); ev.stopPropagation(); }
       return;
     }
     if (ui.academyOverlay && !ui.academyOverlay.classList.contains('hidden')) {
-      if (key === 'Escape') { closeAcademy(); ev.preventDefault(); ev.stopPropagation(); }
+      if (key === 'Escape') { closeAcademy(); ev.preventDefault(); ev.stopPropagation(); return; }
+      if (navEcran(ui.academyOverlay, ev)) { ev.preventDefault(); ev.stopPropagation(); }
       return;
     }
     if (ui.teamOverlay && !ui.teamOverlay.classList.contains('hidden')) {
