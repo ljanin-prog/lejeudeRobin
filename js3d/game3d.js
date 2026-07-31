@@ -84,6 +84,19 @@
   // boussole, lancer de Ball) continue de fonctionner sans rien changer.
   const FPS_TURN_SPEED = 3.0;     // radians par seconde (~172°/s : un quart de
                                   // tour en 0,5 s, un demi-tour en 1 s)
+
+  // ... mais tourner librement ne suffisait pas : le corps, lui, continuait à
+  // sauter de tuile en tuile. On regardait à 40° et on avançait plein nord ; en
+  // tournant tout en marchant, la direction du pas basculait d'un coup et le
+  // trajet partait en escalier. Robin : « la gestion du déplacement en FPS est
+  // chaotique ».
+  //
+  // En vue subjective, le déplacement est donc LIBRE : le joueur avance
+  // exactement là où il regarde, en coordonnées continues, et les tuiles ne
+  // servent plus qu'aux collisions. Les autres vues gardent le pas à la tuile,
+  // qui leur va très bien.
+  const FPS_SPEED = 4.6;          // unités par seconde (une tuile = une unité)
+  const FPS_RADIUS = 0.34;        // demi-gabarit du joueur, pour les collisions
   const TURN_ORDER = ['up', 'right', 'down', 'left'];   // sens des aiguilles
   const DIR_STEP = {
     up: { dx: 0, dz: -1 }, down: { dx: 0, dz: 1 },
@@ -138,6 +151,9 @@
       worldX: START_X, worldY: 0, worldZ: START_Y,
       dir: 'down',
       fpsYaw: 0,          // angle de vue LIBRE en première personne ('down' = 0)
+      // Marche libre de la vue subjective : position continue, en unités monde.
+      // `freeMove` dit laquelle des deux positions fait autorité.
+      freeMove: false, freeX: START_X, freeZ: START_Y,
       moving: false,
       moveProgress: 0,
       moveFromX: START_X, moveFromY: START_Y,
@@ -1036,13 +1052,96 @@
     }
   }
 
+  /** Une position continue est-elle praticable, gabarit du joueur compris ? */
+  function placeLibre(x, z) {
+    const r = FPS_RADIUS;
+    // On teste les quatre coins du gabarit : sans ça on entre dans les murs par
+    // le coin, ce qui se voit tout de suite en vue subjective.
+    const coins = [[x - r, z - r], [x + r, z - r], [x - r, z + r], [x + r, z + r]];
+    for (let i = 0; i < coins.length; i++) {
+      const tx = Math.round(coins[i][0]), ty = Math.round(coins[i][1]);
+      if (!isWalkable(tx, ty)) return false;
+      if (npcAt(tx, ty)) return false;
+    }
+    return true;
+  }
+
+  /**
+   * Déplacement LIBRE de la vue subjective : on va exactement là où on regarde.
+   *
+   * Les deux axes sont tentés SÉPARÉMENT : c'est ce qui fait qu'on glisse le
+   * long d'un mur au lieu de s'y coller net. Sans ça, marcher en biais contre
+   * une façade arrête le joueur complètement, et c'est précisément ce qui
+   * donnait une impression de blocage permanent.
+   */
+  function updateFpsMove(dtMs) {
+    const p = state.player;
+    let av = 0;
+    if (state.input.up) av += 1;
+    if (state.input.down) av -= 1;
+
+    if (!av) { p.moving = false; return; }
+
+    const a = fpsYaw();
+    const d = FPS_SPEED * av * (dtMs / 1000);
+    // Convention du contrat §1.4 : 'down' (yaw 0) = +z, 'right' (yaw +π/2) = +x.
+    const vx = Math.sin(a) * d;
+    const vz = Math.cos(a) * d;
+
+    const avantX = p.freeX, avantZ = p.freeZ;
+    if (placeLibre(p.freeX + vx, p.freeZ)) p.freeX += vx;
+    if (placeLibre(p.freeX, p.freeZ + vz)) p.freeZ += vz;
+
+    const bouge = (p.freeX !== avantX || p.freeZ !== avantZ);
+    p.moving = bouge;              // sert au balancement de marche de la caméra
+    if (!bouge) return;
+
+    // La tuile courante suit la position continue. Tout le reste du jeu
+    // (portes, biomes, quêtes, sauvegarde, roamers) continue de raisonner en
+    // tuiles sans savoir que la marche est devenue libre.
+    const ntx = Math.round(p.freeX), nty = Math.round(p.freeZ);
+    if (ntx !== p.tileX || nty !== p.tileY) {
+      p.tileX = ntx; p.tileY = nty;
+      p.moveFromX = ntx; p.moveFromY = nty;
+      p.moveToX = ntx; p.moveToY = nty;
+      onStepFinished();
+    }
+  }
+
+  /** Passe la marche à la tuile <-> marche libre, selon la vue active. */
+  function syncFpsPosition(fps) {
+    const p = state.player;
+    if (fps && !p.freeMove) {
+      p.freeMove = true;
+      p.freeX = p.tileX;
+      p.freeZ = p.tileY;
+      p.moving = false;
+    } else if (!fps && p.freeMove) {
+      // En sortant de la vue subjective, on se recale sur la tuile la plus
+      // proche : les autres vues n'attendent que des positions entières.
+      p.freeMove = false;
+      p.tileX = Math.round(p.freeX);
+      p.tileY = Math.round(p.freeZ);
+      p.moveFromX = p.tileX; p.moveFromY = p.tileY;
+      p.moveToX = p.tileX; p.moveToY = p.tileY;
+      p.moving = false;
+      p.moveProgress = 0;
+    }
+  }
+
   function updateWorld(dt) {
     if (state.messages.length > 0) return;   // un message ouvert bloque tout
 
     const fps = isFpsView();
-    // On pivote AVANT de tester le pas en cours : en vue FPS, on doit pouvoir
-    // tourner la tête même en pleine marche.
-    if (fps) updateFpsTurn(dt);
+    syncFpsPosition(fps);
+
+    // On pivote AVANT de bouger : en vue FPS, on doit pouvoir tourner la tête
+    // en pleine marche, et le pas doit suivre le nouveau cap immédiatement.
+    if (fps) {
+      updateFpsTurn(dt);
+      updateFpsMove(dt);
+      return;
+    }
 
     if (state.player.moving) {
       state.player.moveProgress += dt / MOVE_DURATION_MS;
@@ -1056,15 +1155,9 @@
       return;
     }
 
+    // La vue subjective est partie plus haut : ici, on marche à la tuile.
     let cmd;
-    if (fps) {
-      // Première personne : ↑ avance dans la direction du regard, ↓ recule
-      // sans se retourner. Les côtés servent à pivoter (déjà traités).
-      const f = DIR_STEP[state.player.dir] || DIR_STEP.down;
-      if (state.input.up) cmd = { dx: f.dx, dz: f.dz };
-      else if (state.input.down) cmd = { dx: -f.dx, dz: -f.dz };
-      else return;
-    } else {
+    {
       // Nouveau pas — priorité haut > bas > gauche > droite (comme le jeu 2D).
       let dx = 0, dz = 0;
       if (state.input.up)         { dz = -1; }
@@ -1396,7 +1489,12 @@
 
     const p = state.player;
     let tx, ty;
-    if (p.moving) {
+    if (p.freeMove) {
+      // Vue subjective : la position continue FAIT AUTORITÉ, il n'y a plus
+      // d'interpolation entre deux tuiles à jouer.
+      tx = p.freeX;
+      ty = p.freeZ;
+    } else if (p.moving) {
       const k = R3.clamp01(p.moveProgress);
       tx = p.moveFromX + (p.moveToX - p.moveFromX) * k;
       ty = p.moveFromY + (p.moveToY - p.moveFromY) * k;
@@ -1570,6 +1668,11 @@
     state.player.moveFromY = state.player.moveToY = p.y;
     state.player.worldX = p.x;
     state.player.worldZ = p.y;
+    // La marche libre de la vue subjective se recale sur la tuile d'arrivée :
+    // sans ça, le joueur serait ramené là où il était avant la téléportation.
+    state.player.freeMove = false;
+    state.player.freeX = p.x;
+    state.player.freeZ = p.y;
     updatePlayerTransform(0);
     updateCamera(1e9);
     refreshCompass();
@@ -3634,6 +3737,10 @@
       if (data.regionId) state.regionId = data.regionId;
       if (typeof data.tileX === 'number') state.player.tileX = data.tileX;
       if (typeof data.tileY === 'number') state.player.tileY = data.tileY;
+      // La position continue de la vue subjective n'est pas sauvegardée (elle
+      // ne vaut que le temps d'une session) : on la resynchronisera sur la
+      // tuile reprise à la première image.
+      state.player.freeMove = false;
       if (data.dir) state.player.dir = data.dir;
       // L'angle de vue FPS n'est pas sauvegardé (il change en permanence) : on
       // le recale sur la direction reprise, sinon la caméra pivoterait toute
