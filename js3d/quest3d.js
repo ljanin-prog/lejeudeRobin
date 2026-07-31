@@ -32,14 +32,18 @@
 (function () {
   'use strict';
 
-  // `globalThis` plutôt que `window` : le module doit pouvoir se charger hors
-  // navigateur (script de vérification sous Node), comme types3d.js.
+  // ATTENTION : `core3d.js` déclare `const R3 = …` au niveau d'un script
+  // classique. Un `const` de haut niveau ne crée PAS de propriété sur `window`
+  // (il vit dans l'environnement lexical global) : `window.R3` et
+  // `globalThis.R3` valent donc `undefined`, et ce module ne s'enregistrait
+  // jamais — les six quêtes restaient inertes. On lit l'identifiant global
+  // directement, comme le font tous les autres modules du jeu.
   var G = (typeof globalThis !== 'undefined') ? globalThis : this;
-  var R3 = G.R3;
+  var RR = (typeof R3 !== 'undefined' && R3) ? R3 : null;
 
   // Accès tolérant aux autres modules : ils peuvent parfaitement manquer.
   function mod(name) {
-    try { return (R3 && typeof R3.get === 'function') ? R3.get(name) : null; }
+    try { return (RR && typeof RR.get === 'function') ? RR.get(name) : null; }
     catch (e) { return null; }
   }
 
@@ -940,7 +944,7 @@
 
   // Enregistrement — jamais d'exception, même si R3 n'est pas là.
   try {
-    if (R3 && typeof R3.register === 'function') R3.register('quest', API);
+    if (RR && typeof RR.register === 'function') RR.register('quest', API);
     else G.Quest3D = API;
   } catch (e) {
     try { console.warn('[quest3d] enregistrement impossible :', e); } catch (e2) { /* rien */ }
