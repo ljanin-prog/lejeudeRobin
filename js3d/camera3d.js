@@ -466,9 +466,14 @@
 
     // --- orientation et balancement de la vue FPS -----------------------------
     if (enFps) {
-      S.fpsYaw = snap
-        ? dirYaw(player.dir)
-        : angleDamp(S.fpsYaw, dirYaw(player.dir), F_YAW_SMOOTH, d);
+      // `player.fpsYaw` est un angle LIBRE fourni par game3d : en vue
+      // subjective on tourne la tête en continu, on ne saute plus de cardinale
+      // en cardinale. S'il n'est pas fourni, on retombe sur les 4 directions,
+      // ce qui garde le module utilisable seul.
+      const viseYaw = (typeof player.fpsYaw === 'number' && isFinite(player.fpsYaw))
+        ? player.fpsYaw
+        : dirYaw(player.dir);
+      S.fpsYaw = snap ? viseYaw : angleDamp(S.fpsYaw, viseYaw, F_YAW_SMOOTH, d);
       if (player.moving) S.fpsBob += d * 7.2;
       else S.fpsBob = R3.damp(S.fpsBob, Math.round(S.fpsBob / Math.PI) * Math.PI, 0.85, d);
     }

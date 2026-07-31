@@ -70,9 +70,20 @@
   const FADE_MS = 320;            // durée d'un demi-fondu de transition
   const BALL_RANGE = 3.4;         // portée du lancer de Ball en monde ouvert
 
-  // Vue FPS : ←/→ ne déplacent plus, elles font pivoter sur place. Une touche
-  // maintenue enchaîne un quart de tour toutes les FPS_TURN_MS.
-  const FPS_TURN_MS = 200;
+  // Vue FPS : ←/→ ne déplacent plus, elles font pivoter sur place.
+  //
+  // La rotation était FAITE PAR CRANS DE 90° (un quart de tour toutes les
+  // 200 ms) : on ne pouvait viser que quatre directions, chaque appui donnait
+  // un saut brusque, et se diriger devenait un casse-tête. Robin l'a dit
+  // autrement : « en vue FPS, c'est trop compliqué ».
+  //
+  // Désormais l'angle est LIBRE et CONTINU : on tourne la tête comme dans
+  // n'importe quel jeu en vue subjective. Le monde, lui, reste une grille de
+  // tuiles — alors `state.player.dir` devient simplement la direction cardinale
+  // la plus proche du regard, et tout le reste du jeu (pas, portes, PNJ,
+  // boussole, lancer de Ball) continue de fonctionner sans rien changer.
+  const FPS_TURN_SPEED = 3.0;     // radians par seconde (~172°/s : un quart de
+                                  // tour en 0,5 s, un demi-tour en 1 s)
   const TURN_ORDER = ['up', 'right', 'down', 'left'];   // sens des aiguilles
   const DIR_STEP = {
     up: { dx: 0, dz: -1 }, down: { dx: 0, dz: 1 },
@@ -126,6 +137,7 @@
       tileX: START_X, tileY: START_Y,
       worldX: START_X, worldY: 0, worldZ: START_Y,
       dir: 'down',
+      fpsYaw: 0,          // angle de vue LIBRE en première personne ('down' = 0)
       moving: false,
       moveProgress: 0,
       moveFromX: START_X, moveFromY: START_Y,
@@ -170,7 +182,6 @@
   let fadeEl = null;        // voile noir des transitions de région
   let started = false;
   let lastTime = 0;
-  let fpsTurnT = 0;         // minuterie de rotation sur place (vue FPS)
   let evolving = false;     // une évolution est en cours : le clavier est gelé
 
   const camPos = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
@@ -679,7 +690,9 @@
     if (!cam || !cam.toggle) { showToast('Une seule vue disponible.', '🧭'); return; }
     safeCall('camera.toggle', function () { cam.toggle(); });
     state.cameraMode = (cam.mode && cam.mode()) || state.cameraMode;
-    fpsTurnT = 0;
+    // En arrivant dans la vue FPS, le regard part de la direction où l'on
+    // marchait : sinon la caméra pivoterait toute seule au changement de vue.
+    state.player.fpsYaw = DIR_YAW[state.player.dir] || 0;
     showToast(VIEW_LABEL[state.cameraMode] || 'Vue changée', '🧭');
     call('hud', 'setViewMode', [state.cameraMode]);
     saveGame();
@@ -970,15 +983,53 @@
     const i = TURN_ORDER.indexOf(state.player.dir);
     const n = (((i < 0 ? 0 : i) + sens) % 4 + 4) % 4;
     state.player.dir = TURN_ORDER[n];
+    // La vue FPS suit un angle libre : on le recale sur la nouvelle cardinale,
+    // sinon un quart de tour demandé d'ailleurs (console, script) ferait
+    // diverger le regard et la direction de marche.
+    state.player.fpsYaw = DIR_YAW[state.player.dir] || 0;
     refreshCompass();     // la boussole affiche vers où l'on regarde
   }
 
-  /** Rotation continue tant que la touche est maintenue (un tour / 200 ms). */
+  // Convention d'angle de camera3d.js : le modèle du joueur regarde vers +z,
+  // donc 'down' = 0, 'right' = +π/2, 'up' = π, 'left' = −π/2.
+  const YAW_DIRS = ['down', 'right', 'up', 'left'];
+  const DIR_YAW = { down: 0, right: Math.PI / 2, up: Math.PI, left: -Math.PI / 2 };
+
+  /** La direction cardinale la plus proche d'un angle libre. */
+  function dirFromYaw(a) {
+    const q = Math.round(a / (Math.PI / 2));
+    return YAW_DIRS[((q % 4) + 4) % 4];
+  }
+
+  /** Ramène un angle dans ]−π, π] pour qu'il ne dérive pas indéfiniment. */
+  function normalizeYaw(a) {
+    while (a > Math.PI) a -= Math.PI * 2;
+    while (a <= -Math.PI) a += Math.PI * 2;
+    return a;
+  }
+
+  /** L'angle de vue courant, même si personne ne l'a encore initialisé. */
+  function fpsYaw() {
+    const a = state.player.fpsYaw;
+    return (typeof a === 'number' && isFinite(a)) ? a : (DIR_YAW[state.player.dir] || 0);
+  }
+
+  /**
+   * Rotation LIBRE et continue tant que la touche est maintenue.
+   * `player.dir` suit le regard en s'accrochant à la cardinale la plus proche :
+   * c'est ce qui permet à toute la mécanique de grille (le pas, les portes, les
+   * PNJ) de rester exactement la même qu'avant.
+   */
   function updateFpsTurn(dtMs) {
     const l = state.input.left, r = state.input.right;
-    if (l === r) { fpsTurnT = 0; return; }        // rien, ou les deux à la fois
-    if (fpsTurnT <= 0) { turnPlayer(l ? -1 : 1); fpsTurnT = FPS_TURN_MS; }
-    else fpsTurnT -= dtMs;
+    if (l === r) return;                          // rien, ou les deux à la fois
+    const a = normalizeYaw(fpsYaw() + (l ? -1 : 1) * FPS_TURN_SPEED * (dtMs / 1000));
+    state.player.fpsYaw = a;
+    const nd = dirFromYaw(a);
+    if (nd !== state.player.dir) {
+      state.player.dir = nd;
+      refreshCompass();     // la boussole ne bouge qu'aux changements de cardinale
+    }
   }
 
   function updateWorld(dt) {
@@ -3497,6 +3548,10 @@
       if (typeof data.tileX === 'number') state.player.tileX = data.tileX;
       if (typeof data.tileY === 'number') state.player.tileY = data.tileY;
       if (data.dir) state.player.dir = data.dir;
+      // L'angle de vue FPS n'est pas sauvegardé (il change en permanence) : on
+      // le recale sur la direction reprise, sinon la caméra pivoterait toute
+      // seule au premier pas après un chargement en vue subjective.
+      state.player.fpsYaw = DIR_YAW[state.player.dir] || 0;
 
       const team = teamApi();
       if (team && team.deserialize) {
