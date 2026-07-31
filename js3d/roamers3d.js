@@ -192,6 +192,10 @@
    *  niveau 40 se baladant juste à côté du spawn — trouvé en jouant
    *  réellement à la partie. Même correctif que la rencontre en hautes
    *  herbes (game3d.js, triggerWildEncounter). */
+  // Niveau sous lequel une créature s'écarte quand le Répulsif est actif.
+  // 0 = pas de répulsif. Posé par game3d via setRepel().
+  var _repelNiveau = 0;
+
   function roamerLevel(DEX, species) {
     var lo0 = species.minLevel || 3, hi0 = Math.max(lo0, species.maxLevel || lo0 + 2);
     var band = DEX && DEX.REGION_LEVELS && DEX.REGION_LEVELS[_regionId];
@@ -199,6 +203,11 @@
     var lo1 = Math.max(lo0, band[0]), hi1 = Math.min(hi0, band[1]);
     if (lo1 > hi1) { lo1 = band[0]; hi1 = band[1]; }  // pas de recoupement : on suit la région
     return randInt(lo1, hi1);
+  }
+
+  /** Le Répulsif : sous ce niveau, les créatures ne s'installent plus. */
+  function setRepel(niveau) {
+    _repelNiveau = Math.max(0, Number(niveau) || 0);
   }
 
   function shuffledDirs() {
@@ -266,6 +275,12 @@
     var species = DEX.pickWild(_regionId, spot.biome);   // jamais un légendaire (dex3d §8)
     if (!species) return;
 
+    // Le Répulsif (objet du Centre) écarte les créatures faibles : on tire le
+    // niveau AVANT de construire le modèle, sinon on paierait la construction
+    // d'une créature qu'on jette aussitôt.
+    var niveau = roamerLevel(DEX, species);
+    if (_repelNiveau > 0 && niveau < _repelNiveau) return;
+
     var group = buildModel(species.id, 'de');
     if (!group) return;
 
@@ -278,7 +293,7 @@
       uid: _uidSeq++,
       speciesId: species.id,
       legendary: false,
-      level: roamerLevel(DEX, species),
+      level: niveau,
       x: spot.tx, z: spot.ty,
       dir: 'down',
       group: group,
@@ -917,5 +932,6 @@
     throwBall: throwBall,
     remove: remove,
     onEncounter: onEncounter,
+    setRepel: setRepel,
   });
 })();

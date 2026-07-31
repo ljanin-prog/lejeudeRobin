@@ -158,6 +158,7 @@
     // au démarrage. Une seule source de vérité pour l'argent et le sac.
     money: START_MONEY,
     activeBall: DEFAULT_BALL,        // §11.2 : la Ball choisie vaut PARTOUT
+    repelSteps: 0,          // pas restants de Répulsif (objet du Centre)
     visitedRegions: { val: true },   // `val` est visitée d'office (§17 bis)
     cameraMode: 'aventure',
     // --- éphémère ------------------------------------------------------------
@@ -1092,6 +1093,7 @@
   function onStepFinished() {
     const x = state.player.tileX, y = state.player.tileY;
     refreshCompass();
+    tickRepel();      // le Répulsif se compte en pas, pas en secondes
 
     const biome = biomeAt(x, y);
     if (biome && biome !== state.lastBiome) {
@@ -1511,6 +1513,10 @@
     // et ça garantit qu'il travaille bien sur la bonne région.
     call('world', 'setRegion', [id]);
     call('roamers', 'setRegion', [id]);
+    // `setRegion` repart d'une population neuve : si un Répulsif est encore
+    // actif (sauvegarde reprise, changement de région), il faut le redire aux
+    // créatures, sinon il cesserait d'agir sans prévenir.
+    applyRepel();
     call('gates', 'setRegion', [id]);
     rebuildNPCs(id);
     registerAirshipPort(id);
@@ -3358,6 +3364,29 @@
     return id;
   }
 
+  // Sous ce niveau, une créature de la carte est considérée « faible » et
+  // s'écarte quand le Répulsif est actif. 12 laisse passer tout ce qui est
+  // intéressant dès la deuxième région.
+  const REPEL_NIVEAU = 12;
+
+  /** Dit aux créatures de la carte si elles doivent s'écarter, et jusqu'à quel niveau. */
+  function applyRepel() {
+    const actif = (state.repelSteps | 0) > 0;
+    call('roamers', 'setRepel', [actif ? REPEL_NIVEAU : 0]);
+  }
+
+  /** Un pas de plus : le Répulsif s'épuise. */
+  function tickRepel() {
+    if ((state.repelSteps | 0) <= 0) return;
+    state.repelSteps--;
+    if (state.repelSteps <= 0) {
+      state.repelSteps = 0;
+      applyRepel();
+      showToast('Le répulsif s’est dissipé.', '🌫️');
+      saveGame();
+    }
+  }
+
   /**
    * Utiliser un objet sur une créature HORS COMBAT (écran Équipe).
    * Le sac de combat existait déjà, mais rien ne permettait de soigner entre
@@ -3380,6 +3409,13 @@
 
     if (r.ok) {
       sfx('heal');
+      // Le Répulsif n'agit pas sur une créature mais sur le monde : c'est ici
+      // qu'on arme le compteur de pas et qu'on prévient les créatures de la
+      // carte (voir applyRepel).
+      if (r.effect === 'repel') {
+        state.repelSteps = Math.max(state.repelSteps | 0, r.power | 0);
+        applyRepel();
+      }
       refreshHudCounters();
       call('hud', 'setItems', [state.items]);
       // Une pierre peut faire évoluer sur-le-champ : on enchaîne l'écran de
@@ -3540,6 +3576,7 @@
         // --- nouveautés de la v2 (CONTRACT3 §12) ---------------------------
         money: state.money | 0,
         activeBall: state.activeBall || DEFAULT_BALL,
+        repelSteps: state.repelSteps | 0,
         quest: serializeOf('quest'),
         tera: serializeOf('tera'),
         buddy: serializeOf('buddy'),
@@ -3632,6 +3669,8 @@
       state.activeBall = (typeof data.activeBall === 'string' && data.activeBall)
         ? data.activeBall : DEFAULT_BALL;
       ensureActiveBall();
+      state.repelSteps = (typeof data.repelSteps === 'number' && isFinite(data.repelSteps))
+        ? Math.max(0, Math.round(data.repelSteps)) : 0;
 
       call('quest', 'deserialize', [data.quest || null]);
       // Une sauvegarde v1 n'a AUCUN état de quête, mais elle a des badges. Sans

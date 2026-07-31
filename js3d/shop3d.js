@@ -344,9 +344,15 @@
     // --- LES OBJETS DE CONFORT ----------------------------------------------
     {
       id: 'repulsif', name: 'Répulsif', icon: '🌫️', price: 400, kind: 'objet',
-      power: 200, color: '#b0bec5', usable: false,
-      description: 'Éloigne les créatures sauvages faibles pendant 200 pas.',
-      tagline: 'Pour traverser les hautes herbes tranquille.',
+      power: 200, color: '#b0bec5', usable: true,
+      // La description promettait d'éloigner les rencontres en hautes herbes —
+      // or il n'y a plus de rencontre surprise dans ce jeu (ENCOUNTER_CHANCE
+      // vaut 0 depuis la révision du 2026-07-30) : l'objet ne faisait donc
+      // rien du tout. Il agit désormais sur ce qu'on voit VRAIMENT : les
+      // créatures posées sur la carte. Les petites s'écartent, ce qui laisse
+      // la place aux plus rares.
+      description: 'Pendant 200 pas, les créatures faibles ne viennent plus s’installer autour de toi.',
+      tagline: 'Pour chercher les créatures rares tranquille.',
       effect: 'repel',
     },
     {
@@ -622,6 +628,20 @@
     const it = BY_ID[itemId];
 
     if (!it) return { ok: false, consumed: false, message: 'Cet objet ne fait rien de spécial.' };
+
+    // Le Répulsif agit sur le MONDE, pas sur une créature : il se traite avant
+    // qu'on exige une cible. C'est game3d qui applique l'effet (il seul connaît
+    // les pas parcourus et les créatures de la carte) ; ici on se contente de
+    // dire ce qu'il faut faire.
+    if (it.effect === 'repel') {
+      return {
+        ok: true, consumed: true, effect: 'repel', power: num(it.power, 200),
+        message: 'Un nuage odorant se répand autour de toi 🌫️\n'
+          + 'Les créatures faibles vont te laisser tranquille pendant '
+          + num(it.power, 200) + ' pas.',
+      };
+    }
+
     if (!mon || typeof mon !== 'object') {
       return { ok: false, consumed: false, message: 'Choisis d\'abord une créature.' };
     }
