@@ -3307,7 +3307,14 @@
       const cible2 = ev.target;
       const saisie2 = cible2 && (cible2.tagName === 'INPUT' || cible2.tagName === 'TEXTAREA');
       if (!saisie2 && !anyOverlayOpen() && !liveBattle) {
-        openJournal(null);
+        // On passe la main à game3d quand il est là : lui seul peut poser
+        // `state.screen = 'journal'` et relâcher les touches de déplacement.
+        // Sans ça, l'overlay s'ouvrait mais Robin continuait à marcher derrière.
+        if (window.GAME3D && typeof window.GAME3D.journal === 'function') {
+          try { window.GAME3D.journal(); } catch (e) { openJournal(null); }
+        } else {
+          openJournal(null);
+        }
         ev.preventDefault();
         ev.stopPropagation();
         return;
@@ -3320,7 +3327,10 @@
     }
     if (ui.journalOverlay && !ui.journalOverlay.classList.contains('hidden')) {
       if (key === 'Escape' || key === 'j' || key === 'J') {
-        closeJournal(); ev.preventDefault(); ev.stopPropagation();
+        // `fakeKey('Escape')` rend la main à game3d, qui repasse `state.screen`
+        // à 'world' — même schéma que l'écran Équipe juste en dessous.
+        closeJournal(); fakeKey('Escape');
+        ev.preventDefault(); ev.stopPropagation();
       }
       return;
     }
