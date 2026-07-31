@@ -701,6 +701,9 @@
   function toggleMute() {
     let muted = false;
     try { muted = Audio_.toggleMute(); } catch (e) { return; }
+    // Le bouton ♪ doit couper les DEUX sources : les bruitages de js/audio.js
+    // et la musique de music3d.js, qui a son propre contexte audio.
+    call('music', 'setMuted', [muted]);
     updateMuteButton(muted);
     call('hud', 'setMuted', [muted]);
   }
@@ -1126,6 +1129,16 @@
   /** Musique du biome, avec repli pour les biomes sans piste dédiée. */
   function playBiomeMusic(biome) {
     if (!biome) return;
+    // Depuis music3d.js, la musique est jouée par un vrai petit groupe
+    // (guitare pincée, basse, batterie, réverbe) au lieu de la mélodie à une
+    // voix de js/audio.js — Robin trouvait celle-ci « usante à la longue ».
+    // music3d coupe lui-même l'ancienne piste, et s'il manque on retombe
+    // proprement sur l'ancienne.
+    const mus = mod('music');
+    if (mus && mus.setBiome) {
+      safeCall('music.setBiome', function () { mus.setBiome(biome); });
+      return;
+    }
     try { Audio_.playMusic(MUSIC_FALLBACK[biome] || biome); } catch (e) { /* audio indispo */ }
   }
 
@@ -3002,6 +3015,11 @@
     const overlay = document.getElementById('title-overlay');
     if (overlay) overlay.classList.add('hidden');
     try { Audio_.init(); } catch (e) { /* audio indisponible */ }
+    // Le contexte audio ne peut naître qu'après un geste de l'utilisateur :
+    // le clic sur « Commencer l'aventure ! » est le bon moment.
+    call('music', 'init', []);
+    call('music', 'setMuted', [
+      (typeof Audio_ !== 'undefined' && Audio_.isMuted && Audio_.isMuted()) || false]);
 
     if (playerTeamList().length > 0) launchWorld();   // partie déjà commencée
     else { state.screen = 'starter'; openStarterSelection(); }
