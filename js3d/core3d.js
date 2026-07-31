@@ -435,15 +435,41 @@ const R3 = (function () {
   }
 
   /** Animation d'attente générique, appliquée si la créature n'en définit pas.
-   *  Respiration + léger flottement. */
+   *  Respiration + léger flottement.
+   *
+   *  `anim.update(g, t)` — LE POINT QUI DÉBLOQUE LES LÉGENDAIRES : chaque
+   *  modèle peut poser sa propre fonction d'animation dans `userData.anim`.
+   *  Personne ne l'appelait : les auras, anneaux et cristaux des 36 légendaires
+   *  étaient figés depuis leur construction. On l'appelle EN PREMIER, pour
+   *  qu'un modèle qui veut tout piloter lui-même puisse ensuite neutraliser
+   *  les champs génériques (il lui suffit de ne pas les déclarer).
+   *
+   *  `anim.wingSpeed` / `anim.wingAmp` — les 6 rad/s d'origine sont le rythme
+   *  d'un moineau : parfait pour une petite créature, ridicule sur un colosse
+   *  de pierre. Les valeurs restent celles d'avant par défaut (rien ne change
+   *  pour les 26 créatures d'origine), mais un gros modèle peut désormais
+   *  demander un battement lent sans avoir à réécrire toute l'animation. */
   function idleCreature(g, t, phase) {
     const p = phase || 0;
+    const a = g.userData.anim || {};
+
+    // L'animation propre au modèle, si elle existe. Isolée : une erreur dans un
+    // modèle ne doit jamais figer la boucle de rendu de tout le jeu.
+    if (typeof a.update === 'function') {
+      try { a.update(g, t); }
+      catch (e) {
+        a.update = null;   // on ne réessaie pas : pas de console noyée
+        console.warn('[R3] animation propre désactivée pour', g.userData.creatureId, e);
+      }
+    }
+
     const s = 1 + Math.sin(t * 2.2 + p) * 0.035;
     g.scale.set(1 / Math.sqrt(s), s, 1 / Math.sqrt(s));
-    const a = g.userData.anim || {};
     if (a.head) a.head.rotation.z = Math.sin(t * 1.4 + p) * 0.07;
     if (a.wingL && a.wingR) {
-      const f = Math.sin(t * 6 + p) * 0.35;
+      const sp = (typeof a.wingSpeed === 'number') ? a.wingSpeed : 6;
+      const am = (typeof a.wingAmp === 'number') ? a.wingAmp : 0.35;
+      const f = Math.sin(t * sp + p) * am;
       a.wingL.rotation.z = f;
       a.wingR.rotation.z = -f;
     }

@@ -66,6 +66,52 @@
   function regionsApi() { return R3.get('regions') || null; }
   function dexApi() { return R3.get('dex') || null; }
   function llibApi() { return R3.get('llib') || null; }
+  function questApi() { return R3.get('quest') || null; }
+  function actorsApi() { return R3.get('actors') || null; }
+
+  /**
+   * Construit le modèle 3D d'une espèce EN PASSANT PAR `evolve.fallbackModel()`.
+   * Les formes évoluées (evolve3d.js) sont modélisées par un autre lot : tant
+   * qu'un modèle manque, `fallbackModel()` renvoie l'id de la forme précédente
+   * ou de la forme de base. Sans ce détour, une créature évoluée croisée sur la
+   * carte s'afficherait en silhouette grise de secours au lieu de ressembler,
+   * au moins, à ce qu'elle était avant.
+   * Renvoie null (jamais d'exception) si la construction échoue.
+   */
+  function buildModel(speciesId, quoi) {
+    var id = speciesId;
+    var EV = R3.get('evolve');
+    if (EV && typeof EV.fallbackModel === 'function') {
+      try {
+        var alt = EV.fallbackModel(speciesId);
+        if (typeof alt === 'string' && alt) id = alt;
+      } catch (e) { /* le repli n'est qu'un confort : on garde l'id demandé */ }
+    }
+    try { return R3.buildCreature(id) || null; }
+    catch (e) { warn('construction ' + (quoi || '') + ' « ' + speciesId + ' »', e); return null; }
+  }
+
+  /** Les PNJ alentour s'étonnent de voir un légendaire (contrat v3 §10).
+   *  À appeler À CHAQUE IMAGE tant qu'il est là : c'est ce qui permet aux PNJ
+   *  de le suivre du regard et de se calmer quand il s'éloigne. */
+  function signalLegend() {
+    if (!_legendary) return;
+    var A = actorsApi();
+    if (!A || typeof A.reactToLegend !== 'function') return;
+    // Le NOM D'ESPÈCE est la clé du verrou anti-spam de 30 s côté actors3d :
+    // une chaîne vide ferait partager le même verrou à tous les légendaires,
+    // et le deuxième n'étonnerait plus personne.
+    var nom = _legendary._nom || _legendary.speciesId || 'Légendaire';
+    try { A.reactToLegend(_legendary.group.position, nom); }
+    catch (e) { /* l'étonnement des PNJ est un bonus, jamais bloquant */ }
+  }
+
+  /** Plus aucun légendaire en vue : tout le monde se calme. */
+  function calmActors() {
+    var A = actorsApi();
+    if (!A || typeof A.clearReactions !== 'function') return;
+    try { A.clearReactions(); } catch (e) { /* jamais bloquant */ }
+  }
 
   // ===========================================================================
   //  CONSTANTES
@@ -220,9 +266,7 @@
     var species = DEX.pickWild(_regionId, spot.biome);   // jamais un légendaire (dex3d §8)
     if (!species) return;
 
-    var group;
-    try { group = R3.buildCreature(species.id); }
-    catch (e) { warn('construction de « ' + species.id + ' »', e); return; }
+    var group = buildModel(species.id, 'de');
     if (!group) return;
 
     var y = heightAt(spot.tx, spot.ty);
@@ -324,9 +368,7 @@
 
   function activateLegendary(altar, t, DEX) {
     var species = DEX ? DEX.get(altar.id) : null;
-    var group;
-    try { group = R3.buildCreature(altar.id); }
-    catch (e) { warn('construction du légendaire « ' + altar.id + ' »', e); return; }
+    var group = buildModel(altar.id, 'du légendaire');
     if (!group) return;
 
     // Le vrai modèle (legend3d.pN.js) fait 1,8 à 2,4 unités de haut ; tant
@@ -363,6 +405,10 @@
       tileX: altar.x, tileY: altar.y,
       _phase: Math.random() * 6.2832,
       _spawnT: t, _altarId: altar.id, _ball: false, _encountered: false,
+      // Nom d'espèce mémorisé une fois pour toutes : `signalLegend()` le passe
+      // à actors3d à CHAQUE image, il n'a pas le droit d'interroger le Pokédex
+      // 60 fois par seconde.
+      _nom: (species && species.name) || altar.id,
     };
     _legendary = ro;
     _roamers.push(ro);
@@ -381,7 +427,7 @@
   function fleeLegendary(t) {
     if (!_legendary) return;
     var altarId = _legendary._altarId;
-    removeInternal(_legendary);
+    removeInternal(_legendary);       // remet déjà les PNJ au calme
     _legendCooldowns[altarId] = t + LEGEND_COOLDOWN_S;
   }
 
@@ -396,10 +442,21 @@
       return;   // « un seul à la fois » — §16
     }
 
+    var q = questApi();
     for (var i = 0; i < region.altars.length; i++) {
       var a = region.altars[i];
       var readyAt = _legendCooldowns[a.id] || 0;
       if (t < readyAt) continue;
+      // LE VERROU DES LÉGENDAIRES (contrat v3 §5) : tant que le sanctuaire de la
+      // région n'est pas ouvert (badge de l'arène gagné), le gardien dort.
+      // REPLI DANS CE SENS ET PAS L'AUTRE : si `quest3d` manque, tout apparaît
+      // comme avant. On ne bloque jamais le jeu sur l'absence d'un module.
+      if (q && typeof q.isLegendAwake === 'function') {
+        var eveille = true;
+        try { eveille = q.isLegendAwake(a.id) !== false; }
+        catch (e) { eveille = true; }
+        if (!eveille) continue;
+      }
       var dist = Math.hypot(a.x - px, a.y - pz);
       if (dist > LEGEND_ACTIVATE_DIST) continue;
       activateLegendary(a, t, dexApi());
@@ -416,7 +473,13 @@
     var idx = _roamers.indexOf(ro);
     if (idx >= 0) _roamers.splice(idx, 1);
     disposeGroup(ro.group);
-    if (_legendary === ro) _legendary = null;
+    if (_legendary === ro) {
+      _legendary = null;
+      // Le légendaire n'est plus là : les PNJ n'ont plus de raison de reculer
+      // les bras en l'air. Sans cet appel, ils resteraient figés d'étonnement
+      // devant un autel vide jusqu'au prochain changement de région.
+      calmActors();
+    }
   }
 
   function remove(roamer) {
@@ -712,6 +775,9 @@
       if (e.mats) for (var m = 0; m < e.mats.length; m++) e.mats[m].dispose();
     }
     _regionId = regionId || null;
+    // Nouvelle région : les PNJ de l'ancienne n'existent plus, ceux d'ici n'ont
+    // rien vu. On repart d'une page blanche.
+    calmActors();
   }
 
   function update(t, dt, px, pz) {
@@ -793,6 +859,11 @@
 
     // --- 5. légendaire de la région -------------------------------------------
     try { updateLegendary(tt, px, pz); } catch (e) { warn('légendaire', e); }
+
+    // --- 5 bis. l'étonnement des PNJ (v3 §10) ---------------------------------
+    // Après updateLegendary : un légendaire qui vient d'apparaître fait réagir
+    // le village dès la même image.
+    signalLegend();
 
     // --- 6. lancer de Pokéball en cours + petits effets -----------------------
     updateBallAnim(dt || 0);

@@ -68,6 +68,9 @@
     'arena', 'healCenter', 'shop', 'portal',
     'lighthouse', 'observatory', 'dock', 'bridge', 'signpost', 'legendAltar',
     'airshipMast', 'airshipDock',
+    // L'Académie-château (contrat v3 §8.2) : un seul bâtiment dans tout le
+    // monde, construit à l'unité par citybuild3d.build('academy').
+    'academy',
   ];
 
   var DECOS = DECOS_V1.concat(DECOS_NATURE, DECOS_MONUMENT);
@@ -86,7 +89,7 @@
     church: true, churchTower: true, manor: true,
     arena: true, grandFountain: true, statue: true,
     healCenter: true, shop: true, portal: true,
-    lighthouse: true, observatory: true,
+    lighthouse: true, observatory: true, academy: true,
     // Le mât d'amarrage est haut et déborde très au-dessus de sa tuile : c'est
     // le repère qui signale le port aérien de loin, il ne se construit qu'une fois.
     airshipMast: true,
@@ -381,6 +384,14 @@
     HEAL_DOOR:    { walkable: true,  encounter: false, biome: 'citadel', ground: '#b6b0a4', h: 0.06, deco: null,         label: 'Porte du centre de soins' },
     SHOP:         { walkable: false, encounter: false, biome: 'citadel', ground: '#a5a09a', h: 0.22, deco: 'shop',       roof: '#3aa6d8', label: 'Boutique' },
     SHOP_DOOR:    { walkable: true,  encounter: false, biome: 'citadel', ground: '#b6b0a4', h: 0.06, deco: null,         label: 'Porte de la boutique' },
+
+    // --- L'Académie du Cristal (contrat v3 §8.2, demandes 10 et 10 bis) ------
+    // Un seul château dans tout le monde. `cities3d.js` greffait déjà ces deux
+    // tuiles au chargement pour ne pas dépendre de nous ; les déclarer ici rend
+    // sa greffe inopérante (elle n'écrase jamais une tuile existante) et fait
+    // exister la tuile même si cities3d venait à manquer.
+    ACADEMY_WALL: { walkable: false, encounter: false, biome: 'citadel', ground: '#8e8b84', h: 0.55, deco: 'academy',    label: 'Académie du Cristal' },
+    ACADEMY_DOOR: { walkable: true,  encounter: false, biome: 'citadel', ground: '#a09a90', h: 0.06, deco: null,         label: 'Portail de l’Académie' },
 
     // --- Port aérien (CONTRACT2 §17 bis) ------------------------------------
     // La plateforme est surélevée : un port aérien se voit d'en bas, et ça

@@ -55,8 +55,11 @@
       <strong>Flèches</strong> se déplacer &nbsp;·&nbsp;
       <strong>Espace</strong> parler &nbsp;·&nbsp;
       <strong>B</strong> lancer une Ball &nbsp;·&nbsp;
+      <strong>X</strong> changer de Ball &nbsp;·&nbsp;
+      <strong>F</strong> compagnon &nbsp;·&nbsp;
       <strong>E</strong> équipe &nbsp;·&nbsp;
       <strong>C</strong> Pokédex &nbsp;·&nbsp;
+      <strong>J</strong> journal &nbsp;·&nbsp;
       <strong>N</strong> carte &nbsp;·&nbsp;
       <strong>T</strong> dirigeable &nbsp;·&nbsp;
       <strong>V</strong> vue (dont FPS) &nbsp;·&nbsp;
@@ -92,16 +95,24 @@
        --------------------------------------------------------------------- -->
   <script src="js3d/core3d.js"></script>
 
-  <!-- Données : tuiles, types, capacités, espèces, équipe -->
+  <!-- Données : tuiles, types, capacités, espèces, évolutions, équipe.
+       ORDRE IMPÉRATIF : evolve3d.js AVANT team3d.js — team3d.deserialize()
+       interroge dex.get() pour chaque créature sauvegardée, et les formes
+       évoluées ne rejoignent le Pokédex qu'au chargement d'evolve3d. -->
   <script src="js3d/tiles3d.js"></script>
   <script src="js3d/types3d.js"></script>
   <script src="js3d/moves3d.js"></script>
   <script src="js3d/dex3d.js"></script>
+  <script src="js3d/evolve3d.js"></script>
   <script src="js3d/team3d.js"></script>
 
-  <!-- Le monde : villes, arènes, les 6 régions -->
+  <!-- Le monde : villes, arènes, boutique, quêtes, les 6 régions.
+       cities3d greffe les tuiles de l'Académie AVANT regions3d, qui fige ses
+       tables de marchabilité au chargement. -->
   <script src="js3d/cities3d.js"></script>
   <script src="js3d/arenas3d.js"></script>
+  <script src="js3d/shop3d.js"></script>
+  <script src="js3d/quest3d.js"></script>
   <script src="js3d/regions3d.js"></script>
 
   <!-- Rendu du décor -->
@@ -110,12 +121,13 @@
   <script src="js3d/citybuild3d.js"></script>
   <script src="js3d/world3d.js"></script>
 
-  <!-- Les créatures : 26 d'origine puis 36 légendaires -->
+  <!-- Les créatures : 26 d'origine, leurs formes évoluées, puis 36 légendaires -->
   <script src="js3d/creatures3d.lib.js"></script>
   <script src="js3d/creatures3d.p1.js"></script>
   <script src="js3d/creatures3d.p2.js"></script>
   <script src="js3d/creatures3d.p3.js"></script>
   <script src="js3d/creatures3d.p4.js"></script>
+  <script src="js3d/creatures3d.p5.js"></script>
   <script src="js3d/legendlib3d.js"></script>
   <script src="js3d/legend3d.p1.js"></script>
   <script src="js3d/legend3d.p2.js"></script>
@@ -124,13 +136,17 @@
   <!-- Repères visibles de loin : portes, port aérien, ville -->
   <script src="js3d/gates3d.js"></script>
 
-  <!-- Acteurs, créatures sur la carte, caméra, dirigeable -->
+  <!-- Acteurs, créatures sur la carte, compagnon, caméra, dirigeable.
+       buddy3d se charge APRÈS roamers3d : il réutilise ses modèles mis en cache. -->
   <script src="js3d/actors3d.js"></script>
   <script src="js3d/roamers3d.js"></script>
+  <script src="js3d/buddy3d.js"></script>
   <script src="js3d/camera3d.js"></script>
   <script src="js3d/airship3d.js"></script>
 
-  <!-- Interface, combat, contrôleur -->
+  <!-- Téracristallisation, interface, combat, contrôleur.
+       tera3d AVANT hud3d : le bouton Téra du menu de combat lit son état. -->
+  <script src="js3d/tera3d.js"></script>
   <script src="js3d/hud3d.js"></script>
   <script src="js3d/battle3d.js"></script>
   <script src="js3d/game3d.js"></script>

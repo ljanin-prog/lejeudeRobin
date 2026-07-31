@@ -10,11 +10,20 @@
 //      `R3.get('regions')` (qui remplace js/world.js pour la 3D) ;
 //    • les tuiles spéciales : PORTAL (changement de région), AIRSHIP_DOCK
 //      (voyage en dirigeable), ARENA_DOOR (défi de champion), HEAL_DOOR
-//      (centre de soins), SHOP_DOOR, SIGN ;
-//    • le lancer de Pokéball en monde ouvert (touche B) via `roamers3d` ;
+//      (centre de soins), SHOP_DOOR (boutique), ACADEMY_DOOR (Académie du
+//      Cristal), SIGN ;
+//    • le lancer de Pokéball en monde ouvert (touche B) via `roamers3d`, avec
+//      le sélecteur de Ball de la touche X — `state.activeBall` fait foi
+//      partout, carte comme combat (CONTRACT3 §11.2) ;
 //    • les combats : construction du `battleState` du §17, tours, IA, XP,
-//      capture, badges ;
-//    • la sauvegarde `robinGame3d_v1`, avec import UNIQUE depuis la
+//      capture, badges, argent (`shop.payReward`), Téracristallisation et
+//      ÉVOLUTIONS enchaînées en fin de combat (CONTRACT3 §3) ;
+//    • le compagnon hors de sa Ball (touche F, `buddy3d`) et l'étonnement des
+//      PNJ quand c'est un légendaire (CONTRACT3 §4 et §10) ;
+//    • l'histoire des légendaires : badge → sanctuaire → captures, journal à
+//      la touche J (CONTRACT3 §5) ;
+//    • la sauvegarde `robinGame3d_v2` (CONTRACT3 §12), qui MIGRE sans perte
+//      une ancienne `robinGame3d_v1`, avec import UNIQUE depuis la
 //      sauvegarde 2D `robinGame_v2` au tout premier lancement ;
 //    • l'auto-qualité, mesurée sur le TEMPS DE TRAVAIL d'une frame (budget
 //      14 ms), jamais sur le FPS.
@@ -45,8 +54,15 @@
   // sont articulés (≈ 34 meshes chacun), donc coûteux, et dispersés.
   const DIST_PNJ = 24;
 
-  const SAVE_KEY = 'robinGame3d_v1';
+  // Sauvegarde v2 (CONTRACT3 §12). L'ancienne clé v1 est encore LUE au premier
+  // lancement : une partie de Robin ne se perd jamais. Elle n'est jamais
+  // réécrite — la v2 prend le relais dès la première sauvegarde.
+  const SAVE_KEY = 'robinGame3d_v2';
+  const SAVE_KEY_V1 = 'robinGame3d_v1';  // sauvegarde 3D d'avant — LECTURE SEULE
   const OLD_SAVE_KEY = 'robinGame_v2';   // sauvegarde du jeu 2D — LECTURE SEULE
+
+  const START_MONEY = 500;               // §6 : de quoi s'offrir deux Potions
+  const DEFAULT_BALL = 'pokeball';
 
   const START_REGION = 'val';
   const START_X = 24, START_Y = 30;      // §3 : départ de la partie
@@ -89,14 +105,20 @@
     citadel: 'city',
   };
 
-  // Bonus de capture par Ball (§11).
+  // Bonus de capture par Ball (§11). `shop3d.js` publie EXACTEMENT la même
+  // table (`shop.ballPower`) : quand il est là, c'est lui qui fait foi, cette
+  // constante ne sert plus que de repli. On ne duplique pas une table de jeu.
   const BALL_BONUS = { pokeball: 1.0, superball: 1.5, hyperball: 2.2, ballmaitresse: 99 };
+  // Ordre de rotation de la touche X (§11.2) — de la plus commune à la plus rare.
+  const BALL_ORDER = ['pokeball', 'superball', 'hyperball', 'ballmaitresse'];
 
   // ---------------------------------------------------------------------------
   //  ÉTAT DU JEU — c'est aussi ce que lit hud3d.js via window.GAME3D.state
   // ---------------------------------------------------------------------------
   const state = {
-    screen: 'title',   // title|starter|world|battle|team|dex|map|airship|transition
+    // title|starter|world|battle|team|dex|map|airship|transition
+    // |shop|journal|academy|evolution
+    screen: 'title',
     playerName: '',
     regionId: START_REGION,
     starterCursor: 0,
@@ -119,6 +141,11 @@
     badges: {},              // { regionId: true }
     defeatedTrainers: {},    // { npcId: true }
     items: { pokeball: 20, superball: 0, hyperball: 0, potion: 5 },
+    // `state` EST le porte-monnaie du §6 : il a exactement la forme
+    // { money, items } attendue par `shop.bindWallet()`, branché une seule fois
+    // au démarrage. Une seule source de vérité pour l'argent et le sac.
+    money: START_MONEY,
+    activeBall: DEFAULT_BALL,        // §11.2 : la Ball choisie vaut PARTOUT
     visitedRegions: { val: true },   // `val` est visitée d'office (§17 bis)
     cameraMode: 'aventure',
     // --- éphémère ------------------------------------------------------------
@@ -198,7 +225,15 @@
     buildModules();
     bindEvents();
 
-    loadGame();                 // peut importer l'ancienne sauvegarde 2D
+    loadGame();                 // peut migrer la v1, ou importer la partie 2D
+
+    // LE porte-monnaie, branché UNE SEULE FOIS, après le chargement : à partir
+    // d'ici `shop.buy/sell/useFrom/payReward` travaillent directement sur
+    // `state.money` et `state.items`, sans qu'on ait à leur passer quoi que ce
+    // soit. Avant le chargement, on aurait relié un porte-monnaie qui allait
+    // être remplacé par celui de la sauvegarde.
+    call('shop', 'bindWallet', [state]);
+
     applyRegion(state.regionId, { silent: true });
     refreshHudCounters();
     refreshCompass();
@@ -299,6 +334,17 @@
 
     // --- Phares des portes, du port et de la ville (repères visibles de loin) ---
     call('gates', 'build', [scene]);
+
+    // --- Le compagnon hors de sa Ball (demande n° 2 de Robin) ---
+    // Son groupe doit vivre dans la scène AVANT le premier `buddy.update()`,
+    // sinon la créature « sort » sans jamais s'afficher.
+    const buddy = mod('buddy');
+    if (buddy && buddy.group) {
+      safeCall('buddy.group', function () {
+        const g = buddy.group();
+        if (g) scene.add(g);
+      });
+    }
 
     // --- Créatures qui se baladent sur la carte ---
     call('roamers', 'build', [scene]);
@@ -491,6 +537,21 @@
       return;
     }
 
+    // --- Boutique / journal / Académie ---------------------------------------
+    // Le HUD gère ses propres clics et flèches ; ici on ne retient qu'Échap,
+    // pour qu'aucun écran ne puisse retenir Robin prisonnier.
+    if (state.screen === 'shop' || state.screen === 'journal' || state.screen === 'academy') {
+      const k = e.key;
+      const ferme = (k === 'Escape')
+        || (state.screen === 'journal' && (k === 'j' || k === 'J'));
+      if (ferme) { e.preventDefault(); closeOverlays(); }
+      return;
+    }
+
+    // L'ÉVOLUTION NE S'INTERROMPT PAS (§11.3) : c'est le moment de gloire, il
+    // dure 2,5 s et on le laisse jouer. Aucune touche ne passe.
+    if (state.screen === 'evolution') { e.preventDefault(); return; }
+
     // --- Monde ouvert ---------------------------------------------------------
     // Shift + ←/→ : pivoter la vue RPG. À tester AVANT le déplacement.
     if (e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
@@ -512,10 +573,19 @@
         e.preventDefault(); onAction(); break;
       case 'b': case 'B':
         e.preventDefault(); throwBallInWorld(); break;
+      case 'x': case 'X':
+        // §11.2 : changer de Ball. Le choix vaut sur la carte ET en combat.
+        e.preventDefault(); cycleBall(1); break;
+      case 'f': case 'F':
+        // Compagnon (demande n° 2). `B` lance déjà une Ball — le conflit
+        // annoncé par le contrat est réel, c'est donc `F`.
+        e.preventDefault(); toggleBuddy(); break;
       case 'e': case 'E':
         e.preventDefault(); openTeamScreen(); break;
       case 'c': case 'C':
         e.preventDefault(); openDexScreen(); break;
+      case 'j': case 'J':
+        e.preventDefault(); openJournalScreen(); break;
       case 'n': case 'N':
         e.preventDefault(); openMapScreen(); break;
       case 'v': case 'V':
@@ -698,6 +768,11 @@
       call('roamers', 'update', [t, dt, px, pz]);
     }
 
+    // Le compagnon : SANS cet appel, rien ne bouge — il resterait planté à
+    // l'endroit exact où il est sorti de sa Ball.
+    call('buddy', 'update', [dt, state.player]);
+    signalBuddyLegend();
+
     // Soleil de secours : on le garde centré sur le joueur pour que l'ombre suive.
     if (fallbackSun) {
       fallbackSun.position.set(px + 18, 30, pz + 12);
@@ -748,6 +823,42 @@
     if (r === state.aimed) return;
     state.aimed = r;
     call('hud', 'showAimReticle', [r || null]);
+  }
+
+  /**
+   * Un légendaire SORTI DE SA BALL étonne les villageois exactement comme un
+   * légendaire sauvage (§10). `roamers3d` s'occupe déjà des seconds ; les
+   * premiers ne passent pas par lui, c'est donc à nous de le dire.
+   * `buddy.position()` et `buddy.speciesId()` existent pour ça : `buddy3d.js`
+   * n'a pas à connaître `actors3d`.
+   */
+  const _buddyLegend = Object.create(null);   // speciesId -> nom, ou false
+  function signalBuddyLegend() {
+    if (state.screen !== 'world') return;
+    const buddy = mod('buddy');
+    const actors = mod('actors');
+    if (!buddy || !actors || !actors.reactToLegend) return;
+    if (!buddy.isOut || !buddy.isOut()) return;
+    if (!buddy.speciesId || !buddy.position) return;
+
+    const id = safeCall('buddy.speciesId', function () { return buddy.speciesId(); });
+    if (!id) return;
+
+    // Le Pokédex n'est interrogé qu'UNE FOIS par espèce : cette fonction tourne
+    // à chaque image.
+    let nom = _buddyLegend[id];
+    if (nom === undefined) {
+      const dex = mod('dex');
+      const sp = (dex && dex.get) ? safeCall('dex.get.buddy', function () { return dex.get(id); }) : null;
+      nom = (sp && sp.legendary) ? (sp.name || id) : false;
+      _buddyLegend[id] = nom;
+    }
+    if (!nom) return;   // créature ordinaire : personne ne s'affole
+
+    const p = safeCall('buddy.position', function () { return buddy.position(); });
+    if (!p) return;
+    // Un VRAI nom d'espèce : c'est la clé du verrou anti-spam de 30 s d'actors3d.
+    safeCall('actors.reactToLegend.buddy', function () { actors.reactToLegend(p, nom); });
   }
 
   // ===========================================================================
@@ -968,22 +1079,214 @@
 
     if (type === 'ARENA_DOOR') { challengeChampion(); return true; }
 
+    // L'Académie du Cristal (§8.2). La tuile est posée par cities3d/citybuild3d
+    // et `regions.poiAt()` la décrit déjà : on accepte les deux, pour que
+    // l'entrée fonctionne même si l'une des deux sources manque.
+    if (type === 'ACADEMY_DOOR' || (poi && poi.kind === 'academy')) {
+      openAcademyScreen(poi);
+      return true;
+    }
+
     if (type === 'HEAL_DOOR') {
-      const team = mod('team');
-      if (team && team.healAll) safeCall('team.healAll', function () { team.healAll(); });
-      sfx('catch');
-      showMessage('Centre de soins ✦\nToute ton équipe est requinquée !');
-      saveGame();
+      healAtCenter();
       return true;
     }
 
     if (type === 'SHOP_DOOR') {
-      sfx('menu');
-      showMessage('Boutique 🛍️\n« Reviens plus tard, jeune dresseur :\nle marchand est parti chercher des Balls ! »');
+      openShopScreen();
       return true;
     }
 
     return false;
+  }
+
+  // ===========================================================================
+  //  5 bis. LE CENTRE POKÉMON, LA BOUTIQUE ET L'ACADÉMIE  (v3 §6, §7, §8)
+  // ===========================================================================
+
+  /** Soins gratuits. `shop.healAtCenter()` fait déjà tout : `team.healAll()`,
+   *  `tera.reset()` et le mot de l'infirmière. On se contente de l'afficher. */
+  function healAtCenter() {
+    const shop = mod('shop');
+    if (shop && shop.healAtCenter) {
+      const res = safeCall('shop.healAtCenter', function () { return shop.healAtCenter(); });
+      if (res && res.text) {
+        sfx('catch');
+        showMessage('✦ ' + res.text);
+        refreshHudCounters();
+        saveGame();
+        return;
+      }
+    }
+    // Repli : exactement le comportement d'avant, si `shop3d.js` manque.
+    const team = mod('team');
+    if (team && team.healAll) safeCall('team.healAll', function () { team.healAll(); });
+    call('tera', 'reset', []);
+    sfx('catch');
+    showMessage('Centre de soins ✦\nToute ton équipe est requinquée !');
+    saveGame();
+  }
+
+  /** Ouvre la boutique du Centre. Le HUD affiche, nous décidons. */
+  function openShopScreen() {
+    if (state.screen !== 'world' || state.messages.length > 0) return;
+    const shop = mod('shop');
+    const hud = mod('hud');
+    if (!shop) { showMessage('Boutique 🛍️\nElle est fermée aujourd\'hui.'); return; }
+
+    const stock = safeCall('shop.stockItems', function () {
+      return shop.stockItems ? shop.stockItems(state.regionId) : (shop.stockFor(state.regionId) || []).map(shop.item);
+    }) || [];
+
+    if (!hud || !hud.openShop) {
+      // Repli honnête : on liste ce qui est en vente et on dit pourquoi on ne
+      // peut pas acheter. Jamais « reviens plus tard » alors que tout est prêt.
+      const lignes = stock.slice(0, 6).map(function (it) {
+        return (it.icon || '·') + ' ' + it.name + ' — ' + it.price;
+      }).join('\n');
+      sfx('menu');
+      showMessage('Boutique 🛍️  (' + state.money + ' pièces 🪙)\n' + lignes +
+        '\n\nL\'écran d\'achat n\'est pas disponible sur cet appareil.');
+      return;
+    }
+
+    releaseAllKeys();
+    sfx('menu');
+    state.screen = 'shop';
+    safeCall('hud.openShop', function () {
+      hud.openShop({
+        welcome: (shop.shopWelcome ? shop.shopWelcome() : 'Bienvenue à la boutique ! 🛍️'),
+        stock: stock,
+        money: state.money,
+        owned: state.items,
+        onBuy: function (id, qty) { return shopBuy(id, qty); },
+        onSell: function (id, qty) { return shopSell(id, qty); },
+        onClose: function () { closeOverlays(); },
+      });
+    });
+    if (_broken['hud.openShop']) { state.screen = 'world'; }
+  }
+
+  function shopBuy(id, qty) {
+    const shop = mod('shop');
+    if (!shop || !shop.buy) return null;
+    const res = safeCall('shop.buy', function () { return shop.buy(id, qty || 1, state); });
+    afterWalletChange(res);
+    return res;
+  }
+
+  function shopSell(id, qty) {
+    const shop = mod('shop');
+    if (!shop || !shop.sell) return null;
+    const res = safeCall('shop.sell', function () { return shop.sell(id, qty || 1, state); });
+    afterWalletChange(res);
+    return res;
+  }
+
+  /** Après tout mouvement d'argent ou d'objet : le HUD et la sauvegarde suivent. */
+  function afterWalletChange(res) {
+    if (res && res.ok) sfx('menu');
+    // Une Ball achetée alors qu'on n'en avait plus doit devenir sélectionnable.
+    ensureActiveBall();
+    refreshHudCounters();
+    saveGame();
+  }
+
+  /** Ouvre l'Académie : formation à la Téracristallisation, puis choix du type
+   *  Téra d'une créature de l'équipe (§7). */
+  function openAcademyScreen(poi) {
+    if (state.screen !== 'world' || state.messages.length > 0) return;
+    const tera = mod('tera');
+    const hud = mod('hud');
+    const nom = (poi && poi.label) || 'Académie du Cristal';
+
+    if (!tera) {
+      showMessage('🏰 ' + nom + '\nLes portes sont closes : les maîtres du cristal\nsont en voyage.');
+      return;
+    }
+    if (!hud || !hud.openAcademy) {
+      // Repli sans écran : on forme quand même le joueur. Mieux vaut une
+      // capacité gagnée sans décor qu'une porte qui ne sert à rien.
+      if (!tera.isUnlocked()) {
+        safeCall('tera.unlock', function () { tera.unlock(); });
+        sfx('rare');
+        showMessage('🏰 ' + nom + '\nTu sais maintenant Téracristalliser tes créatures ! ✦\n' +
+          'En combat, le bouton Téra les couvre de cristal.');
+        saveGame();
+      } else {
+        showMessage('🏰 ' + nom + '\nTu maîtrises déjà la Téracristallisation. ✦');
+      }
+      return;
+    }
+
+    // Nouvelle visite : chacun peut de nouveau changer son type Téra une fois.
+    call('tera', 'beginAcademyVisit', []);
+    releaseAllKeys();
+    sfx('menu');
+    state.screen = 'academy';
+    safeCall('hud.openAcademy', function () {
+      hud.openAcademy({
+        unlocked: !!tera.isUnlocked(),
+        types: (tera.typeChoices ? tera.typeChoices() : []),
+        team: playerTeamList(),
+        onUnlock: function () { return academyUnlock(); },
+        onPick: function (uid, typeId) { return academyPick(uid, typeId); },
+        onClose: function () { closeOverlays(); },
+      });
+    });
+    if (_broken['hud.openAcademy']) state.screen = 'world';
+  }
+
+  function academyUnlock() {
+    const tera = mod('tera');
+    if (!tera || !tera.unlock) return null;
+    safeCall('tera.unlock', function () { tera.unlock(); });
+    sfx('rare');
+    saveGame();
+    return { ok: true, message: 'Tu sais Téracristalliser ! ✦' };
+  }
+
+  function academyPick(uid, typeId) {
+    const tera = mod('tera');
+    const team = teamApi();
+    if (!tera || !tera.setTeraType) return null;
+    let mon = null;
+    if (team && team.mon) mon = safeCall('team.mon.academy', function () { return team.mon(uid); });
+    if (!mon) {
+      const list = playerTeamList();
+      for (let i = 0; i < list.length; i++) if (list[i] && list[i].uid === uid) { mon = list[i]; break; }
+    }
+    if (!mon) return null;
+    const res = safeCall('tera.setTeraType', function () { return tera.setTeraType(mon, typeId); });
+    if (res && res.ok) sfx('menu');
+    saveGame();
+    return res;
+  }
+
+  /** Journal de quête (touche J) — §5. */
+  function openJournalScreen() {
+    if (state.screen !== 'world' || state.messages.length > 0) return;
+    const quest = mod('quest');
+    const hud = mod('hud');
+    if (!quest || !quest.journal) { showToast('Le journal est vide pour l\'instant.', '📓'); return; }
+    const entries = safeCall('quest.journal', function () { return quest.journal(); }) || [];
+
+    if (!hud || !hud.openJournal) {
+      // Repli : le journal en boîte de dialogue. Robin doit pouvoir lire son
+      // indice même sans l'écran dédié.
+      const lignes = entries.map(function (e) {
+        return (e.icone || '·') + ' ' + e.titre + (e.fait ? ' ✓' : '') + '\n   ' + e.ligne;
+      }).join('\n');
+      sfx('menu');
+      showMessage('📓 Journal des légendes\n\n' + lignes);
+      return;
+    }
+
+    releaseAllKeys();
+    sfx('menu');
+    state.screen = 'journal';
+    safeCall('hud.openJournal', function () { hud.openJournal(entries); });
+    if (_broken['hud.openJournal']) state.screen = 'world';
   }
 
   /** Hauteur du terrain sous un point (repli à 0 si world3d.js manque). */
@@ -1144,6 +1447,10 @@
       // On garde la position (reprise de sauvegarde) mais on la sécurise.
       teleport(state.player.tileX, state.player.tileY);
     }
+
+    // Le compagnon suit son dresseur d'une région à l'autre : il rentre dans sa
+    // Ball et ressort à la nouvelle position, sans traverser la carte à pied.
+    call('buddy', 'setRegion', [id]);
 
     state.lastBiome = biomeAt(state.player.tileX, state.player.tileY);
     const sky = mod('sky');
@@ -1419,6 +1726,10 @@
     const airship = mod('airship');
     const from = state.regionId;
 
+    // On ne monte pas dans la nacelle avec une créature de trois mètres à ses
+    // côtés : elle rentre dans sa Ball et ressortira à l'arrivée (§4).
+    call('buddy', 'autoRecall', ['vol']);
+
     // On peut appeler le dirigeable de n'importe où (touche T) : on se place
     // d'abord sur l'embarcadère de la région, sinon le décollage se ferait
     // à un endroit et le joueur reviendrait à un autre.
@@ -1474,6 +1785,8 @@
     call('hud', 'setRegionBanner', [(def && def.name) || to]);
     state.screen = 'world';
     refreshCompass();
+    // Le compagnon ressort sur l'embarcadère, s'il était dehors au décollage.
+    call('buddy', 'autoRelease', []);
     showToast('Bienvenue à ' + ((def && def.name) || to) + ' !', '🎈');
     saveGame();
   }
@@ -1500,22 +1813,14 @@
     return r;
   }
 
-  /** Le premier type de Ball disponible dans le sac. */
-  function firstBall() {
-    const ordre = ['pokeball', 'superball', 'hyperball', 'ballmaitresse'];
-    for (let i = 0; i < ordre.length; i++) {
-      if ((state.items[ordre[i]] | 0) > 0) return ordre[i];
-    }
-    return null;
-  }
-
   function throwBallInWorld() {
     if (state.screen !== 'world' || state.messages.length > 0 || state.throwing) return;
     const ro = mod('roamers');
     const target = aimedRoamer();
     if (!target) { showToast('Aucune créature en vue…', '🔍'); return; }
 
-    const ballId = firstBall();
+    // §11.2 : on lance LA Ball choisie au sélecteur, pas « la première venue ».
+    const ballId = currentBall();
     if (!ballId) { showToast('Plus aucune Ball !', '⚪'); return; }
 
     const team = mod('team');
@@ -1523,11 +1828,12 @@
     const species = (dex && dex.get) ? dex.get(target.speciesId) : null;
     const faux = { hp: 1, maxHp: 1, id: target.speciesId, level: target.level || 5 };
     const chance = (team && team.catchChance)
-      ? safeCall('team.catchChance', function () { return team.catchChance(faux, species, BALL_BONUS[ballId] || 1); })
+      ? safeCall('team.catchChance', function () { return team.catchChance(faux, species, ballPowerOf(ballId)); })
       : 0.35;
 
     state.items[ballId] = Math.max(0, (state.items[ballId] | 0) - 1);
-    call('hud', 'setItems', [state.items]);
+    ensureActiveBall();
+    refreshHudCounters();
     state.throwing = true;
     sfx('throwBall');
     markSeen(target.speciesId);
@@ -1565,12 +1871,69 @@
     state.collection[speciesId] = (state.collection[speciesId] || 0) + 1;
     markSeen(speciesId);
     sfx('catch');
+    call('buddy', 'reactTo', ['capture']);
     refreshHudCounters();
     if (roamer) call('roamers', 'remove', [roamer]);
     saveGame();
 
     showMessage('Bravo ! ' + nom + ' est capturé' + (species && species.legendary ? ' !!! ✨' : ' ! ✦') +
       (where === 'box' ? '\nTon équipe est pleine : il rejoint la Boîte.' : '\nIl rejoint ton équipe !'));
+    // §5 : la quête est prévenue APRÈS CHAQUE capture, monde ouvert compris.
+    showMessages(questTextsForCatch(speciesId));
+  }
+
+  /**
+   * APRÈS CHAQUE CAPTURE RÉUSSIE — monde ouvert comme combat (§5). `quest3d`
+   * décide seul si l'espèce compte pour une quête ; s'il renvoie `null`, il n'y
+   * a rien à dire et on n'affiche rien.
+   */
+  function questTextsForCatch(speciesId) {
+    const quest = mod('quest');
+    if (!quest || !quest.onLegendCaught || !speciesId) return [];
+    const res = safeCall('quest.onLegendCaught', function () { return quest.onLegendCaught(speciesId); });
+    if (!res) return [];
+
+    const textes = [];
+    if (res.text) textes.push('📖 ' + (res.titre || 'Légende') + '\n' + res.text);
+    if (res.questDone && res.reward) {
+      const gagne = grantQuestReward(res.reward);
+      if (gagne) textes.push(gagne);
+    }
+    if (res.allDone) textes.push('✨ ' + res.allDone);
+    refreshHudCounters();
+    saveGame();
+    return textes;
+  }
+
+  /**
+   * Affiche une suite de textes et n'accroche `onDone` qu'au DERNIER : jamais
+   * de boîte de dialogue vide à valider, jamais de suite déclenchée trop tôt.
+   */
+  function showMessages(textes, onDone) {
+    if (!textes || !textes.length) { if (onDone) onDone(); return; }
+    for (let i = 0; i < textes.length; i++) {
+      showMessage(textes[i], (i === textes.length - 1) ? onDone : undefined);
+    }
+  }
+
+  /** Verse la récompense d'une quête accomplie. -> le texte à afficher, ou ''. */
+  function grantQuestReward(reward) {
+    if (!reward) return '';
+    let txt = reward.text ? ('🎁 ' + reward.text) : '🎁 Récompense !';
+    if (reward.money) {
+      state.money = Math.max(0, (state.money | 0) + (reward.money | 0));
+      txt += '\n+' + (reward.money | 0) + ' pièces 🪙';
+    }
+    const items = Array.isArray(reward.items) ? reward.items : [];
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (!it || !it.id) continue;
+      const n = Math.max(1, it.qty | 0);
+      state.items[it.id] = (state.items[it.id] | 0) + n;
+      txt += '\n+ ' + n + ' × ' + itemName(it.id);
+    }
+    ensureActiveBall();
+    return txt;
   }
 
   function markSeen(speciesId) {
@@ -1748,9 +2111,16 @@
     _hudBattle.foe = '';
     _hudBattle.player = '';
 
+    // Le compagnon rentre dans sa Ball le temps du combat, et se souvient qu'il
+    // était dehors : il ressortira tout seul à la fin (§4).
+    call('buddy', 'autoRecall', ['combat']);
+    // Plus de légendaire à l'écran : les PNJ se calment pendant qu'on se bat.
+    call('actors', 'clearReactions', []);
+
     call('battle', 'enter', [b, b.biome]);
     call('hud', 'setItems', [state.items]);
     call('hud', 'showBattleUI', [b]);
+    refreshTeraButton();
     showMessage(introText, function () { setBattlePhase('choose'); });
   }
 
@@ -1758,9 +2128,16 @@
     state.battle = null;
     state.screen = 'world';
     _hudBattle.phase = null;
+    // La Téracristallisation retombe : `mon.tera` repasse à false, `mon.teraType`
+    // reste (§7). On le fait AVANT la sauvegarde, pour ne jamais figer une
+    // créature mono-type dans le fichier.
+    call('tera', 'deactivateAll', []);
     call('hud', 'hideBattleUI', []);
     call('battle', 'exit', []);
+    // Le compagnon ressort, s'il était dehors avant le combat.
+    call('buddy', 'autoRelease', []);
     playBiomeMusic(state.lastBiome);
+    refreshHudCounters();
     saveGame();
   }
 
@@ -1769,7 +2146,53 @@
     if (!b) return;
     b.phase = p;
     call('hud', 'showBattleUI', [b]);
+    refreshTeraButton();
     _hudBattle.phase = p;
+  }
+
+  /** Le bouton Téra du menu de combat : le HUD affiche, nous décidons (§7). */
+  function refreshTeraButton() {
+    const hud = mod('hud');
+    const tera = mod('tera');
+    if (!hud || !hud.setTeraState) return;
+    const b = state.battle;
+    if (!tera) {
+      safeCall('hud.setTeraState.absent', function () {
+        hud.setTeraState({ enabled: false, teraType: null,
+          reason: 'La Téracristallisation n\'est pas disponible.', onPress: null });
+      });
+      return;
+    }
+    const mon = b && b.player && b.player.mon;
+    safeCall('hud.setTeraState', function () {
+      hud.setTeraState({
+        enabled: !!(b && tera.canUse && tera.canUse(b) && mon),
+        teraType: mon && tera.teraTypeOf ? tera.teraTypeOf(mon) : null,
+        reason: tera.statusText ? tera.statusText(b) : '',
+        onPress: function () { activateTera(); },
+      });
+    });
+  }
+
+  /** Cristallisation demandée par le joueur. Une seule fois par combat. */
+  function activateTera() {
+    const b = state.battle;
+    const tera = mod('tera');
+    if (!b || !tera || !tera.activate) return;
+    const mon = b.player && b.player.mon;
+    if (!mon) return;
+    const res = safeCall('tera.activate', function () { return tera.activate(mon, b); });
+    if (!res || !res.ok) {
+      showToast((res && res.message) || 'Impossible pour l\'instant.', '💎');
+      refreshTeraButton();
+      return;
+    }
+    sfx('rare');
+    _hudBattle.player = '';   // ses types ont changé : la barre de PV se refait
+    call('battle', 'notifyTera', [mon, res.typeId]);
+    refreshTeraButton();
+    setBattlePhase('animating');
+    showMessage(res.message || 'Téracristallisation !', function () { setBattlePhase('choose'); });
   }
 
   // --- Synchronisation légère de l'interface (barres de PV) -------------------
@@ -2013,22 +2436,50 @@
     if (!id) { showToast('Ton sac est vide.', '🎒'); return; }
     if ((state.items[id] | 0) <= 0) return;
 
+    // Une Ball : capture PENDANT le combat (uniquement en combat sauvage).
+    if (isBallId(id)) {
+      if (b.canCatch === false) { showToast('On ne capture pas la créature d\'un dresseur !', '🚫'); return; }
+      // §11.2 : le sélecteur vaut AUSSI ici. Choisir une Ball dans le sac
+      // devient donc le choix courant, il n'y a plus deux vérités.
+      state.activeBall = id;
+      throwBallInBattle(id);
+      return;
+    }
+
+    // Tout le reste passe par `shop.useFrom()` : il vérifie le sac, applique
+    // l'objet, ET NE DÉCRÉMENTE QUE S'IL A SERVI.
+    // ⚠️ L'ancien code décrémentait `state.items.potion` À LA MAIN juste après :
+    // brancher `useFrom` sans supprimer cette ligne comptait chaque potion DEUX
+    // FOIS. C'est exactement ce qu'il ne faut pas refaire.
+    const shop = mod('shop');
+    const mon = b.player.mon;
+    if (shop && shop.useFrom) {
+      const res = safeCall('shop.useFrom', function () { return shop.useFrom(id, mon, state); });
+      if (!res) { showToast('Cet objet ne fait rien ici.', '🎒'); return; }
+      refreshHudCounters();
+      if (!res.ok) { showToast(res.message || 'Rien ne se passe.', '🎒'); return; }
+      sfx('menu');
+      _hudBattle.player = '';
+      setBattlePhase('animating');
+      // L'adversaire profite du temps qu'on a pris : utiliser un objet coûte
+      // un tour, comme dans le jeu d'origine.
+      showMessage(res.message, function () { foeTurn(); });
+      return;
+    }
+
+    // Repli sans `shop3d.js` : la Potion d'avant, et rien d'autre.
     if (id === 'potion') {
-      const mon = b.player.mon;
       const team = teamApi();
       const rendu = (team && team.heal) ? team.heal(mon, 20) : 0;
       if (!rendu) { showToast('Cette créature est déjà en pleine forme.', '💊'); return; }
       state.items.potion = Math.max(0, state.items.potion - 1);
-      call('hud', 'setItems', [state.items]);
+      refreshHudCounters();
       setBattlePhase('animating');
       showMessage('Tu utilises une Potion.\n+' + rendu + ' PV pour ' + (mon.nick || mon.id) + ' !',
         function () { foeTurn(); });
       return;
     }
-
-    // Une Ball : capture PENDANT le combat (uniquement en combat sauvage).
-    if (b.canCatch === false) { showToast('On ne capture pas la créature d\'un dresseur !', '🚫'); return; }
-    throwBallInBattle(id);
+    showToast('Cet objet ne s\'utilise pas en combat.', '🎒');
   }
 
   function throwBallInBattle(ballId) {
@@ -2038,11 +2489,12 @@
     const foe = b.foe.mon;
     const species = (dex && dex.get) ? dex.get(foe.id) : null;
     const chance = (team && team.catchChance)
-      ? safeCall('team.catchChance.battle', function () { return team.catchChance(foe, species, BALL_BONUS[ballId] || 1); })
+      ? safeCall('team.catchChance.battle', function () { return team.catchChance(foe, species, ballPowerOf(ballId)); })
       : 0.35;
 
     state.items[ballId] = Math.max(0, (state.items[ballId] | 0) - 1);
-    call('hud', 'setItems', [state.items]);
+    ensureActiveBall();
+    refreshHudCounters();
     b.phase = 'ball';
     b.ball = { active: true, progress: 0, shakeIndex: 0, result: null };
     call('hud', 'showBattleUI', [b]);
@@ -2088,9 +2540,109 @@
     sfx('catch');
     refreshHudCounters();
     saveGame();
-    showMessage('Bravo ! ' + (mon.nick || mon.id) + ' est capturé ! ✦' +
-      (where === 'box' ? '\nTon équipe est pleine : il rejoint la Boîte.' : '\nIl rejoint ton équipe !'),
-      function () { endBattle(); });
+    // On empile d'abord le texte de capture, puis celui de la quête : les
+    // messages se lisent dans l'ordre, et le combat ne se termine qu'après.
+    // Capture, puis ce qu'en dit la quête, et seulement ensuite la sortie du
+    // combat — accrochée au tout dernier message.
+    const suite = ['Bravo ! ' + (mon.nick || mon.id) + ' est capturé ! ✦' +
+      (where === 'box' ? '\nTon équipe est pleine : il rejoint la Boîte.' : '\nIl rejoint ton équipe !')]
+      .concat(questTextsForCatch(mon.id));
+    showMessages(suite, function () { endBattle(); });
+  }
+
+  // ===========================================================================
+  //  9 bis. LES ÉVOLUTIONS  (demande n° 4 de Robin, §3)
+  //      RÈGLE : jamais en plein tour de combat. On les enchaîne À LA FIN,
+  //      une créature à la fois, tant que `canEvolve()` répond encore — une
+  //      créature qui saute plusieurs niveaux d'un coup peut évoluer deux fois.
+  // ===========================================================================
+
+  /** Termine un combat : les textes, puis les évolutions, puis la sortie. */
+  function finishBattle(textes) {
+    showMessages(textes, function () {
+      runEvolutions(function () { endBattle(); });
+    });
+  }
+
+  function runEvolutions(onDone) {
+    const evolve = mod('evolve');
+    const list = playerTeamList().slice();
+    if (!evolve || !evolve.canEvolve || !evolve.evolve || !list.length) {
+      if (onDone) onDone();
+      return;
+    }
+
+    let i = 0;
+    const ecranAvant = state.screen;
+
+    function suivant() {
+      while (i < list.length) {
+        const mon = list[i];
+        const st = mon ? safeCall('evolve.canEvolve', function () { return evolve.canEvolve(mon); }) : null;
+        if (st) { faireEvoluer(mon); return; }
+        i++;
+      }
+      state.screen = ecranAvant;
+      if (onDone) onDone();
+    }
+
+    function faireEvoluer(mon) {
+      const r = safeCall('evolve.evolve', function () { return evolve.evolve(mon); });
+      // Sécurité anti-boucle : si `canEvolve` dit oui mais qu'`evolve` échoue,
+      // on passe à la créature suivante plutôt que de tourner en rond.
+      if (!r) { i++; suivant(); return; }
+
+      sfx('rare');
+      state.screen = 'evolution';
+      markSeen(r.to);
+      state.collection[r.to] = state.collection[r.to] || 1;
+
+      const apres = function () {
+        // `r.pending` : des capacités que la nouvelle forme aurait apprises,
+        // mais les 4 emplacements sont pleins. Exactement comme `pendingLearn`
+        // d'une montée de niveau : on le DIT, on ne remplace rien tout seul.
+        const lignes = [];
+        if (r.learned && r.learned.length) {
+          lignes.push((mon.nick || mon.id) + ' apprend ' + r.learned.map(function (id) {
+            return (moveOf(id).name || id);
+          }).join(', ') + ' !');
+        }
+        if (r.pending && r.pending.length) {
+          lignes.push((mon.nick || mon.id) + ' aimerait apprendre ' +
+            (moveOf(r.pending[0]).name || r.pending[0]) +
+            ',\nmais connaît déjà 4 capacités. Ce sera pour plus tard !');
+        }
+        refreshHudCounters();
+        saveGame();
+        showMessages(lignes, function () {
+          // La MÊME créature peut enchaîner : niveau 40 = deux paliers franchis.
+          const encore = safeCall('evolve.canEvolve.suite', function () { return evolve.canEvolve(mon); });
+          if (encore) { faireEvoluer(mon); return; }
+          i++;
+          suivant();
+        });
+      };
+
+      const hud = mod('hud');
+      if (hud && hud.showEvolution) {
+        const ok = safeCall('hud.showEvolution', function () {
+          hud.showEvolution({
+            fromName: r.fromName || r.from,
+            toName: r.toName || r.to,
+            message: r.message || '',
+            speciesId: r.to,
+            onDone: apres,
+          });
+          return true;
+        });
+        if (ok) return;
+      }
+      // Repli sans écran d'évolution : le texte suffit à ne rien perdre.
+      showMessage('✨ ' + (r.fromName || r.from) + ' évolue en ' + (r.toName || r.to) + ' !' +
+        (r.message ? '\n' + r.message : ''), apres);
+    }
+
+    suivant();
   }
 
   // --- Fin d'un camp ----------------------------------------------------------
@@ -2136,7 +2688,9 @@
     if (b.kind === 'wild') {
       b.result = 'win';
       setBattlePhase('result');
-      showMessage('Victoire ! ✦' + lignes, function () { endBattle(); });
+      // §6 : l'argent gagné. `b.kind` vaut déjà 'wild' | 'trainer' | 'champion'.
+      lignes += payRewardLine(b.kind, vaincu && vaincu.level);
+      finishBattle(['Victoire ! ✦' + lignes]);
       return;
     }
 
@@ -2158,10 +2712,24 @@
       return;
     }
 
-    onTrainerDefeated(lignes);
+    onTrainerDefeated(lignes, vaincu);
   }
 
-  function onTrainerDefeated(lignes) {
+  /** Verse l'argent d'un combat gagné et renvoie la ligne à afficher.
+   *  RIEN dans `onPlayerFainted()` : perdre ne coûte pas un sou, c'est un
+   *  principe du jeu. */
+  function payRewardLine(kind, level) {
+    const shop = mod('shop');
+    if (!shop || !shop.payReward) return '';
+    const res = safeCall('shop.payReward', function () {
+      return shop.payReward(kind, level || 5, state);
+    });
+    if (!res || !res.text) return '';
+    refreshHudCounters();
+    return '\n' + res.text;
+  }
+
+  function onTrainerDefeated(lignes, vaincu) {
     const b = state.battle;
     const tr = b.foe.trainer || {};
     b.result = 'win';
@@ -2169,6 +2737,9 @@
     sfx('catch');
 
     let texte = 'Victoire ! ' + (tr.name || 'Ton adversaire') + ' est battu ! ✦' + lignes;
+    texte += payRewardLine(b.kind, (vaincu && vaincu.level) || niveauEquipeAdverse(b));
+
+    const textes = [];
 
     if (b.kind === 'champion') {
       state.badges[b.regionId || state.regionId] = true;
@@ -2188,13 +2759,35 @@
           if (list[i]) safeCall('team.gainXp.badge', function () { team.gainXp(list[i], bonus); });
         }
       }
+
+      // §5 : le badge OUVRE LE SANCTUAIRE de la région. C'est ce qui réveille
+      // ses six légendaires — le cœur de la demande n° 3 de Robin.
+      const quest = mod('quest');
+      if (quest && quest.onBadge) {
+        const q = safeCall('quest.onBadge', function () {
+          return quest.onBadge(b.regionId || state.regionId);
+        });
+        if (q && q.text) textes.push('⛩️ ' + q.text + (q.hint ? '\n\n' + q.hint : ''));
+      }
     } else if (b.npcId) {
       state.defeatedTrainers[b.npcId] = true;
       if (tr.dialogWin && tr.dialogWin.length) texte += '\n\n' + tr.name + ' : « ' + tr.dialogWin[0] + ' »';
     }
 
+    refreshHudCounters();
     saveGame();
-    showMessage(texte, function () { endBattle(); });
+    finishBattle([texte].concat(textes));
+  }
+
+  /** Niveau représentatif de l'équipe adverse : sert au calcul de l'argent
+   *  quand on ne connaît pas le niveau de la dernière créature battue. */
+  function niveauEquipeAdverse(b) {
+    const list = (b && b.foe && b.foe.team) || [];
+    let max = 0;
+    for (let i = 0; i < list.length; i++) {
+      if (list[i] && list[i].level > max) max = list[i].level;
+    }
+    return max || 5;
   }
 
   function onPlayerFainted() {
@@ -2235,9 +2828,26 @@
   function talkToNPC(npc) {
     sfx('menu');
     if (npc.isTrainer && !state.defeatedTrainers[npc.id]) { startTrainerBattle(npc); return; }
-    const lines = (npc.isTrainer && state.defeatedTrainers[npc.id] && npc.dialogDefeated)
-      ? npc.dialogDefeated
-      : (npc.dialog || ['…']);
+
+    // §5 : les villageois racontent la légende de leur région. `quest3d` connaît
+    // les ids de PNJ de regions3d, on lui passe `npc.id` tel quel.
+    // ⚠️ Parler AU CONTEUR marque la légende comme entendue : on n'appelle donc
+    // JAMAIS `dialogFor()` pour un simple aperçu — seulement ici, quand Robin
+    // a vraiment appuyé sur Espace devant lui.
+    const quest = mod('quest');
+    let lines = null;
+    if (quest && quest.dialogFor && !npc.isTrainer) {
+      const q = safeCall('quest.dialogFor', function () {
+        return quest.dialogFor(npc.id, state.regionId);
+      });
+      if (q && q.length) { lines = q; saveGame(); }
+    }
+
+    if (!lines) {
+      lines = (npc.isTrainer && state.defeatedTrainers[npc.id] && npc.dialogDefeated)
+        ? npc.dialogDefeated
+        : (npc.dialog || ['…']);
+    }
     for (let i = 0; i < lines.length; i++) showMessage(npc.name + ' : ' + lines[i]);
   }
 
@@ -2417,8 +3027,9 @@
     saveGame();
     showMessage('Bienvenue, ' + state.playerName + ' ! ✦\n' +
       'Flèches pour explorer. Les créatures se voient sur la carte :\n' +
-      'approche-toi et lance une Ball avec B.\n' +
+      'approche-toi et lance une Ball avec B (X pour changer de Ball).\n' +
       '🚪 Suis les colonnes de lumière pour changer de région.\n' +
+      'F : sortir ton compagnon de sa Ball · J : journal des légendes\n' +
       'T : appeler le dirigeable · V : changer de vue (dont la vue FPS)\n' +
       'E : équipe · C : Pokédex · N : carte · M : son');
   }
@@ -2466,13 +3077,18 @@
     call('hud', 'closeMap', []);
     call('hud', 'closeAirshipMenu', []);
     call('hud', 'closeCollection', []);
+    call('hud', 'closeShop', []);
+    call('hud', 'closeJournal', []);
+    call('hud', 'closeAcademy', []);
     const ov = document.getElementById('collection-overlay');
     if (ov) ov.classList.add('hidden');
     releaseAllKeys();
-    if (etait === 'team' || etait === 'dex' || etait === 'map' || etait === 'airship') {
+    if (etait === 'team' || etait === 'dex' || etait === 'map' || etait === 'airship' ||
+        etait === 'shop' || etait === 'journal' || etait === 'academy') {
       sfx('menu');
       state.screen = 'world';
       refreshCompass();
+      refreshHudCounters();
       saveGame();
     }
   }
@@ -2484,6 +3100,138 @@
     call('hud', 'setCollectionCount', [uniques, total]);
     call('hud', 'showBallCount', [state.items.pokeball | 0]);
     call('hud', 'setItems', [state.items]);
+    // §6 et §11.2 : l'argent et la Ball active sont affichés en permanence.
+    call('hud', 'setMoney', [state.money | 0]);
+    call('hud', 'setActiveBall', [state.activeBall]);
+    call('hud', 'setBallInventory', [state.items]);
+  }
+
+  // ===========================================================================
+  //  13 bis. LE SÉLECTEUR DE BALL  (demande n° 9 de Robin, §11.2)
+  //      `state.activeBall` est LA source de vérité : monde ouvert et menu Sac
+  //      du combat lisent la même valeur.
+  // ===========================================================================
+
+  /** Est-ce une Ball ? `shop3d` fait foi, la table locale sert de repli. */
+  function isBallId(id) {
+    const shop = mod('shop');
+    if (shop && shop.isBall) {
+      const v = safeCall('shop.isBall', function () { return shop.isBall(id); });
+      if (typeof v === 'boolean') return v;
+    }
+    return Object.prototype.hasOwnProperty.call(BALL_BONUS, id);
+  }
+
+  /** Bonus de capture d'une Ball — une seule table, celle de `shop3d`. */
+  function ballPowerOf(id) {
+    const shop = mod('shop');
+    if (shop && shop.ballPower) {
+      const v = safeCall('shop.ballPower', function () { return shop.ballPower(id); });
+      if (typeof v === 'number' && isFinite(v)) return v;
+    }
+    return BALL_BONUS[id] || 1;
+  }
+
+  /** Toutes les Balls connues, dans l'ordre d'affichage. */
+  function ballIds() {
+    const shop = mod('shop');
+    if (shop && Array.isArray(shop.CATALOG)) {
+      const out = [];
+      for (let i = 0; i < shop.CATALOG.length; i++) {
+        const it = shop.CATALOG[i];
+        if (it && it.kind === 'ball') out.push(it.id);
+      }
+      if (out.length) return out;
+    }
+    return BALL_ORDER.slice();
+  }
+
+  /** Les Balls RÉELLEMENT possédées (on saute celles à zéro — §11.2). */
+  function ownedBalls() {
+    const ids = ballIds();
+    const out = [];
+    for (let i = 0; i < ids.length; i++) if ((state.items[ids[i]] | 0) > 0) out.push(ids[i]);
+    return out;
+  }
+
+  /**
+   * Garde `state.activeBall` cohérent : si la Ball choisie tombe à zéro (on
+   * vient de la lancer), on glisse silencieusement sur la suivante possédée.
+   * Rien de pire, à 10 ans, qu'un sélecteur qui montre une Ball qu'on n'a plus.
+   */
+  function ensureActiveBall() {
+    const dispo = ownedBalls();
+    if (!dispo.length) return;                       // plus une seule Ball : on garde l'affichage
+    if (dispo.indexOf(state.activeBall) >= 0) return;
+    state.activeBall = dispo[0];
+  }
+
+  /** Touche X : la Ball suivante parmi celles qu'on possède. */
+  function cycleBall(sens) {
+    const dispo = ownedBalls();
+    if (!dispo.length) { showToast('Plus aucune Ball dans ton sac !', '⚪'); return; }
+    if (dispo.length === 1) {
+      state.activeBall = dispo[0];
+      showToast('Tu n\'as que des ' + itemName(dispo[0]) + '.', itemIcon(dispo[0]));
+      refreshHudCounters();
+      return;
+    }
+    let i = dispo.indexOf(state.activeBall);
+    if (i < 0) i = -1;
+    state.activeBall = dispo[(((i + (sens || 1)) % dispo.length) + dispo.length) % dispo.length];
+    sfx('menu');
+    showToast(itemName(state.activeBall) + ' × ' + (state.items[state.activeBall] | 0),
+      itemIcon(state.activeBall));
+    refreshHudCounters();
+    saveGame();
+  }
+
+  /** La fiche d'un objet du catalogue (nom, icône…), ou null. Vaut pour
+   *  n'importe quel objet, pas seulement les Balls. */
+  function itemOf(id) {
+    const shop = mod('shop');
+    if (shop && shop.item) {
+      const it = safeCall('shop.item', function () { return shop.item(id); });
+      if (it && it.id !== '?') return it;
+    }
+    return null;
+  }
+  function itemName(id) { const it = itemOf(id); return (it && it.name) || id; }
+  function itemIcon(id) { const it = itemOf(id); return (it && it.icon) || '⚪'; }
+
+  /** La Ball à lancer, ici et maintenant. */
+  function currentBall() {
+    ensureActiveBall();
+    if ((state.items[state.activeBall] | 0) > 0) return state.activeBall;
+    const dispo = ownedBalls();
+    return dispo.length ? dispo[0] : null;
+  }
+
+  // ===========================================================================
+  //  13 ter. LE COMPAGNON  (demande n° 2 de Robin, §4)
+  // ===========================================================================
+
+  /** Touche F : sortir la créature active de sa Ball, ou la rappeler. */
+  function toggleBuddy() {
+    if (state.screen !== 'world' || state.messages.length > 0) return;
+    const buddy = mod('buddy');
+    if (!buddy || !buddy.toggle) { showToast('Ton compagnon ne peut pas sortir ici.', '🐾'); return; }
+
+    const dehors = buddy.isOut && buddy.isOut();
+    if (dehors) {
+      safeCall('buddy.recall', function () { buddy.recall(); });
+      showToast('Retour dans sa Ball.', '⚪');
+      saveGame();
+      return;
+    }
+
+    const mon = activeMon() || playerTeamList()[0];
+    if (!mon) { showToast('Tu n\'as encore aucune créature.', '🐾'); return; }
+    const ok = safeCall('buddy.release', function () { return buddy.release(mon, { player: state.player }); });
+    if (ok === false) { showToast('Elle préfère rester au chaud…', '⚪'); return; }
+    sfx('catch');
+    showToast((mon.nick || mon.id) + ' sort de sa Ball !', '✨');
+    saveGame();
   }
 
   // ===========================================================================
@@ -2572,13 +3320,22 @@
   //      n'est lue qu'une fois, au tout premier lancement de la 3D.
   // ===========================================================================
 
+  /** Appelle une méthode d'un module en renvoyant `null` s'il manque. Sert à
+   *  n'écrire dans la sauvegarde que ce qui existe vraiment. */
+  function serializeOf(name) {
+    const m = mod(name);
+    if (!m || typeof m.serialize !== 'function') return null;
+    const v = safeCall(name + '.serialize', function () { return m.serialize(); });
+    return (v === undefined) ? null : v;
+  }
+
   function saveGame() {
     try {
       const team = teamApi();
       const ser = (team && team.serialize) ? team.serialize() : { team: [], box: [] };
       const cam = mod('camera');
       const data = {
-        version: 1,
+        version: 2,
         playerName: state.playerName,
         regionId: state.regionId,
         tileX: state.player.tileX,
@@ -2596,17 +3353,39 @@
         quality: R3.quality.level,
         cameraMode: (cam && cam.mode) ? cam.mode() : state.cameraMode,
         cameraState: (cam && cam.serialize) ? cam.serialize() : null,
+
+        // --- nouveautés de la v2 (CONTRACT3 §12) ---------------------------
+        money: state.money | 0,
+        activeBall: state.activeBall || DEFAULT_BALL,
+        quest: serializeOf('quest'),
+        tera: serializeOf('tera'),
+        buddy: serializeOf('buddy'),
       };
       localStorage.setItem(SAVE_KEY, JSON.stringify(data));
     } catch (e) { /* localStorage indisponible : on ignore */ }
   }
 
-  function loadGame() {
-    let data = null;
+  /** Lit une clé de sauvegarde. -> l'objet, ou null (jamais d'exception). */
+  function readSave(key) {
     try {
-      const raw = localStorage.getItem(SAVE_KEY);
-      if (raw) data = JSON.parse(raw);
-    } catch (e) { data = null; }
+      const raw = localStorage.getItem(key);
+      if (!raw) return null;
+      const o = JSON.parse(raw);
+      return (o && typeof o === 'object') ? o : null;
+    } catch (e) { return null; }
+  }
+
+  function loadGame() {
+    // MIGRATION v1 → v2 (§12) : on lit d'abord la v2 ; à défaut, l'ancienne clé
+    // v1 est relue TELLE QUELLE. Les champs qu'elle n'a pas (argent, quêtes,
+    // Téra, compagnon, Ball active) prennent simplement leur valeur par défaut.
+    // Une partie de Robin ne se perd jamais.
+    let data = readSave(SAVE_KEY);
+    let migre = false;
+    if (!data) {
+      data = readSave(SAVE_KEY_V1);
+      migre = !!data;
+    }
 
     if (!data) { importOldSave(); return; }
 
@@ -2643,10 +3422,45 @@
       if (cam && cam.deserialize) {
         safeCall('camera.deserialize', function () { cam.deserialize(data.cameraState || data.cameraMode); });
       }
+
+      // --- champs de la v2 : un champ absent prend sa valeur par défaut -----
+      state.money = (typeof data.money === 'number' && isFinite(data.money))
+        ? Math.max(0, Math.round(data.money)) : START_MONEY;
+      state.activeBall = (typeof data.activeBall === 'string' && data.activeBall)
+        ? data.activeBall : DEFAULT_BALL;
+      ensureActiveBall();
+
+      call('quest', 'deserialize', [data.quest || null]);
+
+      // ⚠️ ORDRE IMPÉRATIF : `tera.deserialize()` APRÈS `team.deserialize()`.
+      // C'est lui qui répare les créatures sauvegardées en pleine
+      // cristallisation ; s'il passait avant, `team3d.packMon()` figerait
+      // `types: [typeTéra]` définitivement sur la créature.
+      call('tera', 'deserialize', [data.tera || null]);
+
+      // Le compagnon en dernier : il a besoin de l'équipe pour retrouver son
+      // uid, et d'une Téra remise d'aplomb pour construire le bon modèle.
+      call('buddy', 'deserialize', [data.buddy || null]);
+
+      if (migre) {
+        // On réécrit tout de suite sous la clé v2 : la migration n'a lieu
+        // qu'une fois. L'ancienne clé n'est jamais effacée — filet de sécurité
+        // si quelque chose s'était mal passé.
+        console.log('[game3d] sauvegarde v1 reprise et convertie en v2.');
+        saveGame();
+      }
+
       // La position sera sécurisée par applyRegion (keepPosition + teleport).
       _resumePosition = true;
     } catch (e) {
+      // On le DIT, jamais en silence (§12) : Robin doit comprendre pourquoi sa
+      // partie a l'air neuve, et le message part dès que le HUD est prêt.
       console.warn('[game3d] sauvegarde illisible, on repart de zéro :', e);
+      setTimeout(function () {
+        showMessage('Oh non… ta sauvegarde n\'a pas pu être relue. 😥\n' +
+          'On repart d\'une nouvelle partie — mais l\'ancienne est toujours\n' +
+          'sur cet ordinateur, rien n\'a été effacé.');
+      }, 800);
     }
   }
 
@@ -2744,9 +3558,30 @@
       saveGame();
     },
     reset: function () {
+      // Les DEUX clés : sans la v1, « repartir de zéro » ressusciterait
+      // l'ancienne partie au rechargement suivant.
       try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* rien */ }
+      try { localStorage.removeItem(SAVE_KEY_V1); } catch (e) { /* rien */ }
       location.reload();
     },
+
+    // --- nouveautés v3, utiles pour tester sans tout rejouer ----------------
+    money: function (n) {
+      if (typeof n === 'number') { state.money = Math.max(0, n | 0); refreshHudCounters(); saveGame(); }
+      return state.money;
+    },
+    give: function (id, n) {
+      state.items[id] = Math.max(0, (state.items[id] | 0) + (n === undefined ? 1 : n | 0));
+      ensureActiveBall(); refreshHudCounters(); saveGame();
+      return state.items[id];
+    },
+    shop: openShopScreen,
+    academy: openAcademyScreen,
+    journal: openJournalScreen,
+    buddy: toggleBuddy,
+    ball: cycleBall,
+    evolutions: runEvolutions,
+    center: healAtCenter,
   };
   window.GAME3D = GAME3D;
   // Certains modules (interface, carte) ont besoin de l'état du jeu.
