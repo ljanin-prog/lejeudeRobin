@@ -1745,13 +1745,112 @@
       }
     });
 
+    // --- utiliser un objet hors combat (§11.3) -------------------------------
+    // Le sac n'existait qu'en combat : entre deux combats, la seule façon de
+    // soigner était de retourner au Centre. On soigne (et on donne une pierre)
+    // directement depuis l'écran Équipe.
+    ui.teamUseBtn = el('button', 'td-use', right, '🎒 Utiliser un objet');
+    ui.teamUseBtn.type = 'button';
+    ui.teamUseBtn.addEventListener('click', function () {
+      if (sacEquipeOuvert()) fermeSacEquipe(); else ouvreSacEquipe();
+    });
+
+    ui.teamBag = el('div', 'td-bag hidden', right);
+
     const teamHint = el('p', 'hint', frame);
     teamHint.innerHTML = 'Flèches : choisir &nbsp;·&nbsp; <strong>A</strong> : envoyer au combat' +
       ' &nbsp;·&nbsp; <strong>Espace</strong> sur une créature de la Boîte : la mettre dans ton équipe' +
-      ' &nbsp;·&nbsp; Échap : fermer';
+      ' &nbsp;·&nbsp; <strong>U</strong> : utiliser un objet &nbsp;·&nbsp; Échap : fermer';
 
     ov.addEventListener('click', function (ev) { if (ev.target === ov) closeTeam(); });
     ui.teamOverlay = ov;
+  }
+
+  // ===========================================================================
+  //  LE SAC DE L'ÉCRAN ÉQUIPE — soigner hors combat
+  //  On ne montre que ce qui sert VRAIMENT sur une créature (soins et pierres)
+  //  et qu'on possède : une liste d'objets grisés n'apprend rien à un enfant.
+  // ===========================================================================
+  function monSousCurseur() {
+    const api = TEAM();
+    if (!api) return null;
+    if (teamZone === 'box') return api.box[boxPage * BOX_PAGE_SIZE + boxCursor] || null;
+    return api.team[teamCursor] || null;
+  }
+
+  function objetsUtilisables() {
+    const inv = hudItems || {};
+    const shop = R3ref.get('shop');
+    const out = [];
+    Object.keys(inv).forEach(function (id) {
+      if ((inv[id] | 0) <= 0) return;
+      const meta = shop && shop.item ? shop.item(id) : null;
+      const kind = meta ? meta.kind : null;
+      // Les Balls ne se lancent pas sur sa propre équipe.
+      if (kind === 'ball') return;
+      if (meta && meta.usable === false) return;
+      if (kind && kind !== 'soin' && kind !== 'pierre' && kind !== 'objet') return;
+      out.push(meta || { id: id, name: id, icon: '🎁', description: '' });
+    });
+    return out;
+  }
+
+  function ouvreSacEquipe() {
+    if (!ui.teamBag) return;
+    const mon = monSousCurseur();
+    if (!mon) { toast('Choisis d’abord une créature.', '👆'); return; }
+
+    const liste = objetsUtilisables();
+    ui.teamBag.innerHTML = '';
+    el('div', 'tb-title', ui.teamBag, 'Sur ' + monLabel(mon) + ' :');
+
+    if (!liste.length) {
+      el('p', 'hint', ui.teamBag, 'Ton sac est vide. Le Centre Pokémon en vend !');
+    } else {
+      liste.forEach(function (item) {
+        const b = el('button', 'tb-item', ui.teamBag);
+        b.type = 'button';
+        b.setAttribute('data-nav', '1');
+        b.style.setProperty('--item-color', item.color || '#41a6f6');
+        el('span', 'tb-icon', b, item.icon || '🎁');
+        const t = el('span', 'tb-texts', b);
+        el('span', 'tb-name', t, (item.name || item.id) + '  ×' + (hudItems[item.id] | 0));
+        if (item.description) el('span', 'tb-desc', t, item.description);
+        b.addEventListener('click', function () {
+          const cible = monSousCurseur();
+          let r = null;
+          // game3d pilote : il applique, décompte, sauvegarde et enchaîne une
+          // éventuelle évolution. Repli direct sur shop3d s'il n'est pas là.
+          if (window.GAME3D && typeof window.GAME3D.useItem === 'function') {
+            try { r = window.GAME3D.useItem(item.id, cible); } catch (e) { r = null; }
+          } else {
+            const shop = R3ref.get('shop');
+            if (shop && shop.useFrom) {
+              try { r = shop.useFrom(item.id, cible, gameState()); } catch (e) { r = null; }
+            }
+          }
+          if (r && r.message) toast(r.message, r.ok ? '✨' : 'ℹ️');
+          else if (!r) toast('Rien ne s’est passé.', 'ℹ️');
+          fermeSacEquipe();
+          renderTeamScreen();
+        });
+      });
+    }
+
+    show(ui.teamBag);
+    navReset(ui.teamBag);
+    if (ui.teamUseBtn) ui.teamUseBtn.textContent = '✖️ Refermer le sac';
+  }
+
+  function fermeSacEquipe() {
+    if (!ui.teamBag) return;
+    hide(ui.teamBag);
+    navMarque(null);
+    if (ui.teamUseBtn) ui.teamUseBtn.textContent = '🎒 Utiliser un objet';
+  }
+
+  function sacEquipeOuvert() {
+    return !!(ui.teamBag && !ui.teamBag.classList.contains('hidden'));
   }
 
   function renderTeamBadgeStrip() {
@@ -3456,7 +3555,18 @@
       return;
     }
     if (ui.teamOverlay && !ui.teamOverlay.classList.contains('hidden')) {
+      // Sac ouvert : il capte les flèches et Échap le referme, sans quitter
+      // l'écran Équipe — sinon Échap ferait tout disparaître d'un coup.
+      if (sacEquipeOuvert()) {
+        if (key === 'Escape') { fermeSacEquipe(); ev.preventDefault(); ev.stopPropagation(); return; }
+        if (navEcran(ui.teamBag, ev)) { ev.preventDefault(); ev.stopPropagation(); return; }
+        return;
+      }
       if (key === 'Escape') { closeTeam(); fakeKey('Escape'); return; }
+      // `U` comme « utiliser » : le raccourci du sac.
+      if (key === 'u' || key === 'U') {
+        ouvreSacEquipe(); ev.preventDefault(); ev.stopPropagation(); return;
+      }
       if (teamHandleKey(ev)) { ev.preventDefault(); ev.stopPropagation(); return; }
       return;
     }

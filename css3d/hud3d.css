@@ -2012,3 +2012,58 @@ html, body {
   .academy-type.nav-cursor,
   .academy-mon.nav-cursor { transform: none; }
 }
+
+/* ---------------------------------------------------------------------------
+   LE SAC DE L'ÉCRAN ÉQUIPE — soigner hors combat
+   Le sac n'existait qu'en combat : entre deux combats, il fallait retourner au
+   Centre pour soigner. Le panneau s'ouvre sous les boutons du détail.
+--------------------------------------------------------------------------- */
+.td-use {
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px 14px;
+  border: none;
+  border-radius: 14px;
+  background: #41a6f6;
+  color: #06263f;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 3px 0 #2a7ec0;
+}
+.td-use:hover { filter: brightness(1.06); }
+.td-use:active { transform: translateY(2px); box-shadow: 0 1px 0 #2a7ec0; }
+
+.td-bag {
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, .28);
+  max-height: 230px;
+  overflow-y: auto;
+}
+.td-bag .tb-title {
+  font-weight: 700;
+  margin-bottom: 8px;
+  color: #ffe066;
+}
+.tb-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-bottom: 6px;
+  padding: 8px 10px;
+  border: 2px solid var(--item-color, #41a6f6);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .05);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.tb-item:hover { background: rgba(255, 255, 255, .12); }
+.tb-icon { font-size: 22px; }
+.tb-texts { display: flex; flex-direction: column; }
+.tb-name { font-weight: 700; }
+.tb-desc { font-size: 11.5px; opacity: .75; }

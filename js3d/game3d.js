@@ -3358,6 +3358,38 @@
     return id;
   }
 
+  /**
+   * Utiliser un objet sur une créature HORS COMBAT (écran Équipe).
+   * Le sac de combat existait déjà, mais rien ne permettait de soigner entre
+   * deux combats autrement qu'en retournant au Centre.
+   *
+   * C'est game3d qui pilote : le HUD affiche la liste et appelle ici, comme
+   * pour le sélecteur de Ball. On passe par `shop.useFrom()`, qui vérifie le
+   * sac, applique l'effet et ne décrémente QUE si l'objet a servi.
+   */
+  function useItemOnMon(itemId, mon) {
+    const shop = mod('shop');
+    if (!shop || !shop.useFrom) {
+      return { ok: false, message: 'Le sac est introuvable.' };
+    }
+    if (!mon) return { ok: false, message: 'Choisis d’abord une créature.' };
+
+    const r = safeCall('shop.useFrom', function () {
+      return shop.useFrom(itemId, mon, state);
+    }) || { ok: false, message: 'Rien ne s’est passé.' };
+
+    if (r.ok) {
+      sfx('heal');
+      refreshHudCounters();
+      call('hud', 'setItems', [state.items]);
+      // Une pierre peut faire évoluer sur-le-champ : on enchaîne l'écran de
+      // gloire, exactement comme après un gain de niveau. `runEvolutions`
+      // balaie l'équipe et ne fait rien si personne n'est prêt.
+      runEvolutions(function () { saveGame(); });
+    }
+    return r;
+  }
+
   // ===========================================================================
   //  13 ter. LE COMPAGNON  (demande n° 2 de Robin, §4)
   // ===========================================================================
@@ -3753,6 +3785,9 @@
     },
     // Appelée PAR LE HUD quand Robin change de Ball (touche X ou clic).
     setActiveBall: setActiveBall,
+    // Appelée PAR LE HUD depuis l'écran Équipe : soigner une créature, lui
+    // donner une pierre… hors combat.
+    useItem: useItemOnMon,
     shop: openShopScreen,
     academy: openAcademyScreen,
     journal: openJournalScreen,
