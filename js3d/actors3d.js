@@ -16,6 +16,9 @@
 //
 //  Le modèle est construit tourné vers +z (soit dir 'down'), posé sur y = 0,
 //  et mesure ~1 unité de haut, comme les créatures.
+//
+//  Ce fichier gère AUSSI l'étonnement des PNJ devant un légendaire (§10) :
+//  voir la grande section en fin de fichier, après les animations.
 // =============================================================================
 
 (function () {
@@ -502,6 +505,9 @@
     g.userData.phase = (R3.hash(npc.x || 0, npc.y || 0) * TAU) || 0;
     g.userData.npc = npc;
     g.userData.estDresseur = !!npc.isTrainer;
+    // État d'étonnement (§10) : créé ICI, à la construction, pour que la boucle
+    // de rendu n'ait jamais la moindre allocation à faire.
+    g.userData.reac = etatReaction(npc);
     return g;
   }
 
@@ -667,6 +673,434 @@
     r.brasG.rotation.x = r.baseBrasX - bal;
 
     clignement(g, t);
+
+    // L'étonnement se pose PAR-DESSUS la pose d'attente : il doit pouvoir
+    // écraser l'orientation, le buste, la tête et les yeux.
+    majEtonnement(g, t);
+  }
+
+  // ===========================================================================
+  //  §10 — L'ÉTONNEMENT DES PNJ DEVANT UN LÉGENDAIRE
+  // ===========================================================================
+  //  Demande n° 11 de Robin : « si les gens voient un Pokémon légendaire, il
+  //  doit y avoir des réactions de type étonnement ».
+  //
+  //  COMMENT ÇA MARCHE, ET POURQUOI COMME ÇA
+  //  ---------------------------------------
+  //  1. `reactToLegend(pos, nom)` ne fait QUE déposer « il y a un légendaire
+  //     là » dans un petit tableau de 4 cases créé une fois pour toutes. Elle
+  //     n'a aucune idée de qui sont les PNJ : c'est roamers3d.js (légendaire
+  //     sauvage) et buddy3d.js (légendaire sorti par le joueur) qui l'appellent.
+  //
+  //  2. La réaction elle-même est calculée dans `updateNPC()`. C'EST LE POINT
+  //     IMPORTANT POUR LES PERFS : game3d.js ne rappelle `updateNPC()` que pour
+  //     les PNJ retenus par son culling par distance (≤ 24 tuiles, et jamais
+  //     au-delà de `R3.quality.viewDistance`). En nous greffant dessus plutôt
+  //     qu'en refaisant notre propre boucle sur les 18 PNJ, on hérite
+  //     gratuitement de ce culling — et on ne teste jamais un PNJ invisible.
+  //
+  //  3. Aucune allocation dans la boucle de rendu : l'état par PNJ
+  //     (`userData.reac`) est créé à la construction, les 4 cases de légendaires
+  //     sont créées au chargement du module, et rien n'est créé par image. Seule
+  //     exception assumée : la bulle 3D d'un PNJ, construite la toute première
+  //     fois qu'il s'étonne (au plus une fois par PNJ pour la partie entière) —
+  //     la construire d'avance pour 18 PNJ coûterait plus cher, pour des bulles
+  //     que la plupart ne montreront jamais.
+  //
+  //  4. Le vrai piège, c'est le spam. Trois verrous :
+  //       · une réplique toutes les 6 s AU PLUS, tous PNJ confondus ;
+  //       · un PNJ ne re-réagit pas au MÊME légendaire avant 30 s ;
+  //       · la réaction tient 3 s après l'éloignement, puis retombe en douceur.
+  // ---------------------------------------------------------------------------
+
+  const RAYON_VUE2 = 20 * 20;     // 20 tuiles : le PNJ se retourne et s'étonne
+  const RAYON_VOIX2 = 8 * 8;      // 8 tuiles : il ose en plus dire quelque chose
+  const DELAI_REPLIQUE = 6;       // s — quota global des répliques
+  const DELAI_MEME_LEGENDE = 30;  // s — avant de re-réagir au même légendaire
+  const RETOMBEE = 3;             // s — la réaction tient encore 3 s puis retombe
+  // Durée de vie d'une case sans rafraîchissement. Volontairement COURTE : elle
+  // s'ajoute à RETOMBEE quand l'appelant s'arrête net, et on ne veut pas que la
+  // réaction traîne bien au-delà des 3 s promises. 1,2 s survit largement à un
+  // appelant qui ne rafraîchit qu'à 10 Hz, ou à quelques images sautées.
+  const LEGENDE_TTL = 1.2;
+  const RECUL = 0.34;             // unités — le fameux « demi-pas » en arrière
+  const Y_BULLE = 1.30;           // hauteur de la bulle au-dessus de la tête
+  // Plafond de bulles affichées en même temps. Une bulle coûte 4 à 5 meshes ;
+  // sans plafond, une place de village entière qui s'étonne d'un coup pourrait
+  // ajouter ~90 draw calls d'un seul coup. Au-delà, les PNJ se retournent et
+  // reculent quand même — c'est la bulle, seule, qui est sacrifiée.
+  const MAX_BULLES = 10;
+
+  // Les trois symboles. Ce sont de vrais emoji : ils servent tels quels d'icône
+  // au toast HTML, et sont modélisés en volume pour la bulle 3D.
+  const SYMBOLES = ['❗', '😮', '✨'];
+
+  // Des répliques COURTES et chaleureuses : Robin a 10 ans, on ne fait jamais
+  // de phrase qu'il devrait relire deux fois. `{nom}` = le nom de l'espèce.
+  const REPLIQUES = [
+    'Regarde ! C’est… c’est un légendaire !',
+    'Je n’y crois pas…',
+    'Toute ma vie j’ai attendu ça !',
+    'Oh ! Qu’il est grand !',
+    'J’en ai la chair de poule…',
+    'Un légendaire ! Ici, chez nous !',
+    'Mes grands-parents en parlaient… c’est donc vrai !',
+    'Wouah… il brille !',
+    'Je vais raconter ça à tout le village !',
+    'Pince-moi, je rêve !',
+    'Doucement… ne l’effraie pas.',
+    'C’est {nom} ! Le vrai {nom} !',
+    'Alors {nom} existe vraiment…',
+  ];
+
+  // Les 4 cases de légendaires. Quatre suffisent très largement (le jeu n'en
+  // affiche qu'un sauvage à la fois, plus éventuellement le compagnon), et un
+  // tableau de taille fixe garantit qu'on n'alloue jamais rien.
+  const _legendes = [];
+  for (let i = 0; i < 4; i++) _legendes.push({ actif: false, x: 0, z: 0, nom: '', expire: 0 });
+  let _nbLegendes = 0;
+
+  let _dernierToast = -1e9;   // date de la dernière réplique, tous PNJ confondus
+  let _purgeT = -1;           // dernière image où les cases ont été purgées
+  let _bullesFrame = 0;       // bulles déjà affichées dans l'image en cours
+  let _camYaw = 0;            // orientation caméra, pour tourner les bulles vers nous
+  let _camYawT = -1;
+
+  /** État d'étonnement d'un PNJ. Créé une seule fois, à la construction. */
+  function etatReaction(npc) {
+    // Le symbole est tiré au hasard mais STABLE pour ce PNJ : il est déduit de
+    // sa position sur la carte, donc il ne change pas d'une image à l'autre ni
+    // même d'une partie à l'autre.
+    const h = R3.hash((npc && npc.x) || 0, (npc && npc.y) || 0);
+    return {
+      amp: 0,             // 0 = au repos, 1 = pleinement étonné
+      jusqua: 0,          // date jusqu'à laquelle la réaction tient
+      cibleX: 0, cibleZ: 0,
+      baseRot: 0,         // orientation de repos (suivie tant que amp vaut 0)
+      sym: Math.min(2, Math.floor(h * 3)) | 0,
+      bulle: null,
+      dernierNom: '',     // dernier légendaire ayant déclenché ce PNJ
+      dernierT: -1e9,
+      nouveau: false,     // vrai à la première image d'une nouvelle réaction
+      pose: false,        // vrai tant que la pose d'étonnement est appliquée
+      motIdx: Math.floor(h * REPLIQUES.length) % REPLIQUES.length,
+    };
+  }
+
+  /**
+   * Retire les cases périmées. Appelée depuis `updateNPC()` mais protégée par
+   * la date de l'image : elle ne travaille qu'une fois par image, quel que soit
+   * le nombre de PNJ.
+   */
+  function purgerLegendes(t) {
+    if (t === _purgeT) return;
+    _purgeT = t;
+    _bullesFrame = 0;   // nouvelle image : le plafond de bulles repart de zéro
+    for (let i = 0; i < _legendes.length; i++) {
+      const L = _legendes[i];
+      if (L.actif && t > L.expire) { L.actif = false; _nbLegendes--; }
+    }
+    if (_nbLegendes < 0) _nbLegendes = 0;
+  }
+
+  /**
+   * Orientation de la caméra, relue AU PLUS une fois par image et seulement
+   * quand une bulle est réellement affichée (`frame()` fabrique un objet : hors
+   * de question de l'appeler par PNJ). Si camera3d.js manque, on garde 0, ce
+   * qui oriente les bulles vers +z — là où se tient la caméra d'aventure.
+   */
+  function majCamYaw(t) {
+    if (t === _camYawT) return;
+    _camYawT = t;
+    const cam = R3.get('camera');
+    if (!cam || typeof cam.frame !== 'function') { _camYaw = 0; return; }
+    try {
+      const f = cam.frame();
+      _camYaw = (f && isFinite(f.yaw)) ? f.yaw : 0;
+    } catch (e) { _camYaw = 0; }
+  }
+
+  // ---------------------------------------------------------------------------
+  // LA BULLE — pastille blanche + petite queue vers la tête + symbole en volume.
+  // 4 à 5 meshes, sans ombre : c'est une icône, pas un objet du monde.
+  // ---------------------------------------------------------------------------
+  function construireBulle(sym) {
+    const blanc = { rough: 0.55, emissive: '#ffffff', emissiveIntensity: 0.30 };
+    const g = new THREE.Group();
+    g.add(R3.ellipsoid(0.195, 0.160, 0.105, '#fdfdff', 0, 0, 0, blanc));
+
+    // Queue de bulle : un cône retourné qui pointe vers la tête du PNJ.
+    const queue = R3.cone(0.058, 0.105, '#fdfdff', 0, -0.190, 0.012, Object.assign({ seg: 8 }, blanc));
+    queue.rotation.x = Math.PI;
+    g.add(queue);
+
+    if (sym === 1) {
+      // 😮 — deux gros yeux ronds et une bouche en « o ».
+      g.add(R3.sphere(0.027, '#1a1c2c', 0.063, 0.048, 0.082, { seg: 8 }));
+      g.add(R3.sphere(0.027, '#1a1c2c', -0.063, 0.048, 0.082, { seg: 8 }));
+      const bouche = R3.torus(0.040, 0.016, '#1a1c2c', 0, -0.052, 0.080, { seg: 12 });
+      g.add(bouche);
+    } else if (sym === 2) {
+      // ✨ — une grande étincelle dorée et une petite en retrait.
+      g.add(R3.star(4, 0.100, 0.026, 0.030, '#ffcd75', -0.020, 0.010, 0.070, { rough: 0.4, metal: 0.2 }));
+      g.add(R3.star(4, 0.048, 0.012, 0.022, '#fff2b0', 0.088, -0.062, 0.070, { rough: 0.4, metal: 0.2 }));
+    } else {
+      // ❗ — la barre et le point, en rouge franc, lisibles de loin.
+      g.add(R3.box(0.048, 0.118, 0.048, '#e43b44', 0, 0.032, 0.078));
+      g.add(R3.box(0.048, 0.048, 0.048, '#e43b44', 0, -0.062, 0.078));
+    }
+
+    R3.noShadow(g);
+    g.position.set(0, Y_BULLE, 0);
+    return g;
+  }
+
+  /** Prononce une réplique via le HUD. Jamais bloquant si le HUD manque. */
+  function direReplique(re, nom) {
+    const hud = R3.get('hud');
+    if (!hud || typeof hud.toast !== 'function') return;
+    // On avance dans la liste : deux PNJ voisins ne disent pas la même chose.
+    let phrase = REPLIQUES[re.motIdx % REPLIQUES.length];
+    re.motIdx = (re.motIdx + 1) % REPLIQUES.length;
+    if (phrase.indexOf('{nom}') >= 0) {
+      // Sans nom d'espèce, la phrase à trous n'aurait aucun sens : on décale.
+      if (!nom) phrase = REPLIQUES[re.motIdx % REPLIQUES.length].replace(/\{nom\}/g, 'lui');
+      else phrase = phrase.replace(/\{nom\}/g, nom);
+    }
+    try { hud.toast(phrase, SYMBOLES[re.sym] || '❗'); } catch (e) { /* le HUD n'est jamais bloquant */ }
+  }
+
+  /**
+   * Cœur de la réaction, appelé pour CHAQUE PNJ que le culling de game3d.js a
+   * retenu. Sortie immédiate quand il n'y a ni légendaire dans le monde ni
+   * réaction en cours : c'est le cas 99 % du temps, et ça coûte deux tests.
+   */
+  function majEtonnement(g, t) {
+    const ud = g.userData;
+    const re = ud.reac;
+    if (!re) return;
+
+    // Tant que le PNJ est au repos, on mémorise son orientation : c'est
+    // game3d.js qui la pose (au placement ET à chaque changement de région),
+    // donc on ne peut pas la figer à la construction.
+    if (re.amp === 0) re.baseRot = g.rotation.y;
+    if (re.amp === 0 && _nbLegendes === 0) return;
+
+    purgerLegendes(t);
+
+    // --- quel légendaire, et à quelle distance ? ------------------------------
+    let idx = -1, meilleur = 1e9;
+    for (let i = 0; i < _legendes.length; i++) {
+      const L = _legendes[i];
+      if (!L.actif) continue;
+      const dx = L.x - g.position.x;
+      const dz = L.z - g.position.z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < meilleur) { meilleur = d2; idx = i; }
+    }
+
+    // --- faut-il (re)lancer une réaction ? ------------------------------------
+    if (idx >= 0 && meilleur <= RAYON_VUE2) {
+      const L = _legendes[idx];
+      let autorise = true;
+      if (t >= re.jusqua) {
+        // La réaction précédente est retombée : c'est une NOUVELLE réaction, et
+        // c'est là — et seulement là — que joue le verrou des 30 s.
+        if (L.nom === re.dernierNom && (t - re.dernierT) < DELAI_MEME_LEGENDE) autorise = false;
+        else { re.dernierNom = L.nom; re.dernierT = t; re.nouveau = true; }
+      }
+      if (autorise) {
+        re.jusqua = t + RETOMBEE;
+        re.cibleX = L.x;
+        re.cibleZ = L.z;
+        // La réplique n'est tentée QUE de près. Si le PNJ a repéré le
+        // légendaire de loin, `nouveau` reste armé : il parlera s'il se
+        // rapproche. En revanche, une fois à portée de voix, il consomme sa
+        // chance — quota passé ou non — pour qu'une seule phrase sorte par
+        // réaction, et qu'on n'ait pas une salve dès que le quota s'ouvre.
+        if (re.nouveau && meilleur <= RAYON_VOIX2) {
+          if ((t - _dernierToast) >= DELAI_REPLIQUE) {
+            _dernierToast = t;
+            direReplique(re, L.nom);
+          }
+          re.nouveau = false;
+        }
+      }
+    }
+
+    // --- montée / retombée ----------------------------------------------------
+    const dt = (R3.clock && R3.clock.dt) || 0.016;
+    const vise = (t < re.jusqua) ? 1 : 0;
+    re.amp = R3.damp(re.amp, vise, vise ? 0.10 : 0.62, dt);
+    // On force le zéro exact : c'est ce qui rend la sortie immédiate possible à
+    // l'image suivante, ET ce qui garantit une dernière passe à amp = 0 qui
+    // remet proprement le recul, les yeux et la bulle à leur état de repos.
+    if (vise === 0 && re.amp < 0.0015) re.amp = 0;
+    const a = re.amp;
+    if (a === 0 && !re.pose) {
+      // Rien n'est déplacé sur ce PNJ : rien à remettre en place.
+      g.rotation.y = re.baseRot;
+      return;
+    }
+    // `pose` retombe à faux APRÈS la passe à amp = 0, celle qui remet le recul,
+    // les bras et les yeux exactement à leur valeur de repos.
+    re.pose = (a > 0);
+
+    // --- il se tourne vers le légendaire --------------------------------------
+    const vx = re.cibleX - g.position.x;
+    const vz = re.cibleZ - g.position.z;
+    if ((vx * vx + vz * vz) > 0.04) {
+      // Si le légendaire lui marche littéralement dessus, atan2(0, 0) vaudrait 0
+      // et le PNJ pivoterait n'importe où : dans ce cas on le laisse tranquille,
+      // il recule et s'étonne sans se retourner.
+      const vers = Math.atan2(vx, vz);
+      let d = vers - re.baseRot;
+      d = Math.atan2(Math.sin(d), Math.cos(d));   // le plus court chemin
+      g.rotation.y = re.baseRot + d * a;
+    } else {
+      g.rotation.y = re.baseRot;
+    }
+
+    // --- il recule d'un demi-pas ----------------------------------------------
+    const r = ud.rig;
+    if (r) {
+      // Le modèle regarde +z : reculer, une fois tourné vers le légendaire,
+      // c'est simplement glisser en -z dans son propre repère.
+      r.rig.position.z = -RECUL * a;
+      r.rig.position.y += Math.abs(Math.sin(t * 7.5 + ud.phase)) * 0.016 * a;  // il tremblote
+
+      // Buste rejeté en arrière, tête levée vers la créature.
+      r.torse.rotation.x = r.baseTorseX - 0.24 * a;
+      r.torse.rotation.y *= (1 - a);
+      r.tete.rotation.x = r.baseTeteX - 0.34 * a;
+      r.tete.rotation.y *= (1 - a);
+      // Les bras se lèvent devant lui, comme pour se protéger les yeux.
+      r.brasD.rotation.x = r.baseBrasX - 1.05 * a;
+      r.brasG.rotation.x = r.baseBrasX - 1.05 * a;
+      r.brasD.rotation.z = r.baseBrasZ + 0.42 * a;
+      r.brasG.rotation.z = -(r.baseBrasZ + 0.42 * a);
+      // Yeux écarquillés (le clignement reste multiplié, donc préservé).
+      if (r.yeux) {
+        r.yeux.scale.y *= (1 + 0.45 * a);
+        r.yeux.scale.x = 1 + 0.18 * a;
+      }
+    }
+
+    // --- la bulle au-dessus de la tête ----------------------------------------
+    if (a > 0.02 && _bullesFrame < MAX_BULLES) {
+      _bullesFrame++;
+      if (!re.bulle) {
+        try {
+          re.bulle = construireBulle(re.sym);
+          g.add(re.bulle);
+        } catch (e) { re.bulle = null; }
+      }
+      if (re.bulle) {
+        majCamYaw(t);
+        re.bulle.visible = true;
+        // Un petit rebond d'apparition, puis un flottement tranquille.
+        const pop = R3.easeOut(Math.min(1, a * 1.15));
+        re.bulle.scale.setScalar(pop * (1 + Math.sin(t * 3.6 + ud.phase) * 0.05));
+        re.bulle.position.y = Y_BULLE + Math.sin(t * 3.1 + ud.phase) * 0.045;
+        // On annule la rotation du PNJ et on ajoute celle de la caméra : la
+        // bulle nous fait toujours face, même quand il se retourne.
+        re.bulle.rotation.y = _camYaw - g.rotation.y;
+        re.bulle.rotation.z = Math.sin(t * 2.4 + ud.phase) * 0.10;
+      }
+    } else if (re.bulle && re.bulle.visible) {
+      re.bulle.visible = false;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // API D'ÉTONNEMENT — appelée par roamers3d.js et buddy3d.js via l'Intégration.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * « Il y a un légendaire ici, maintenant. »
+   * @param {object} worldPos  THREE.Vector3 (x, y, z) — ou {x, y} en tuiles.
+   * @param {string} speciesName  nom affichable de l'espèce (facultatif).
+   * À APPELER À CHAQUE IMAGE tant que le légendaire est visible : c'est ce qui
+   * permet aux PNJ de suivre un légendaire qui bouge, et de se calmer dès qu'il
+   * s'éloigne. Un appel unique marche aussi, en dégradé (la case vit 1,2 s,
+   * la réaction retombe donc environ 4 s plus tard, sur la dernière position
+   * transmise).
+   */
+  function reactToLegend(worldPos, speciesName) {
+    if (!worldPos) return;
+    const x = Number(worldPos.x);
+    // Tolérance : un Vector3 a un `z`, une tuile du jeu 2D n'a qu'un `y`.
+    let z = Number(worldPos.z);
+    if (!isFinite(z)) z = Number(worldPos.y);
+    if (!isFinite(x) || !isFinite(z)) return;
+
+    const nom = (typeof speciesName === 'string' && speciesName) ? speciesName : '';
+    const t = (R3.clock ? R3.clock.t : 0);
+
+    // Une case par légendaire : d'abord la sienne, sinon une libre, sinon la
+    // plus ancienne. Aucune allocation, le tableau a une taille fixe.
+    let k = -1;
+    for (let i = 0; i < _legendes.length; i++) {
+      if (_legendes[i].actif && _legendes[i].nom === nom) { k = i; break; }
+    }
+    if (k < 0) {
+      for (let i = 0; i < _legendes.length; i++) {
+        if (!_legendes[i].actif) { k = i; break; }
+      }
+    }
+    if (k < 0) {
+      let vieux = 1e18;
+      for (let i = 0; i < _legendes.length; i++) {
+        if (_legendes[i].expire < vieux) { vieux = _legendes[i].expire; k = i; }
+      }
+    }
+    if (k < 0) return;
+
+    const L = _legendes[k];
+    if (!L.actif) { L.actif = true; _nbLegendes++; }
+    L.x = x;
+    L.z = z;
+    L.nom = nom;
+    L.expire = t + LEGENDE_TTL;
+  }
+
+  /**
+   * Tout le monde se calme : plus aucun légendaire en vue, les PNJ reprennent
+   * leur pose. À appeler quand le légendaire disparaît, en entrant en combat,
+   * ou en changeant de région.
+   */
+  function clearReactions() {
+    for (let i = 0; i < _legendes.length; i++) {
+      _legendes[i].actif = false;
+      _legendes[i].nom = '';
+      _legendes[i].expire = 0;
+    }
+    _nbLegendes = 0;
+    _dernierToast = -1e9;
+    _purgeT = -1;
+
+    for (let i = 0; i < _acteurs.length; i++) {
+      const g = _acteurs[i];
+      const re = g.userData && g.userData.reac;
+      if (!re) continue;
+      re.amp = 0;
+      re.jusqua = 0;
+      re.nouveau = false;
+      re.pose = false;
+      // On NE remet PAS dernierNom/dernierT à zéro : le verrou des 30 s doit
+      // survivre à un aller-retour en combat, sinon on retomberait dans le spam.
+      g.rotation.y = re.baseRot;
+      const r = g.userData.rig;
+      if (r) {
+        r.rig.position.z = 0;
+        // `updateNPC()` ne réécrit jamais le rotation.z des bras : à nous de le
+        // remettre, sinon les PNJ garderaient les bras en l'air.
+        r.brasD.rotation.z = r.baseBrasZ;
+        r.brasG.rotation.z = -r.baseBrasZ;
+        if (r.yeux) r.yeux.scale.set(1, 1, 1);
+      }
+      if (re.bulle) re.bulle.visible = false;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -689,5 +1123,8 @@
     // Pratique pour game3d.js : la liste des PNJ posés dans le monde.
     get list() { return _pnjs; },
     ANGLE_DIR: ANGLE_DIR,
+    // §10 — l'étonnement devant un légendaire (roamers3d.js et buddy3d.js).
+    reactToLegend: reactToLegend,
+    clearReactions: clearReactions,
   });
 })();
