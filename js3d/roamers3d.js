@@ -70,6 +70,29 @@
   function actorsApi() { return R3.get('actors') || null; }
   function hudApi() { return R3.get('hud') || null; }
 
+  /**
+   * Un bruitage, jamais bloquant. Deux catalogues dans cet ordre : l'extension
+   * `js3d/sfx3d.js` (sons propres à la 3D — 'legendary'), puis les neuf sons
+   * de `js/audio.js`, que le contrat gèle. `play()` renvoie false quand le nom
+   * ne lui appartient pas. Même helper que dans game3d.js et battle3d.js : ce
+   * module-ci n'avait AUCUN accès à l'audio en dehors du cri de légendaire.
+   * Renvoie true si un son est bien sorti — de quoi enchaîner sur un son de
+   * repli quand l'extension manque.
+   */
+  function sfx(name) {
+    try {
+      var s = R3.get('sfx');
+      if (s && s.play && s.play(name)) return true;
+    } catch (e) { /* extension indisponible : on tente le catalogue d'origine */ }
+    try {
+      if (typeof Audio_ !== 'undefined' && Audio_.sfx && Audio_.sfx[name]) {
+        Audio_.sfx[name]();
+        return true;
+      }
+    } catch (e) { /* audio indisponible : le jeu continue */ }
+    return false;
+  }
+
   /** Petit bandeau d'information. Le HUD peut manquer : on ne bloque jamais. */
   function toast(text, icon) {
     var hud = hudApi();
@@ -442,15 +465,13 @@
     _legendary = ro;
     _roamers.push(ro);
 
-    // Petit signal sonore, facultatif : le contrat ne garantit le nom d'aucune
-    // fonction pour « un cri de légendaire ». On tente les plus probables et
-    // on abandonne en silence si rien ne correspond (§1.7 : jamais bloquant).
-    try {
-      if (typeof Audio_ !== 'undefined' && Audio_ && Audio_.sfx) {
-        var sfx = Audio_.sfx.legendary || Audio_.sfx.encounter || Audio_.sfx.levelUp || Audio_.sfx.catch_;
-        if (typeof sfx === 'function') sfx();
-      }
-    } catch (e) { /* le son est un bonus, jamais bloquant */ }
+    // Le cri du légendaire. Ce son n'existait nulle part : le code tentait
+    // `legendary || encounter || levelUp || catch_` et retombait toujours sur
+    // `encounter`, le jingle des rencontres ordinaires — le moment le plus rare
+    // du jeu sonnait comme n'importe quelle rencontre. `sfx3d.js` fournit
+    // maintenant un vrai 'legendary' (grondement grave puis fanfare) ; si
+    // l'extension manque, on garde l'ancien repli plutôt que le silence.
+    if (!sfx('legendary')) sfx('encounter');
 
     // §16 : il ne reste que 90 secondes. Sans un mot, cette limite est
     // invisible — l'enfant traverse la région, arrive à l'autel vide et ne

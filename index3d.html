@@ -153,6 +153,13 @@
        js/audio.js, que Robin trouvait « usante à la longue ». -->
   <script src="js3d/music3d.js"></script>
 
+  <!-- Les bruitages que la 3D appelle et que js/audio.js n'a jamais eus (le
+       son de soin, le cri du légendaire). Ce module ÉTEND le catalogue sans
+       toucher à js/audio.js, que le contrat gèle. Comme tous les modules, il
+       est trouvé à la volée par `R3.get('sfx')` : sa seule contrainte d'ordre
+       est d'être chargé après core3d.js. -->
+  <script src="js3d/sfx3d.js"></script>
+
   <!-- Téracristallisation, interface, combat, contrôleur.
        tera3d AVANT hud3d : le bouton Téra du menu de combat lit son état. -->
   <script src="js3d/tera3d.js"></script>

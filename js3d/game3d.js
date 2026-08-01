@@ -237,8 +237,21 @@
     });
   }
 
-  /** Les bruitages du jeu 2D, sans jamais planter si Audio_ manque. */
+  /**
+   * Les bruitages, sans jamais planter si l'audio manque.
+   *
+   * DEUX catalogues, dans cet ordre : celui de `js3d/sfx3d.js` (les sons que
+   * la 3D appelait sans qu'ils existent — 'heal', 'legendary'), puis celui de
+   * `js/audio.js`, que le contrat gèle. `sfx3d.play()` renvoie false quand le
+   * nom ne lui appartient pas : les neuf sons d'origine passent donc au
+   * travers sans détour. C'est LE point de passage unique des bruitages de
+   * game3d — un son ajouté à sfx3d.js est jouable d'ici sans autre changement.
+   */
   function sfx(name) {
+    try {
+      const s = mod('sfx');
+      if (s && s.play && s.play(name)) return;
+    } catch (e) { /* extension indisponible : on tente le catalogue d'origine */ }
     try { if (typeof Audio_ !== 'undefined' && Audio_.sfx && Audio_.sfx[name]) Audio_.sfx[name](); }
     catch (e) { /* audio indisponible : le jeu continue */ }
   }
@@ -733,9 +746,12 @@
   function toggleMute() {
     let muted = false;
     try { muted = Audio_.toggleMute(); } catch (e) { return; }
-    // Le bouton ♪ doit couper les DEUX sources : les bruitages de js/audio.js
-    // et la musique de music3d.js, qui a son propre contexte audio.
+    // Le bouton ♪ doit couper les TROIS sources, chacune ayant son propre
+    // contexte audio : les bruitages de js/audio.js (ci-dessus), la musique de
+    // music3d.js, et les bruitages ajoutés par sfx3d.js. En oublier une, c'est
+    // un jeu qu'on croit muet et qui continue de faire du bruit.
     call('music', 'setMuted', [muted]);
+    call('sfx', 'setMuted', [muted]);
     updateMuteButton(muted);
     call('hud', 'setMuted', [muted]);
   }
@@ -3419,8 +3435,13 @@
     // Le contexte audio ne peut naître qu'après un geste de l'utilisateur :
     // le clic sur « Commencer l'aventure ! » est le bon moment.
     call('music', 'init', []);
-    call('music', 'setMuted', [
-      (typeof Audio_ !== 'undefined' && Audio_.isMuted && Audio_.isMuted()) || false]);
+    const dejaMuet = (typeof Audio_ !== 'undefined' && Audio_.isMuted && Audio_.isMuted()) || false;
+    call('music', 'setMuted', [dejaMuet]);
+    // Même chose pour l'extension de bruitages : elle a son propre contexte,
+    // donc son propre réveil et son propre silence à régler (`Audio_.isMuted()`
+    // reste la vérité unique).
+    call('sfx', 'init', []);
+    call('sfx', 'setMuted', [dejaMuet]);
 
     if (playerTeamList().length > 0) launchWorld();   // partie déjà commencée
     else { state.screen = 'starter'; openStarterSelection(); }

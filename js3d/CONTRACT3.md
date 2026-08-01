@@ -577,8 +577,13 @@ Les nouveaux modules s'insèrent ainsi :
 …  js3d/creatures3d.p1..p5.js
 …  js3d/legendlib3d.js  js3d/legend3d.p1..p3.js
 …  js3d/actors3d.js  js3d/roamers3d.js  js3d/buddy3d.js
+…  js3d/music3d.js   js3d/sfx3d.js
 …  js3d/tera3d.js    js3d/hud3d.js      js3d/battle3d.js   js3d/game3d.js
 ```
+
+(`sfx3d.js` étend le catalogue de bruitages de `js/audio.js` — voir §20. Comme tous les
+modules, il est trouvé à la volée par `R3.get('sfx')` : sa seule contrainte d'ordre est
+d'être chargé après `core3d.js`.)
 
 Règle : un module se charge **après** ceux dont il lit les données au chargement, et
 **avant** ceux qui l'interrogent. En cas de doute, plus tôt — grâce au repli du §1.4,
@@ -864,3 +869,65 @@ invisibles** pour qui a désactivé les animations. `.toast` y est désormais ex
 Relevés pour un lecteur de 10 ans : `#controls-hint` 11 → 13 px, `.wn-sub` (sous-titre des
 régions, où s'écrit l'avertissement de niveau du dirigeable) 10 → 12 px, `.map-legend`
 11 → 12 px, `.mk-label` 10,5 → 11,5 px. Tout l'écran d'aide est à 13 px minimum.
+
+---
+
+## 20. LES SONS — `js3d/sfx3d.js` *(nouveau module, 2026-08-01, corrections 1.7 et 2.6)*
+
+### 20.1 Pourquoi un module de plus
+
+Le catalogue de bruitages est l'objet `SFX` de `js/audio.js` et contient **neuf** sons, ni
+un de plus : `footstep`, `encounter`, `throwBall`, `hit`, `shake`, `catch`, `escape`,
+`menu`, `rare`. La 3D en appelait deux qui n'ont jamais existé — et **en silence total** :
+le helper `sfx(nom)` teste `Audio_.sfx[nom]` avant d'appeler, un nom inconnu ne produit
+donc ni son, ni erreur, ni avertissement. Un son fantôme ne se voit jamais.
+
+`js/audio.js` étant gelé par le §1 règle 2, le catalogue s'ÉTEND depuis
+`js3d/sfx3d.js` : `R3.register('sfx', { init, play, has, names, setMuted, isMuted })`.
+
+```js
+R3.get('sfx').play(nom)   // -> true si CE module a pris le son en charge,
+                          //    false si le nom ne lui appartient pas
+```
+
+Sons ajoutés : **`heal`** (objet utilisé hors combat, `useItemOnMon` de game3d.js) et
+**`legendary`** (apparition à l'autel, `roamers3d.js`). Pour en ajouter un : une entrée
+dans l'objet `SONS` de sfx3d.js, et rien d'autre — il est aussitôt jouable partout.
+
+### 20.2 Le motif d'appel, identique dans les trois modules
+
+`game3d.js`, `roamers3d.js` et `battle3d.js` ont chacun un helper privé `sfx(nom)` qui
+consulte **l'extension d'abord, `js/audio.js` ensuite** :
+
+```js
+var s = R3.get('sfx');
+if (s && s.play && s.play(nom)) return;                       // son 3D
+if (Audio_.sfx && Audio_.sfx[nom]) Audio_.sfx[nom]();         // son 2D
+```
+
+`play()` renvoyant `false` pour les neuf sons d'origine, ils passent au travers sans
+détour. Avant cette correction, `battle3d.js` et `roamers3d.js` n'avaient **aucun** accès
+à l'audio : toute la mise en scène sonore venait de game3d.js, qui ne connaît pas le
+détail des animations. C'est ce trou qui rendait les secousses de la Ball muettes.
+
+### 20.3 PIÈGE — le bouton ♪ coupe TROIS sources
+
+`js/audio.js` garde son `AudioContext` et ses gains pour lui (variables privées) : ni
+`music3d.js` ni `sfx3d.js` ne peuvent s'y brancher, chacun a donc **son propre contexte**.
+`toggleMute()` de game3d.js doit couper les trois, et `startGame()` en réveiller trois :
+
+```js
+Audio_.toggleMute();  call('music','setMuted',[muted]);  call('sfx','setMuted',[muted]);
+```
+
+En oublier une, c'est un jeu qu'on croit muet et qui continue de faire du bruit.
+`Audio_.isMuted()` reste **la vérité unique** de l'état muet (le HUD et le bouton la
+lisent) ; les deux autres modules ne font que suivre.
+
+### 20.5 Ce qui reste muet, volontairement
+
+- Le repli de `hud3d.js` (~l.1826) qui appelle `shop.useFrom()` directement quand
+  `window.GAME3D` manque ne joue aucun son. Ce chemin n'existe que si le contrôleur est
+  absent, c'est-à-dire si le jeu est déjà cassé.
+- `levelUp` et `catch_`, cités par l'ancienne chaîne de repli de roamers3d, n'ont pas été
+  créés : plus personne ne les demande. Une montée de niveau reste sans bruitage propre.
