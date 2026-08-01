@@ -2080,7 +2080,11 @@
     let r = null;
     if (ro.aimed) {
       r = safeCall('roamers.aimed', function () {
-        return ro.aimed(p.worldX, p.worldZ, p.dir, BALL_RANGE);
+        // En vue subjective on vise CE QU'ON REGARDE, pas la cardinale la
+        // plus proche : à 45°, la créature pile en face pouvait sortir du
+        // cône. Ailleurs, le regard EST cardinal, on garde `p.dir`.
+        const cap = isFpsView() ? fpsYaw() : p.dir;
+        return ro.aimed(p.worldX, p.worldZ, cap, BALL_RANGE);
       }) || null;
     }
     if (!r && ro.nearest) {

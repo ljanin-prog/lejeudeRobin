@@ -1425,6 +1425,9 @@ html, body {
   box-shadow: 0 0 0 4px rgba(252, 236, 108, .28), var(--ombre-douce) !important;
   transform: translate(-50%, -50%) translateY(-3px) !important;
 }
+/* Destination très au-dessus du niveau de l'équipe, en attente d'un second
+   clic. On ne bloque rien : on rend l'hésitation visible. */
+.world-node.doute { border-color: #ffd166 !important; box-shadow: 0 0 0 4px rgba(255, 209, 102, .25), var(--ombre-douce) !important; }
 .world-node.visited { border-color: rgba(126, 224, 143, .7) !important; }
 .world-node.current { border-color: var(--jaune-clair) !important; box-shadow: 0 0 0 4px rgba(252, 236, 108, .3) !important; }
 .world-node.locked { opacity: .5; filter: grayscale(.5); cursor: not-allowed; }

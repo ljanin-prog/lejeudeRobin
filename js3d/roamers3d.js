@@ -1007,10 +1007,21 @@
 
   function list() { return _roamers.slice(); }
 
-  /** Le roamer visé par le joueur : dans le cône de son regard, à portée. */
+  /**
+   * Le roamer visé par le joueur : dans le cône de son regard, à portée.
+   * @param {string|number} dir  direction cardinale ('up'…'right') OU angle de
+   *   vue libre en radians. En vue subjective, le regard n'est justement PAS
+   *   cardinal : viser à la cardinale la plus proche pouvait écarter la
+   *   créature qu'on avait pile en face. ⚠️ Un nombre tombait silencieusement
+   *   sur `DIR_VEC.down` ici — d'où ce test explicite.
+   *   Convention d'axes du contrat §1.4 : 'down' (yaw 0) = +z, 'right'
+   *   (yaw +π/2) = +x, donc fx = sin(a) et fz = cos(a).
+   */
   function aimed(px, pz, dir, range) {
     var r = (typeof range === 'number' && isFinite(range)) ? range : 2.2;
-    var dv = DIR_VEC[dir] || DIR_VEC.down;
+    var dv = (typeof dir === 'number' && isFinite(dir))
+      ? { dx: Math.sin(dir), dy: Math.cos(dir) }
+      : (DIR_VEC[dir] || DIR_VEC.down);
     var fx = dv.dx, fz = dv.dy;   // vecteur unitaire du regard, dans le plan (x,z)
     var best = null, bestScore = -1;
     for (var i = 0; i < _roamers.length; i++) {

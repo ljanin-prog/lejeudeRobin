@@ -720,6 +720,14 @@ Vérifié en jeu : sur quatre caps, le cap réel égale le cap visé **au degré
 quatrième était contre un mur, d'où le glissement) ; en tournant tout en avançant, la
 trajectoire est un arc régulier — segments de 0,72 à 0,73 unité, plus aucun escalier.
 
+**Amendement 2026-08-01 (correction 2.10) — on VISE aussi dans l'axe du regard.** La marche
+suivait l'angle libre depuis le début, mais la visée, elle, restait cardinale :
+`aimedRoamer()` passait `p.dir` à `roamers.aimed()`. En regardant à 45°, on ne visait donc
+pas ce qu'on regardait — et le réticule non plus. La règle 1 vaut maintenant pour les deux :
+`aimedRoamer()` passe `fpsYaw()` dès que `isFpsView()`, et `roamers.aimed()` accepte un
+angle autant qu'une cardinale (détail et pièges dans le §16 de v2). Hors vue subjective,
+rien ne change : le regard y EST cardinal.
+
 ---
 
 ## 18. TROIS CORRECTIONS APRÈS LES TESTS DE ROBIN — 2026-07-31 (3)

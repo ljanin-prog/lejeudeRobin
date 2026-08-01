@@ -2625,7 +2625,10 @@
       btn.style.top = pos.y + '%';
       el('span', 'wn-dot', btn, st.icon || '📍');
       el('span', 'wn-label', btn, st.label || regionName(id));
-      if (st.sub) el('span', 'wn-sub', btn, st.sub);
+      // `subAlerte` : le sous-titre passe en jaune quand il porte un
+      // avertissement (écart de niveau du dirigeable). Optionnel — la carte du
+      // monde ne s'en sert pas.
+      if (st.sub) el('span', 'wn-sub' + (st.subAlerte ? ' alerte' : ''), btn, st.sub);
       if (st.disabled) btn.disabled = true;
       btn.addEventListener('click', function () { if (onClick) onClick(id, st); });
       nodes.push({ id: id, btn: btn, state: st });
@@ -2658,27 +2661,88 @@
    * @param {string} current        id de région courante
    * @param {function} onChoose     onChoose(regionId) — appelé au clic sur un port débloqué
    */
+  /**
+   * Le niveau de l'équipe, tel qu'on le compare au niveau conseillé d'une
+   * région : celui de la créature LA PLUS FORTE. On prend le maximum et non
+   * la moyenne pour avertir le moins souvent possible — le but est de prévenir
+   * Robin d'un vrai gouffre, pas de commenter chaque voyage.
+   */
+  function niveauEquipe() {
+    let n = 0;
+    try {
+      const api = TEAM();
+      const l = (api && Array.isArray(api.team)) ? api.team : [];
+      for (let i = 0; i < l.length; i++) {
+        if (l[i] && typeof l[i].level === 'number' && l[i].level > n) n = l[i].level;
+      }
+    } catch (e) { /* dégradation silencieuse */ }
+    return n;
+  }
+
+  // Au-delà de cet écart, on prévient. Une région se joue confortablement
+  // quelques niveaux en dessous du conseil : c'est le gouffre qu'on signale.
+  const ECART_ALERTE = 10;
+
+  // Destination qui attend une seconde validation (voir plus bas), et l'heure
+  // à laquelle on l'a demandée : garder Espace enfoncé rejoue la touche toutes
+  // les ~30 ms, et l'avertissement serait balayé avant d'avoir été lu.
+  let airshipPending = null;
+  let airshipPendingAt = 0;
+  const DOUTE_DELAI = 0.5;   // secondes avant qu'un second appui compte
+
   function openAirshipMenu(ports, current, onChoose) {
     if (!ui.airshipOverlay) return;
     const st = gameState();
     const visited = (st && st.visitedRegions) || {};
     const list = normalizePorts(ports, current, visited);
+    const monNiveau = niveauEquipe();
+    airshipPending = null;
 
     const states = {};
     list.forEach(function (p) {
       const vu = (p.visited !== undefined) ? !!p.visited : !!visited[p.regionId];
+      // `p.level` = `def.recommendedLevel`, transmis depuis game3d depuis
+      // toujours mais jamais affiché : rien n'empêchait Robin de filer au
+      // Plateau d'Aurore (Nv 45 conseillé) avec une équipe Nv 12, et de s'y
+      // faire écraser sans avoir été prévenu. On informe, on ne bloque JAMAIS.
+      const conseil = (typeof p.level === 'number' && p.level > 0) ? p.level : 0;
+      const ecart = (conseil && monNiveau) ? (conseil - monNiveau) : 0;
+      const alerte = ecart > ECART_ALERTE;
+      let sub;
+      if (p.current) sub = 'Tu y es';
+      else if (!p.enabled) sub = p.reason || 'À découvrir à pied';
+      else if (conseil) {
+        sub = 'Conseillé : Nv ' + conseil
+          + (monNiveau ? ' · ton équipe : Nv ' + monNiveau : '')
+          + (alerte ? ' ⚠️' : '');
+      } else sub = vu ? p.name : (p.reason || 'Région à découvrir');
       states[p.regionId] = {
         current: p.current, visited: vu, disabled: !p.enabled && !p.current,
         label: p.region || regionName(p.regionId),
-        sub: p.current ? 'Tu y es'
-          : (p.enabled ? (vu ? p.name : (p.reason || 'Région à découvrir'))
-            : (p.reason || 'À découvrir à pied')),
+        sub: sub,
+        subAlerte: alerte,
+        alerte: alerte, conseil: conseil,
         icon: p.current ? '🎈' : (p.enabled ? (vu ? '⚓' : '✨') : '🔒'),
       };
     });
     airshipNodes = buildWorldGrid(ui.airshipGrid, states, function (id, s) {
       if (s.current) { toast('Tu es déjà ici !', '🎈'); return; }
       if (s.disabled) { toast('Il faut y être allé à pied avant !', '🚶'); return; }
+      // Écart de niveau : on demande une seconde confirmation, sur place, en
+      // recliquant (ou en revalidant au clavier — `confirmAirship()` passe par
+      // le même `btn.click()`). Rien n'est interdit : le voyage part au second
+      // appui, et Robin sait dans quoi il s'engage.
+      if (s.alerte && (airshipPending !== id || (now() - airshipPendingAt) < DOUTE_DELAI)) {
+        if (airshipPending !== id) {
+          airshipPending = id;
+          airshipPendingAt = now();
+          toast('Là-bas, les créatures sont vers le Nv ' + s.conseil
+            + ' — c\'est costaud pour ton équipe. Reclique pour y aller quand même !', '⚠️');
+          marqueAirshipDoute(id);
+        }
+        return;
+      }
+      airshipPending = null;
       closeAirshipMenu();
       if (onChoose) onChoose(id);
     });
@@ -2706,6 +2770,30 @@
     return !!(n && n.btn && !n.btn.disabled && !(n.state && n.state.current));
   }
 
+  /**
+   * Écrit l'attente de confirmation SUR la carte, et pas seulement dans un
+   * toast qui va disparaître : un enfant qui hésite trois secondes ne doit pas
+   * se retrouver devant un bouton muet qui, lui, part au clic suivant.
+   * Passer `null` remet tous les sous-titres d'origine.
+   */
+  function marqueAirshipDoute(id) {
+    for (let i = 0; i < airshipNodes.length; i++) {
+      const n = airshipNodes[i];
+      const sub = n.btn.querySelector('.wn-sub');
+      if (!sub) continue;
+      if (n.id === id) {
+        if (n._subOrig === undefined) n._subOrig = sub.textContent;
+        sub.textContent = 'Reclique pour y aller quand même';
+        sub.classList.add('alerte');
+        n.btn.classList.add('doute');
+      } else if (n._subOrig !== undefined) {
+        sub.textContent = n._subOrig;
+        n._subOrig = undefined;
+        n.btn.classList.remove('doute');
+      }
+    }
+  }
+
   /** Déplace le curseur d'un cran, en sautant les régions non atteignables. */
   function moveAirshipCursor(delta) {
     const n = airshipNodes.length;
@@ -2717,6 +2805,14 @@
       if (selectableNode(airshipNodes[i])) break;
     }
     setAirshipCursor(i);
+    // Changer de destination annule la confirmation en attente : sinon
+    // « reclique pour y aller quand même » resterait vrai pour une région
+    // qu'on ne regarde plus.
+    const vise = airshipNodes[airshipCursor];
+    if (airshipPending && (!vise || vise.id !== airshipPending)) {
+      airshipPending = null;
+      marqueAirshipDoute(null);
+    }
   }
 
   function setAirshipCursor(i) {
@@ -2755,7 +2851,11 @@
     });
   }
 
-  function closeAirshipMenu() { hide(ui.airshipOverlay); showCompass(true); }
+  function closeAirshipMenu() {
+    airshipPending = null;
+    hide(ui.airshipOverlay);
+    showCompass(true);
+  }
 
   // ===========================================================================
   //  COLLECTION  (ids historiques conservés : #collection-overlay/-grid)

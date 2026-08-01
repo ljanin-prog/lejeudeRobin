@@ -757,6 +757,8 @@ R3.register('roamers', {
   update(t, dt, px, pz),
   list(),                          // -> [roamer]
   aimed(px, pz, dir, range),       // -> le roamer visé par le joueur, ou null
+                                   // `dir` : cardinale 'up'|'down'|'left'|'right'
+                                   // OU un ANGLE en radians (vue subjective)
   nearest(px, pz, maxDist),
   throwBall(roamer, chance, cb),   // animation de lancer ; cb(result) avec
                                    // result ∈ 'caught' | 'escaped' | 'fled'
@@ -808,6 +810,18 @@ Règles :
   et appelle `setLegendCooldown(altarId, 'caught')` depuis `onCaughtInBattle()` — c'est le
   seul endroit où la capture est certaine. La durée n'est écrite que dans `roamers3d.js` :
   ne la recopiez pas ailleurs.
+- **`aimed()` accepte un ANGLE autant qu'une cardinale** (correction 2.10). En vue
+  subjective le regard n'est justement pas cardinal : à 45°, la créature qu'on avait pile en
+  face pouvait sortir du cône parce que `game3d.js` passait `p.dir`, la cardinale la plus
+  proche. `game3d.aimedRoamer()` passe désormais `fpsYaw()` quand `isFpsView()`, et `p.dir`
+  partout ailleurs. ⚠️ **Un nombre tombait silencieusement sur `DIR_VEC.down`** — on ne peut
+  donc pas se contenter de passer l'angle sans le test explicite
+  `typeof dir === 'number' && isFinite(dir)`. Vecteur du regard : `fx = sin(a)`,
+  `fz = cos(a)`, conformément à la convention d'axes du §1.4 (`'down'` = yaw 0 = +z,
+  `'right'` = yaw +π/2 = +x) — c'est exactement la formule d'`updateFpsMove`, ne la
+  réinventez pas. La signature reste rétro-compatible : une cardinale se comporte comme
+  avant, une cardinale inconnue retombe toujours sur `down`. Cette visée sert AUSSI au
+  réticule (`state.aimed` / `hud.showAimReticle`), qui suit donc le regard lui aussi.
 - `throwBall` : Pokéball 3D lancée en parabole depuis le joueur, atterrissage, aspiration de
   la créature, **3 secousses**, puis gerbe d'étoiles (capture) ou éclat + fuite (échec).
   Reprendre les timings du jeu 2D : lancer 0→600 ms, secousses 600→1800 ms, résultat à 1800 ms.
@@ -1222,6 +1236,23 @@ que ce que l'on voit et que l'on choisit.**
 - Le menu se pilote au clavier : `hud3d.js` expose `setAirshipCursor`,
   `moveAirshipCursor`, `confirmAirship`, `airshipCount`. Sans ça, aucune touche ne
   répondait — pas même Échap — et on restait coincé dans l'écran.
+- **Le niveau conseillé s'affiche, et un grand écart demande confirmation**
+  (correction 2.10). Puisque **toutes** les régions sont atteignables (voir ci-dessus),
+  rien n'empêchait Robin de filer au Plateau d'Aurore (Nv 45 conseillé) avec une équipe
+  Nv 12 et de s'y faire écraser sans avoir été prévenu. La donnée était pourtant
+  transmise depuis toujours et simplement ignorée : `airshipOptions()` pose
+  `level: def.recommendedLevel` et `normalizePorts()` la laisse passer intacte. Chaque
+  destination affiche donc « Conseillé : Nv 45 · ton équipe : Nv 12 ⚠️ » dans son
+  sous-titre (`states[id].sub`, plus `subAlerte` pour la couleur).
+  **On informe, on ne bloque JAMAIS** : au-delà de `ECART_ALERTE = 10` niveaux, le
+  premier clic ne fait qu'avertir (toast + « Reclique pour y aller quand même » écrit sur
+  le bouton), le second part. Le niveau de l'équipe est celui de la créature **la plus
+  forte** — on avertit le moins souvent possible. Une équipe vide ou un niveau conseillé
+  absent n'avertissent pas.
+  Le second appui doit être espacé d'au moins `DOUTE_DELAI = 0,5 s` : `onKeyDown` ne
+  filtre pas `e.repeat`, et garder Espace enfoncé aurait balayé l'avertissement en 30 ms.
+  La confirmation vit dans le `onClick` de `buildWorldGrid` : `confirmAirship()` fait
+  `btn.click()`, elle traverse donc le même chemin sans code en double.
 
 ### 23.5 `gates3d.js` — les repères visibles de loin *(nouveau module)*
 
