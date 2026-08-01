@@ -51,7 +51,11 @@
 
     <!-- Bandeau de biome, compteur, menu de combat et carte : créés par hud3d.js -->
 
+    <!-- `H` est en PREMIER : la barre est en `nowrap` avec `text-overflow:
+         ellipsis`, donc c'est la fin de la ligne qui saute sur un écran étroit
+         — et ce serait justement la touche qui explique toutes les autres. -->
     <p id="controls-hint" class="controls-hint hidden">
+      <strong>H</strong> aide &nbsp;·&nbsp;
       <strong>Flèches</strong> se déplacer &nbsp;·&nbsp;
       <strong>Espace</strong> parler &nbsp;·&nbsp;
       <strong>B</strong> lancer une Ball &nbsp;·&nbsp;
@@ -63,8 +67,7 @@
       <strong>N</strong> carte &nbsp;·&nbsp;
       <strong>T</strong> dirigeable &nbsp;·&nbsp;
       <strong>V</strong> vue (dont FPS) &nbsp;·&nbsp;
-      <strong>M</strong> son &nbsp;·&nbsp;
-      <strong>H</strong> aide
+      <strong>M</strong> son
     </p>
 
   </div>
