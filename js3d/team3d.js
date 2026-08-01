@@ -49,18 +49,27 @@
   // ne sait rien des capacités d'une espèce.
   const FALLBACK_MOVES = ['charge', 'vitesse', 'repos', 'concentration'];
 
-  // Types des 26 créatures d'origine. Sert UNIQUEMENT si `dex3d.js` est absent :
-  // sans cette table, un repli donnerait des types au hasard et la table
-  // d'efficacité renverrait n'importe quoi en plein combat.
+  // Types des 26 créatures d'origine — et d'elles SEULES : les 36 légendaires et
+  // les formes évoluées n'y figurent pas et retombent sur ['plante'].
+  // Sert UNIQUEMENT si `dex3d.js` est absent : sans cette table, un repli
+  // donnerait des types au hasard et la table d'efficacité renverrait n'importe
+  // quoi en plein combat.
+  //
+  // RECOPIÉE MOT POUR MOT du champ `types:` de `BASE_DATA` (dex3d.js), ORDRE
+  // COMPRIS : `types[0]` décide de la couleur de la carte, du type Téra par
+  // défaut et du soin choisi par `dex3d.resolveMoves()`. Onze entrées se
+  // contredisaient avec le dex (lapinou était plante au lieu de terre, miaouche
+  // ombre au lieu de lumière) : le repli fabriquait alors une créature aux
+  // faiblesses inversées. dex3d fait foi, jamais l'inverse (CONTRACT3 §3).
   const FALLBACK_TYPES = {
-    feuillou: ['plante'], petalia: ['plante'], goutella: ['eau'], bullini: ['eau'],
-    etincelo: ['foudre'], meduzia: ['eau'], coralou: ['eau', 'roche'], fluffly: ['air'],
-    glanou: ['plante'], papillon: ['air', 'plante'], cygnik: ['air', 'eau'],
-    lotira: ['plante', 'eau'], lapinou: ['plante'], hibouche: ['air'],
-    etoilamer: ['eau'], crabilino: ['eau', 'roche'], nuagette: ['air', 'lumiere'],
-    miaouche: ['ombre'], pandouki: ['terre'], koronette: ['lumiere'],
-    stellini: ['lumiere'], doudoune: ['air'], flamdrak: ['feu', 'air'],
-    glydrak: ['glace', 'air'], aquadrak: ['eau'], tonnedrak: ['foudre', 'air'],
+    feuillou: ['plante'], petalia: ['plante', 'lumiere'], goutella: ['eau'], bullini: ['eau'],
+    etincelo: ['foudre'], meduzia: ['eau', 'ombre'], coralou: ['eau', 'roche'], fluffly: ['air'],
+    glanou: ['plante', 'terre'], papillon: ['air', 'plante'], cygnik: ['eau', 'air'],
+    lotira: ['plante', 'eau'], lapinou: ['terre'], hibouche: ['air', 'ombre'],
+    etoilamer: ['eau', 'lumiere'], crabilino: ['eau', 'roche'], nuagette: ['air', 'lumiere'],
+    miaouche: ['lumiere'], pandouki: ['plante', 'terre'], koronette: ['lumiere'],
+    stellini: ['lumiere', 'espace'], doudoune: ['air'], flamdrak: ['feu', 'air'],
+    glydrak: ['glace', 'air'], aquadrak: ['eau', 'air'], tonnedrak: ['foudre', 'air'],
   };
 
   // ---------------------------------------------------------------------------
