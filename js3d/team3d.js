@@ -396,12 +396,29 @@
     return i >= 0 ? box[i] : null;
   }
 
+  /**
+   * Recale `activeIndex` après le retrait de l'emplacement `i` de l'équipe.
+   *
+   * On suit la CRÉATURE choisie par Robin, pas son numéro d'emplacement : un
+   * simple bornage laissait dériver le choix. Équipe [A, B, C] avec C au
+   * combat (`activeIndex = 2`) : ranger A donnait [B, C] et `activeIndex`
+   * repartait à 0, donc c'était B qui montait au front. Pire avec B au combat
+   * (`activeIndex = 1`) : l'indice restait dans les bornes, personne ne
+   * corrigeait rien, et C partait au combat sans un mot. `swap()` gère déjà le
+   * cas correctement — c'est le même principe ici.
+   */
+  function reindexAfterRemoval(i) {
+    if (i < activeIndex) activeIndex--;            // tout le monde a glissé d'un cran
+    else if (i === activeIndex) activeIndex = 0;   // le champion lui-même est parti
+    if (activeIndex >= team.length) activeIndex = 0;   // filet : c'était le dernier
+  }
+
   /** Retire définitivement un individu. -> le Mon retiré, ou null. */
   function remove(uid) {
     let i = indexOfUid(team, uid);
     if (i >= 0) {
       const m = team.splice(i, 1)[0];
-      if (activeIndex >= team.length) activeIndex = 0;
+      reindexAfterRemoval(i);
       return m;
     }
     i = indexOfUid(box, uid);
@@ -436,6 +453,10 @@
     const out = team[ti];
     team[ti] = box.splice(boxIndex, 1)[0];
     box.push(out);
+    // `activeIndex` ne bouge pas : les emplacements ne glissent pas. Si Robin
+    // échange précisément sa créature active, c'est la remplaçante qui prend sa
+    // place ET son rôle — il vient de la choisir, la lui refuser serait plus
+    // surprenant que de la lui donner. Décision documentée, pas un oubli.
     return true;
   }
 
@@ -446,7 +467,7 @@
     if (team.length <= 1) return false;
     box.push(team.splice(teamIndex, 1)[0]);
     if (box.length > MAX_BOX) box.shift();
-    if (activeIndex >= team.length) activeIndex = 0;
+    reindexAfterRemoval(teamIndex);
     return true;
   }
 

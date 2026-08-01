@@ -560,6 +560,20 @@ Mon = {
 Progression : `maxHp = round(baseHp * (1 + level * 0.06))`, idem pour atk/def/speed avec
 `0.05`. `xpNext = 20 + level * level * 4`. Niveau max **60**.
 
+**Réorganiser l'équipe préserve la CRÉATURE active, pas son numéro d'emplacement.**
+`remove(uid)`, `toBox(teamIndex)` et `swap(i, j)` recalent `activeIndex` pour qu'`active()`
+rende toujours la créature que le joueur a désignée par `setActive()`. Ne jamais se contenter
+de borner l'indice : ranger une créature d'indice inférieur décale toutes les suivantes, et
+un indice « resté dans les bornes » désigne alors quelqu'un d'autre — c'est silencieux, et le
+badge ⚔️ de l'écran Équipe se déplace tout seul. Seule exception, assumée : `toTeam(boxIndex,
+teamIndex)` sur une équipe pleine remplace l'occupante de `teamIndex` ; si c'était l'active,
+la remplaçante hérite du rôle, puisque le joueur vient de la choisir pour cette place.
+
+`movesForLevel()` (interne, utilisée par `create()`) n'éjecte **jamais l'unique capacité de
+soin** d'une créature quand le learnset dépasse 4 emplacements : `dex3d.js` garantit un soin
+par espèce, l'oubli premier-entré-premier-sorti le supprimait en premier. Vaut aussi pour les
+équipes des dresseurs et des champions.
+
 **Taux de capture** (généreux, c'est un jeu d'enfant) :
 ```
 base = species.catchRate
