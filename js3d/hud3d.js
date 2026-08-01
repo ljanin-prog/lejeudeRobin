@@ -3666,6 +3666,17 @@
     ]],
   ];
 
+  /** Appelle une fonction de `window.GAME3D` en le disant si elle manque.
+   *  Le HUD doit rester utilisable même sans contrôleur (règle §1.4). */
+  function gameCall(nom) {
+    if (window.GAME3D && typeof window.GAME3D[nom] === 'function') {
+      try { window.GAME3D[nom](); return true; }
+      catch (e) { console.warn('[hud3d] ' + nom + ' a échoué :', e); }
+    }
+    toast('Cette commande n\'est pas disponible ici.', '⚠️');
+    return false;
+  }
+
   function buildHelpOverlay() {
     const ov = el('div', 'overlay hidden', hudRoot);
     ov.id = 'help-overlay';
@@ -3683,6 +3694,21 @@
     });
     el('p', 'help-note', frame,
       'En vue subjective, ← et → font tourner ton regard, ↑ et ↓ te font avancer et reculer.');
+
+    // --- Mettre sa partie à l'abri (correction 2.8) --------------------------
+    // La sauvegarde ne vit que dans ce navigateur : un nettoyage d'historique
+    // suffisait à tout effacer. L'écran d'aide est le seul endroit calme du
+    // jeu, toujours atteignable par H : c'est ici que ces deux boutons vivent.
+    const sauve = el('div', 'help-save', frame);
+    el('p', 'help-save-txt', sauve,
+      'Ta partie est rangée dans ce navigateur. Garde-en une copie sur l\'ordinateur, on ne sait jamais !');
+    const bExport = el('button', 'help-save-btn', sauve, '💾 Enregistrer ma partie dans un fichier');
+    bExport.type = 'button';
+    bExport.addEventListener('click', function () { gameCall('exportSave'); });
+    const bImport = el('button', 'help-save-btn', sauve, '📂 Reprendre une partie depuis un fichier');
+    bImport.type = 'button';
+    bImport.addEventListener('click', function () { gameCall('importSave'); });
+
     el('p', 'hint', frame, 'H · Échap : fermer');
     const close = el('button', null, frame, 'Fermer');
     close.type = 'button';

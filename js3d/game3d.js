@@ -260,9 +260,109 @@
   //  1. INITIALISATION
   // ===========================================================================
 
+  // ---------------------------------------------------------------------------
+  //  CONTRÔLE DE DÉMARRAGE (correction 2.8)
+  //  Les 45 balises <script> d'index3d.html n'étaient gardées que par des
+  //  commentaires. Un fichier renommé, déplacé, ou cassé par une virgule
+  //  disparaissait en silence : le jeu démarrait quand même, en moins bien, et
+  //  personne ne savait pourquoi. On le DIT, en nommant le fichier.
+  //
+  //  ⚠️ CETTE LISTE EST UN CONTRAT : tout nouveau module s'y ajoute. Elle est
+  //  bon marché à tenir (une ligne) et c'est le seul endroit du jeu qui sache
+  //  ce qui est censé être chargé.
+  // ---------------------------------------------------------------------------
+
+  /** [ nom enregistré via R3.register, fichier qui le fournit ]. */
+  const MODULES_ATTENDUS = [
+    ['tiles', 'tiles3d.js'], ['types', 'types3d.js'], ['moves', 'moves3d.js'],
+    ['dex', 'dex3d.js'], ['evolve', 'evolve3d.js'], ['team', 'team3d.js'],
+    ['cities', 'cities3d.js'], ['arenas', 'arenas3d.js'], ['shop', 'shop3d.js'],
+    ['quest', 'quest3d.js'], ['regions', 'regions3d.js'],
+    ['water', 'water3d.js'], ['sky', 'sky3d.js'], ['citybuild', 'citybuild3d.js'],
+    ['world', 'world3d.js'],
+    ['clib', 'creatures3d.lib.js'], ['creaturesP3', 'creatures3d.p3.js'],
+    ['creatures3d.p5', 'creatures3d.p5.js'], ['llib', 'legendlib3d.js'],
+    ['gates', 'gates3d.js'], ['actors', 'actors3d.js'], ['roamers', 'roamers3d.js'],
+    ['buddy', 'buddy3d.js'], ['camera', 'camera3d.js'], ['airship', 'airship3d.js'],
+    ['music', 'music3d.js'], ['sfx', 'sfx3d.js'], ['tera', 'tera3d.js'],
+    ['hud', 'hud3d.js'], ['battle', 'battle3d.js'],
+  ];
+
+  /** Les lots de modèles ne s'enregistrent pas comme modules : on vérifie
+   *  qu'une créature de chacun est bien arrivée dans le registre de core3d. */
+  const MODELES_ATTENDUS = [
+    ['feuillou', 'creatures3d.p1.js'], ['fluffly', 'creatures3d.p2.js'],
+    ['etoilamer', 'creatures3d.p3.js'], ['stellini', 'creatures3d.p4.js'],
+    ['pyrathos', 'legend3d.p1.js'], ['cryonix', 'legend3d.p2.js'],
+    ['aureol', 'legend3d.p3.js'],
+  ];
+
+  /** Le jeu 2D fournit des données que la 3D relit. Ses fichiers déclarent des
+   *  `const` de haut niveau : elles ne sont PAS sur `window`, il faut donc un
+   *  `typeof` écrit en clair — d'où les petites fonctions. */
+  const FICHIERS_2D = [
+    [function () { return typeof PALETTE !== 'undefined'; }, 'js/palette.js'],
+    [function () { return typeof SPRITES !== 'undefined'; }, 'js/sprites.js'],
+    [function () { return typeof Audio_ !== 'undefined'; }, 'js/audio.js'],
+    [function () { return typeof MAP !== 'undefined'; }, 'js/world.js'],
+    [function () { return typeof NPCS !== 'undefined'; }, 'js/npcs.js'],
+    [function () { return typeof CREATURES !== 'undefined'; }, 'js/creatures.js'],
+  ];
+
+  /**
+   * checkBoot() — tout le monde est-il là ?
+   * -> true si oui. Sinon on affiche le panneau du filet (index3d.html) en
+   *    nommant les fichiers manquants, et on laisse le jeu démarrer quand même :
+   *    la philosophie du jeu est de ne jamais bloquer un enfant, et la plupart
+   *    des modules sont facultatifs (game3d les cherche tous à la volée).
+   */
+  function checkBoot() {
+    const manquants = [];
+    if (typeof THREE === 'undefined') manquants.push('js3d/vendor/three.min.js');
+    // Sans le socle, `R3` n'existe même pas comme variable : on s'arrête là
+    // plutôt que d'annoncer trente modules absents pour un seul fichier perdu.
+    if (typeof R3 === 'undefined') {
+      manquants.push('js3d/core3d.js');
+    } else {
+      for (let i = 0; i < MODULES_ATTENDUS.length; i++) {
+        if (!mod(MODULES_ATTENDUS[i][0])) manquants.push('js3d/' + MODULES_ATTENDUS[i][1]);
+      }
+      const modeles = R3.CREATURE_BUILDERS || {};
+      for (let i = 0; i < MODELES_ATTENDUS.length; i++) {
+        if (!modeles[MODELES_ATTENDUS[i][0]]) manquants.push('js3d/' + MODELES_ATTENDUS[i][1]);
+      }
+    }
+    for (let i = 0; i < FICHIERS_2D.length; i++) {
+      let ok = false;
+      try { ok = FICHIERS_2D[i][0](); } catch (e) { ok = false; }
+      if (!ok) manquants.push(FICHIERS_2D[i][1]);
+    }
+
+    if (!manquants.length) return true;
+
+    console.error('[game3d] démarrage incomplet — fichiers absents ou cassés :\n  ' +
+      manquants.join('\n  '));
+    const liste = manquants.slice(0, 6).join(', ')
+      + (manquants.length > 6 ? ' (et ' + (manquants.length - 6) + ' autres)' : '');
+    if (typeof window.ROBIN_OOPS === 'function') {
+      try {
+        window.ROBIN_OOPS('Il manque ' + manquants.length + ' morceau'
+          + (manquants.length > 1 ? 'x' : '') + ' du jeu.', [
+            'Ces fichiers n\'ont pas été chargés : ' + liste + '.',
+            'Le jeu démarre quand même, mais certaines choses vont manquer.',
+          ]);
+      } catch (e) { /* le panneau est un bonus */ }
+    }
+    return false;
+  }
+
   function init() {
     canvas = document.getElementById('game');
     if (!canvas) { console.error('[game3d] canvas #game introuvable.'); return; }
+
+    // AVANT tout le reste : on dit ce qui manque pendant que l'écran est encore
+    // vide. Le jeu continue ensuite, quoi qu'il arrive.
+    checkBoot();
 
     initRenderer();
     initScene();
@@ -4051,8 +4151,185 @@
         tera: serializeOf('tera'),
         buddy: serializeOf('buddy'),
       };
+      rotateBackup(false);     // la copie d'AVANT, mise à l'abri (§2.8)
       localStorage.setItem(SAVE_KEY, JSON.stringify(data));
     } catch (e) { /* localStorage indisponible : on ignore */ }
+  }
+
+  // ---------------------------------------------------------------------------
+  //  LES FILETS DE LA SAUVEGARDE (correction 2.8)
+  //  La partie de Robin n'existe QUE dans le localStorage de ce navigateur.
+  //  Un nettoyage d'historique, un profil recréé, un bug de sérialisation, et
+  //  des mois de jeu disparaissent sans copie nulle part. D'où :
+  //    1. trois copies de secours tournantes dans le localStorage ;
+  //    2. un export / import en VRAI fichier, sur le disque (écran d'aide, H).
+  // ---------------------------------------------------------------------------
+  const BACKUP_KEYS = ['robinGame3d_bak1', 'robinGame3d_bak2', 'robinGame3d_bak3'];
+  const BACKUP_INDEX = 'robinGame3d_baks';        // { slot, at } : où en est la rotation
+  const BACKUP_MIN_MS = 3 * 60 * 1000;            // une copie toutes les 3 minutes au plus
+
+  /** L'état de la rotation. Relu du localStorage : sans lui, chaque session
+   *  recommencerait à l'emplacement 1 et écraserait toujours la même copie. */
+  let _bak = null;
+  function backupIndex() {
+    if (_bak) return _bak;
+    const o = readSave(BACKUP_INDEX) || {};
+    _bak = {
+      slot: (typeof o.slot === 'number' && o.slot >= 0) ? (o.slot | 0) % BACKUP_KEYS.length : -1,
+      at: (typeof o.at === 'number' && isFinite(o.at)) ? o.at : 0,
+    };
+    return _bak;
+  }
+
+  /**
+   * Recopie la sauvegarde DÉJÀ EN PLACE dans l'emplacement suivant.
+   * On copie l'ancienne, jamais celle qu'on s'apprête à écrire : c'est tout
+   * l'intérêt, revenir à un état qu'on savait bon. Trois emplacements en
+   * rotation, donc trois âges différents — même une partie abîmée sauvegardée
+   * deux fois de suite laisse une copie saine.
+   * `saveGame()` est appelé dix-sept fois (capture, badge, achat, évolution,
+   * changement de région…) : sans le délai de trois minutes, on triplerait le
+   * nombre d'écritures pour trois copies quasi identiques.
+   * @param {boolean} force  copier tout de suite (avant un import de fichier)
+   */
+  function rotateBackup(force) {
+    const b = backupIndex();
+    const now = Date.now();
+    if (!force && (now - b.at) < BACKUP_MIN_MS) return;
+    let actuelle = null;
+    try { actuelle = localStorage.getItem(SAVE_KEY); } catch (e) { return; }
+    if (!actuelle) return;                 // première partie : rien à copier
+    const slot = (b.slot + 1) % BACKUP_KEYS.length;
+    try {
+      localStorage.setItem(BACKUP_KEYS[slot], actuelle);
+      b.slot = slot; b.at = now;
+      localStorage.setItem(BACKUP_INDEX, JSON.stringify(b));
+    } catch (e) {
+      // Plus de place ? On efface la copie ratée : LA VRAIE SAUVEGARDE PASSE
+      // AVANT TOUT, elle est écrite juste après nous et doit trouver la place.
+      try { localStorage.removeItem(BACKUP_KEYS[slot]); } catch (e2) { /* rien */ }
+    }
+  }
+
+  /** Les copies de secours, de la plus récente à la plus ancienne. */
+  function backupKeysRecentes() {
+    const b = backupIndex();
+    const n = BACKUP_KEYS.length;
+    const out = [];
+    for (let i = 0; i < n; i++) out.push(BACKUP_KEYS[((b.slot - i) % n + n) % n]);
+    return out;
+  }
+
+  /** Nom du fichier d'export, lisible par un enfant : robin-partie-2026-08-01.json */
+  function saveFileName() {
+    const d = new Date();
+    const p = function (n) { return (n < 10 ? '0' : '') + n; };
+    return 'robin-partie-' + d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + '.json';
+  }
+
+  /**
+   * exportSave() — télécharge la partie dans un vrai fichier.
+   * Un Blob et un <a download>, rien d'autre : pas de dépendance, et ça marche
+   * même en file:// . On sauvegarde d'abord, pour exporter l'instant présent.
+   */
+  function exportSave() {
+    saveGame();
+    let raw = null;
+    try { raw = localStorage.getItem(SAVE_KEY); } catch (e) { raw = null; }
+    if (!raw) { showToast('Il n\'y a pas encore de partie à enregistrer.', '⚠️'); return false; }
+    try {
+      const nom = saveFileName();
+      const url = URL.createObjectURL(new Blob([raw], { type: 'application/json' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = nom;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      // On laisse au navigateur le temps d'écrire avant de libérer l'URL.
+      setTimeout(function () { try { URL.revokeObjectURL(url); } catch (e) { /* rien */ } }, 10000);
+      showToast('Partie enregistrée : ' + nom, '💾');
+      return true;
+    } catch (e) {
+      console.warn('[game3d] export impossible :', e);
+      showToast('Le fichier n\'a pas pu être écrit.', '⚠️');
+      return false;
+    }
+  }
+
+  /** L'<input type="file">, créé une seule fois et gardé caché. */
+  let _importInput = null;
+
+  /** importSave() — ouvre le sélecteur de fichier. La suite est asynchrone. */
+  function importSave() {
+    try {
+      if (!_importInput) {
+        _importInput = document.createElement('input');
+        _importInput.type = 'file';
+        _importInput.accept = '.json,application/json';
+        _importInput.style.display = 'none';
+        _importInput.addEventListener('change', function () {
+          const f = _importInput.files && _importInput.files[0];
+          // On vide tout de suite : sinon reprendre DEUX FOIS le même fichier
+          // ne déclencherait pas de second 'change'.
+          _importInput.value = '';
+          if (f) lireFichierPartie(f);
+        });
+        document.body.appendChild(_importInput);
+      }
+      _importInput.click();
+      return true;
+    } catch (e) {
+      console.warn('[game3d] import impossible :', e);
+      showToast('Impossible d\'ouvrir un fichier ici.', '⚠️');
+      return false;
+    }
+  }
+
+  function lireFichierPartie(file) {
+    const fr = new FileReader();
+    fr.onerror = function () {
+      showMessage('Ce fichier n\'a pas pu être lu. 😥\nTa partie actuelle n\'a pas bougé.');
+    };
+    fr.onload = function () { installerPartie(String(fr.result || '')); };
+    try { fr.readAsText(file); } catch (e) { fr.onerror(); }
+  }
+
+  /**
+   * Installe une partie venue d'un fichier. On refuse tout ce qui ne ressemble
+   * pas à une sauvegarde, et on met la partie EN COURS à l'abri avant : même
+   * une fausse manœuvre reste rattrapable (GAME3D.restoreBackup()).
+   */
+  function installerPartie(texte) {
+    let data = null;
+    try { data = JSON.parse(texte); } catch (e) { data = null; }
+    if (!data || typeof data !== 'object' || !Array.isArray(data.team)) {
+      showMessage('Ce fichier n\'est pas une partie du jeu de Robin. 🤔\n' +
+        'Rien n\'a été changé.');
+      return false;
+    }
+    try {
+      rotateBackup(true);                       // la partie en cours devient une copie
+      localStorage.setItem(SAVE_KEY, texte);
+    } catch (e) {
+      console.warn('[game3d] installation de la partie impossible :', e);
+      showMessage('La partie n\'a pas pu être installée. 😥\nRien n\'a été changé.');
+      return false;
+    }
+    showMessage('Partie chargée ! 🎉\nLe jeu redémarre pour la reprendre…', function () {
+      location.reload();
+    });
+    return true;
+  }
+
+  /** Remet en place une copie de secours (0 = la plus récente). Console/debug. */
+  function restoreBackup(n) {
+    const keys = backupKeysRecentes();
+    const k = keys[(n | 0) % keys.length];
+    let raw = null;
+    try { raw = localStorage.getItem(k); } catch (e) { raw = null; }
+    if (!raw) { console.warn('[game3d] copie de secours vide :', k); return false; }
+    return installerPartie(raw);
   }
 
   /**
@@ -4088,6 +4365,17 @@
     // Une partie de Robin ne se perd jamais.
     let data = readSave(SAVE_KEY);
     let migre = false;
+    let secours = null;
+    if (!data) {
+      // FILET 2.8 : la clé principale a disparu ou est illisible. On essaie les
+      // copies de secours AVANT la v1, qui est bien plus vieille — mais on ne
+      // les touche jamais tant que la clé principale répond.
+      const keys = backupKeysRecentes();
+      for (let i = 0; i < keys.length && !data; i++) {
+        data = readSave(keys[i]);
+        if (data) secours = keys[i];
+      }
+    }
     if (!data) {
       data = readSave(SAVE_KEY_V1);
       migre = !!data;
@@ -4170,6 +4458,18 @@
         console.log('[game3d] sauvegarde v1 reprise et convertie en v2.');
         saveGame();
       }
+      if (secours) {
+        // On le DIT : Robin doit comprendre pourquoi il lui manque peut-être
+        // les dernières minutes de jeu — et surtout que rien n'est perdu.
+        console.warn('[game3d] sauvegarde principale illisible : copie de secours '
+          + secours + ' reprise.');
+        saveGame();               // la copie redevient la sauvegarde principale
+        setTimeout(function () {
+          showMessage('Ta sauvegarde principale n\'a pas pu être relue… 😮\n' +
+            'Mais j\'avais gardé une copie : ta partie est de retour !\n' +
+            'Il te manque peut-être les toutes dernières minutes.');
+        }, 800);
+      }
 
       // La position sera sécurisée par applyRegion (keepPosition + teleport).
       _resumePosition = true;
@@ -4245,6 +4545,12 @@
     showMessage: showMessage,
     saveGame: saveGame,
     loadGame: loadGame,
+    // Mettre la partie à l'abri — appelées par les deux boutons de l'écran
+    // d'aide (touche H), et utilisables depuis la console.
+    exportSave: exportSave,
+    importSave: importSave,
+    restoreBackup: restoreBackup,
+    checkBoot: checkBoot,
     setQuality: applyQuality,
     // Une image de jeu à la main (utile quand requestAnimationFrame est gelé).
     tick: tickGame,
@@ -4279,10 +4585,15 @@
       saveGame();
     },
     reset: function () {
-      // Les DEUX clés : sans la v1, « repartir de zéro » ressusciterait
-      // l'ancienne partie au rechargement suivant.
+      // TOUTES les clés : sans la v1, « repartir de zéro » ressusciterait
+      // l'ancienne partie au rechargement suivant — et depuis la correction
+      // 2.8, les trois copies de secours feraient exactement la même chose.
       try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* rien */ }
       try { localStorage.removeItem(SAVE_KEY_V1); } catch (e) { /* rien */ }
+      for (let i = 0; i < BACKUP_KEYS.length; i++) {
+        try { localStorage.removeItem(BACKUP_KEYS[i]); } catch (e) { /* rien */ }
+      }
+      try { localStorage.removeItem(BACKUP_INDEX); } catch (e) { /* rien */ }
       location.reload();
     },
 

@@ -1503,6 +1503,40 @@ html, body {
   color: var(--gris);
 }
 
+/* Mettre sa partie à l'abri (correction 2.8) — les deux boutons vivent au bas
+   de l'écran d'aide, le seul endroit calme du jeu toujours atteignable par H. */
+.help-save {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px;
+  background: rgba(20, 22, 40, .55);
+  border-radius: var(--rayon-petit);
+}
+.help-save-txt {
+  margin: 0;
+  font-size: 13px;
+  color: var(--creme);
+  text-align: center;
+}
+.help-save-btn {
+  width: min(420px, 100%);
+  padding: 9px 14px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--nuit);
+  background: linear-gradient(180deg, #ffe9a0, var(--jaune-clair));
+  border: none;
+  border-radius: 10px;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, .35);
+  cursor: pointer;
+}
+.help-save-btn:hover, .help-save-btn:focus-visible { filter: brightness(1.08); }
+.help-save-btn:active { transform: translateY(2px); box-shadow: 0 1px 0 rgba(0, 0, 0, .35); }
+
 /* =============================================================================
    Menu du dirigeable (§17 bis)
    ============================================================================= */
