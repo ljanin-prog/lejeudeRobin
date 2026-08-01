@@ -663,7 +663,7 @@ R3.register('arenas', {
   championNpc(regionId),     // -> npc (format js/npcs.js) à ajouter à la région
   makeBattle(regionId, playerTeam),   // -> battleState prêt pour battle3d
   badgeOf(regionId),         // -> { id, name, icon, color }
-  TRAINERS,                  // { regionId: [npc] } — 4 dresseurs par région
+  TRAINERS,                  // ⚠️ TABLE MORTE — voir l'encadré du §12 plus bas
   rewardText(regionId),
 });
 ```
@@ -690,6 +690,22 @@ Les équipes de champions montent en puissance selon l'ordre de progression du �
 (niveaux ~10, ~18, ~26, ~34, ~42, ~50) et comportent **3 à 5 créatures**, dont au moins
 un légendaire pour les trois dernières arènes.
 
+### ⚠️ `arenas3d.TRAINERS` N'EST BRANCHÉ SUR RIEN — constat du 2026-08-01
+
+**Les dresseurs que Robin rencontre ne viennent PAS d'ici.** `TRAINERS`, `trainersOf()` et
+`findTrainer()` sont exportés et n'ont **aucun consommateur** dans tout le dépôt (`grep` :
+zéro occurrence hors de `arenas3d.js`). `regions3d.js` ne récupère d'`arenas3d` que
+`championNpc()`. La vraie table des dresseurs est **`NPC_TEMPLATES` dans `regions3d.js`** :
+`game3d.talkToNPC()` → `startTrainerBattle(npc)` → `arenas3d.makeTrainerBattle(npc)`, qui
+reconstruit l'équipe adverse depuis le `party: ['id']` du PNJ (`npc.team` étant absent).
+
+Conséquence à retenir : **une retouche d'équilibrage faite dans `arenas3d.TRAINERS` ne change
+rien en jeu.** C'est arrivé au chantier 2.5, et ce paragraphe a affirmé pendant une journée
+que les dresseurs tardifs alignaient des formes évoluées alors qu'ils envoyaient toujours des
+formes de base. La table est conservée (elle est riche en dialogues, elle servira peut-être
+un jour), mais **elle est décorative** : toute modification d'un dresseur se fait dans
+`regions3d.js`, et là seulement.
+
 ### À armes égales — amendement du 2026-08-01 (chantier 2.5)
 
 Les arènes **4 à 6** et les dresseurs des **trois dernières régions** (givre, braise, aurore)
@@ -701,8 +717,19 @@ statistiques, en sa défaveur.
 
 - **Les niveaux et les plafonds ne bougent pas.** `levelCap` reste 12 · 20 · 28 · 36 · 45 · 55.
   C'est l'espèce qui change, jamais la courbe. Mesuré, puissance totale (PV + atq + déf + vit)
-  des six équipes : 945 → 1527 → 2058 → **3900** → **5426** → **5691** ; l'ordre reste
-  strictement croissant, et chaque dresseur reste plus faible que le champion de sa région.
+  des six équipes de CHAMPIONS : 945 → 1527 → 2058 → **3900** → **5426** → **5691** ; l'ordre
+  reste strictement croissant, et chaque dresseur reste plus faible que le champion de sa
+  région.
+- **Les 12 dresseurs de givre/braise/aurore ont été portés dans `regions3d.js`** (et pas
+  seulement dans la table morte ci-dessus) : `pandouki`→`pandoukion`, `glydrak`→`glydrakon`,
+  `doudoune`→`doudouneon`, `stellini`→`stellinion`, `flamdrak`→`flamdrakix`,
+  `etincelo`→`etinceloix`, `tonnedrak`→`tonnedrakon`, `koronette`→`koronetteon`. `nuagette`
+  reste en l'état (`NO_EVOLUTION`). Les quatre dialogues qui NOMMAIENT la créature ont suivi
+  (« Mon Glydrakon plane… », « Mon Flamdrakix est la terreur… », « Mon Doudounon… »,
+  « Mon Étincelix… »). Ces PNJ n'ont pas de niveau propre : `startTrainerBattle()` leur pose
+  `def.recommendedLevel` (28 · 36 · 45), les plafonds sont donc respectés d'office. Mesuré,
+  puissance totale des dresseurs par région : 832 → 1083 → 1249 → **2816** → **3744** →
+  **3719**, tous très en dessous du champion de leur région.
 - **Les trois premières arènes gardent leurs formes de base**, et c'est volontaire : jusqu'au
   niveau 24, c'est aussi ce que le joueur a dans son équipe.
 - **PIÈGE DES IDENTIFIANTS, à relire avant toute retouche.** `evolve3d.js` fabrique l'id par
