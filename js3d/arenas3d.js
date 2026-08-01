@@ -70,6 +70,31 @@
   //  vraiment. Quand un type n'a presque pas de représentant commun (le feu et
   //  la glace n'en ont qu'un chacun), on complète avec des créatures du BIOME
   //  de la région — c'est ce que les dialogues expliquent au joueur.
+  //
+  //  --------------------------------------------------------------------
+  //  À ARMES ÉGALES — pourquoi les arènes 4 à 6 alignent des formes ÉVOLUÉES
+  //  --------------------------------------------------------------------
+  //  Les évolutions (`evolve3d.js`) arrivent entre les niveaux 16 et 36. À
+  //  partir de l'arène 4, le joueur n'a donc plus une seule forme de base dans
+  //  son équipe, alors que les champions en alignaient encore : Astréa opposait
+  //  une Koronette 47 à un enfant qui arrivait avec un Koronetton, soit 1,55
+  //  fois ses statistiques. Les trois dernières arènes et les dresseurs des
+  //  trois dernières régions emploient donc les identifiants ÉVOLUÉS.
+  //
+  //  Les NIVEAUX n'ont pas bougé d'un point : les plafonds du §12 (12 · 20 · 28
+  //  · 36 · 45 · 55) sont conservés tels quels. C'est l'espèce qui change, pas
+  //  la courbe.
+  //
+  //  PIÈGE DES IDENTIFIANTS. `evolve3d.js` fabrique l'id par concaténation
+  //  STRICTE `base + suffixe` : Koronette donne `koronetteon` (et non
+  //  « koronetton », qui n'est que son NOM affiché), Crabilino donne
+  //  `crabilinoon`, Miaouche donne `miaouchear`. Un id inexistant ne lève
+  //  AUCUNE erreur : `makeMon()` retombe en silence sur `fallbackMon()` et le
+  //  champion devient une créature générique de 48 PV. Toujours vérifier un id
+  //  contre `CHAIN_DATA` d'evolve3d.js, jamais de mémoire.
+  //
+  //  Deux espèces ne s'évoluent pas et restent écrites en clair : `nuagette`
+  //  (Astréa) et `papillon` (dresseurs), toutes deux dans `NO_EVOLUTION`.
   // ==========================================================================
 
   var ARENAS = [
@@ -237,11 +262,13 @@
         title: 'Sentinelle des Glaciers',
         // Bourru, économe de mots, secrètement très gentil. Ses phrases sont
         // courtes ; c'est le contraste avec Orana qui le rend mémorable.
+        // FORMES ÉVOLUÉES (voir « À ARMES ÉGALES », plus haut) : à 32-35, le
+        // joueur n'a plus une seule forme de base dans son équipe.
         team: [
-          { id: 'cygnik',    level: 32 },
-          { id: 'pandouki',  level: 33 },
-          { id: 'glydrak',   level: 35 },
-          { id: 'banquisor', level: 36 },   // légendaire de glace
+          { id: 'cygnikon',   level: 32 },
+          { id: 'pandoukion', level: 33 },
+          { id: 'glydrakon',  level: 35 },
+          { id: 'banquisor',  level: 36 },   // légendaire de glace
         ],
         aceIndex: 3,
         colorMap: { 'j': 'c', 'l': 'd' },
@@ -287,12 +314,14 @@
         title: 'Forgeur de Flammes',
         // Forgeron. Grande voix, grand rire, vocabulaire de l'atelier : il
         // parle des dresseurs comme d'une lame qu'on chauffe et qu'on martèle.
+        // FORMES ÉVOLUÉES. `flamdrakix` est le 3ᵉ stade (36) : à 43, le joueur
+        // qui a pris Flamdrak comme starter a exactement la même créature.
         team: [
-          { id: 'lapinou',   level: 39 },
-          { id: 'crabilino', level: 40 },
-          { id: 'tonnedrak', level: 41 },
-          { id: 'flamdrak',  level: 43 },
-          { id: 'fournalis', level: 45 },   // légendaire de feu
+          { id: 'lapinouon',   level: 39 },
+          { id: 'crabilinoon', level: 40 },
+          { id: 'tonnedrakon', level: 41 },
+          { id: 'flamdrakix',  level: 43 },
+          { id: 'fournalis',   level: 45 },   // légendaire de feu
         ],
         aceIndex: 4,
         colorMap: { 'j': '2', 'l': 'u' },
@@ -342,12 +371,14 @@
         // Astronome. Elle parle bas, lentement, comme quelqu'un qui a passé
         // beaucoup de nuits seule à regarder le ciel. Elle vouvoie personne :
         // elle parle à Robin comme à un égal, ce qui est le vrai cadeau final.
+        // FORMES ÉVOLUÉES. `nuagette` reste telle quelle : elle est dans la
+        // liste `NO_EVOLUTION` d'evolve3d.js, elle n'a pas de forme évoluée.
         team: [
-          { id: 'koronette', level: 47 },
-          { id: 'stellini',  level: 48 },
-          { id: 'nuagette',  level: 49 },
-          { id: 'prismee',   level: 51 },   // légendaire de lumière
-          { id: 'aureol',    level: 53 },   // légendaire de lumière — l'ace
+          { id: 'koronetteon', level: 47 },
+          { id: 'stellinion',  level: 48 },
+          { id: 'nuagette',    level: 49 },
+          { id: 'prismee',     level: 51 },   // légendaire de lumière
+          { id: 'aureol',      level: 53 },   // légendaire de lumière — l'ace
         ],
         aceIndex: 4,
         colorMap: { 'j': 'E', 'l': 's' },
@@ -401,6 +432,11 @@
   //  Les niveaux suivent la région : val 6-8, sylve 12-16, saphir 20-24,
   //  givre 28-32, braise 36-40, aurore 44-48. Toujours un peu en dessous du
   //  champion : les dresseurs sont l'entraînement, pas l'examen.
+  //
+  //  Les dresseurs des TROIS DERNIÈRES régions (givre, braise, aurore) alignent
+  //  eux aussi des formes évoluées, pour la raison exposée dans « À ARMES
+  //  ÉGALES » plus haut. Val, sylve et saphir gardent leurs formes de base :
+  //  jusqu'au niveau 24, c'est aussi ce que le joueur a dans son équipe.
   // ==========================================================================
 
   /** Petite fabrique : évite 24 objets écrits à la main avec les mêmes clés. */
@@ -526,30 +562,30 @@
     givre: [
       trainer('givre', 'dr_givre_col', 'Grimpeur Axel', 'mountain', 20, 'down',
         { 'j': 'F', 'l': '3' }, null,
-        [{ id: 'pandouki', level: 28 }, { id: 'lapinou', level: 29 }],
+        [{ id: 'pandoukion', level: 28 }, { id: 'lapinouon', level: 29 }],
         ["Le col est fermé par la neige. Enfin… fermé par moi, surtout.",
          "Bats-moi et je te laisse passer. C'est plus rapide que de déneiger !"],
         ["Passe, passe ! Et couvre-toi, il fait -12 là-haut."]),
 
       trainer('givre', 'dr_givre_lac', 'Patineuse Elsa', 'glacier', 26, 'left',
         { 'j': 'c', 'l': 'D' }, null,
-        [{ id: 'cygnik', level: 29 }, { id: 'bullini', level: 30 }],
+        [{ id: 'cygnikon', level: 29 }, { id: 'bullinion', level: 30 }],
         ["Le lac est gelé sur trente centimètres. On peut danser dessus !",
          "Mes créatures glissent mieux que toi. Prouve-moi le contraire !"],
         ["Une chute, ça arrive même aux championnes. Bien joué !"]),
 
       trainer('givre', 'dr_givre_refuge', 'Guide Björn', 'route', 14, 'right',
         { 'j': 'y', 'l': 'e' }, null,
-        [{ id: 'doudoune', level: 29 }, { id: 'fluffly', level: 30 }, { id: 'hibouche', level: 30 }],
+        [{ id: 'doudouneon', level: 29 }, { id: 'flufflyon', level: 30 }, { id: 'hibouchear', level: 30 }],
         ["Entre, il y a du feu et de la soupe. …Après le combat, évidemment.",
          "Trois créatures bien au chaud sous leur duvet. Elles ne craignent rien."],
         ["Tu l'as bien méritée, cette soupe. Assieds-toi."]),
 
       trainer('givre', 'dr_givre_aurores', 'Chasseuse d\'aurores Nadia', 'mountain', 36, 'up',
         { 'j': 'E', 'l': '1' }, null,
-        [{ id: 'stellini', level: 30 }, { id: 'glydrak', level: 32 }],
+        [{ id: 'stellinion', level: 30 }, { id: 'glydrakon', level: 32 }],
         ["Je photographie les aurores boréales depuis quinze ans. Ce soir, elles seront magnifiques.",
-         "Mais avant : mon Glydrak veut se dégourdir les ailes."],
+         "Mais avant : mon Glydrakon veut se dégourdir les ailes."],
         ["Regarde le ciel, vite ! …Voilà. C'était ton cadeau de victoire."]),
     ],
 
@@ -557,29 +593,29 @@
     braise: [
       trainer('braise', 'dr_braise_forge', 'Forgeron Hugo', 'village', 10, 'down',
         { 'j': '2', 'l': 'f' }, null,
-        [{ id: 'crabilino', level: 36 }, { id: 'lapinou', level: 37 }],
+        [{ id: 'crabilinoon', level: 36 }, { id: 'lapinouon', level: 37 }],
         ["Attends, je finis de tremper cette lame… Voilà. À nous !",
          "J'apprends chez Ignis. Un jour je serai champion. Un jour !"],
         ["Ce jour n'est pas aujourd'hui. Mais je progresse, hein ? Avoue que je progresse."]),
 
       trainer('braise', 'dr_braise_desert', 'Vagabonde Sahra', 'desert', 32, 'left',
         { 'j': 'F', 'l': 'k' }, null,
-        [{ id: 'papillon', level: 36 }, { id: 'stellini', level: 37 }, { id: 'doudoune', level: 38 }],
+        [{ id: 'papillon', level: 36 }, { id: 'stellinion', level: 37 }, { id: 'doudouneon', level: 38 }],
         ["Le désert n'est pas vide. Il est juste discret.",
          "Trois créatures y vivent avec moi. Elles n'ont peur ni du soleil ni de toi."],
         ["Bien. Bois de l'eau et repars vers le nord. La caldeira t'attend."]),
 
       trainer('braise', 'dr_braise_geyser', 'Vulcanologue Otto', 'volcano', 24, 'right',
         { 'j': 'd', 'l': '4' }, null,
-        [{ id: 'etincelo', level: 37 }, { id: 'tonnedrak', level: 39 }],
+        [{ id: 'etinceloix', level: 37 }, { id: 'tonnedrakon', level: 39 }],
         ["Ne t'approche pas du geyser ! Il crache toutes les onze minutes ! …Il en reste neuf.",
          "Ça nous laisse largement le temps d'un combat. En garde !"],
         ["Neuf minutes, pile. Tu es aussi ponctuel qu'efficace."]),
 
       trainer('braise', 'dr_braise_caldeira', 'Dompteur Rafa', 'volcano', 38, 'up',
         { 'j': '0', 'l': 'u' }, null,
-        [{ id: 'hibouche', level: 38 }, { id: 'flamdrak', level: 40 }],
-        ["Mon Flamdrak vole au-dessus de la lave sans jamais se brûler. Regarde bien.",
+        [{ id: 'hibouchear', level: 38 }, { id: 'flamdrakix', level: 40 }],
+        ["Mon Flamdrakix vole au-dessus de la lave sans jamais se brûler. Regarde bien.",
          "Personne ne l'a battu depuis deux ans. Personne."],
         ["Deux ans, et c'est toi. Va voir Ignis. Il va t'adorer, ce vieux fou."]),
     ],
@@ -588,28 +624,28 @@
     aurore: [
       trainer('aurore', 'dr_aurore_escalier', 'Astronome Céleste', 'route', 16, 'down',
         { 'j': 'n', 'l': 'r' }, null,
-        [{ id: 'stellini', level: 44 }, { id: 'nuagette', level: 45 }],
+        [{ id: 'stellinion', level: 44 }, { id: 'nuagette', level: 45 }],
         ["Tu montes vers l'observatoire ? Bonne idée. On voit tout, de là-haut.",
          "Mais on ne monte pas ici sans montrer ce qu'on vaut. Petite formalité !"],
         ["Formalité accomplie. Monte, l'escalier est à toi."]),
 
       trainer('aurore', 'dr_aurore_temple', 'Moine Élian', 'ruins', 24, 'left',
         { 'j': 'c', 'l': 'z' }, null,
-        [{ id: 'koronette', level: 45 }, { id: 'petalia', level: 46 }],
+        [{ id: 'koronetteon', level: 45 }, { id: 'petaliaon', level: 46 }],
         ["Ces ruines ont mille ans. Elles ont vu passer beaucoup de dresseurs.",
          "Elles t'ont vu arriver, elles aussi. Fais-leur honneur."],
         ["Elles se souviendront de toi. Moi aussi."]),
 
       trainer('aurore', 'dr_aurore_jardins', 'Gardienne Wanda', 'plateau', 20, 'right',
         { 'j': 'g', 'l': 'H' }, null,
-        [{ id: 'miaouche', level: 45 }, { id: 'papillon', level: 45 }, { id: 'lapinou', level: 46 }],
+        [{ id: 'miaoucheix', level: 45 }, { id: 'papillon', level: 45 }, { id: 'lapinouon', level: 46 }],
         ["Trois petites créatures toutes simples. Rien d'impressionnant.",
          "…C'est exactement ce que tout le monde dit avant de perdre."],
         ["Ha ! Tu ne t'es pas laissé avoir par les apparences. J'aime ça."]),
 
       trainer('aurore', 'dr_aurore_nuees', 'Voyageur Kaïs', 'plateau', 34, 'up',
         { 'j': 'f', 'l': '8' }, null,
-        [{ id: 'tonnedrak', level: 46 }, { id: 'glydrak', level: 48 }],
+        [{ id: 'tonnedrakon', level: 46 }, { id: 'glydrakon', level: 48 }],
         ["J'ai traversé les six régions à pied. Toutes. Comme toi, j'imagine.",
          "Alors on se comprend. Pas de discours : deux dragons, et que le meilleur gagne."],
         ["On se comprend, oui. Va voir Astréa. Tu es prêt — je le vois."]),

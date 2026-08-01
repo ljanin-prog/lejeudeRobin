@@ -25,19 +25,31 @@
 //      étant chargée à la fois).
 //    - Le légendaire s'active quand le joueur s'approche à moins de 42 tuiles
 //      de son autel (assez loin pour qu'on le voie venir grâce à son aura).
-//    - S'il n'est ni capturé ni vaincu (remove() jamais appelé) dans les 90
-//      secondes qui suivent, il fuit tout seul : il disparaît de list() et son
-//      autel entre en repos pendant 10 minutes de jeu (LEGEND_COOLDOWN_S)
-//      avant de pouvoir proposer un nouveau légendaire — le sien ou un autre.
-//    - Capturé ou vaincu (remove() appelé par game3d après un combat gagné ou
-//      une capture), même cooldown : on ne fait pas réapparaître un légendaire
-//      qu'on vient d'attraper sous le nez du joueur.
+//    - Il s'annonce, et il prévient qu'il s'en va : TROIS toasts jalonnent sa
+//      visite — « X est apparu à son autel ! » (activateLegendary), « X
+//      s'apprête à repartir ! » 20 s avant la fin, « X est reparti… » (fuite).
+//      Sans eux, la limite de 90 secondes était invisible.
+//    - DEUX DURÉES DE REPOS, et une seule règle pour les départager : le
+//      cooldown court ne sert qu'à ne pas PUNIR une issue de combat.
+//        · LEGEND_COOLDOWN_S (600 s) — l'affaire est classée. Trois cas :
+//          'caught' et 'defeated' (remove() appelé par game3d après une capture
+//          ou un combat gagné : on ne le fait pas réapparaître sous le nez du
+//          joueur), et la fuite spontanée de fleeLegendary() (personne n'est
+//          venu au bout de 90 s : rien à adoucir, et un cooldown court y
+//          rejouerait les trois toasts en boucle toutes les 3 min 30).
+//        · LEGEND_RETRY_S (120 s) — le combat s'est mal terminé : défaite,
+//          fuite du combat, lancer abandonné ('battle', 'fled', raison omise).
+//          `startRoamerBattle()` retire le légendaire AVANT le combat, quand on
+//          ne sait encore rien de son issue : c'est le DÉFAUT de remove(), et
+//          game3d remonte à 600 s via setLegendCooldown() si ça finit bien.
+//      Voir aussi CONTRACT2 §16, et `remove()` plus bas pour le détail.
 //
 //  DÉPENDANCES — TOUTES FACULTATIVES (dégradation gracieuse obligatoire) :
 //    R3.get('regions')  -> tuiles, marchabilité, biomes, autels de légendaire.
 //                          Absent : aucun roamer n'est posé, le monde reste
 //                          jouable (list() renvoie toujours [], throwBall()
-//                          répond 'escaped' proprement).
+//                          répond 'fled' proprement — le lancer n'a pas eu
+//                          lieu, game3d rend la Ball au sac).
 //    R3.get('dex')      -> quelles espèces vivent sur quel biome / région.
 //    R3.get('llib')     -> aura des légendaires (sinon : pas d'aura, juste un
 //                          modèle un peu plus grand si c'est un repli).
@@ -68,6 +80,37 @@
   function llibApi() { return R3.get('llib') || null; }
   function questApi() { return R3.get('quest') || null; }
   function actorsApi() { return R3.get('actors') || null; }
+  function hudApi() { return R3.get('hud') || null; }
+
+  /**
+   * Un bruitage, jamais bloquant. Deux catalogues dans cet ordre : l'extension
+   * `js3d/sfx3d.js` (sons propres à la 3D — 'legendary'), puis les neuf sons
+   * de `js/audio.js`, que le contrat gèle. `play()` renvoie false quand le nom
+   * ne lui appartient pas. Même helper que dans game3d.js et battle3d.js : ce
+   * module-ci n'avait AUCUN accès à l'audio en dehors du cri de légendaire.
+   * Renvoie true si un son est bien sorti — de quoi enchaîner sur un son de
+   * repli quand l'extension manque.
+   */
+  function sfx(name) {
+    try {
+      var s = R3.get('sfx');
+      if (s && s.play && s.play(name)) return true;
+    } catch (e) { /* extension indisponible : on tente le catalogue d'origine */ }
+    try {
+      if (typeof Audio_ !== 'undefined' && Audio_.sfx && Audio_.sfx[name]) {
+        Audio_.sfx[name]();
+        return true;
+      }
+    } catch (e) { /* audio indisponible : le jeu continue */ }
+    return false;
+  }
+
+  /** Petit bandeau d'information. Le HUD peut manquer : on ne bloque jamais. */
+  function toast(text, icon) {
+    var hud = hudApi();
+    if (!hud || typeof hud.toast !== 'function') return;
+    try { hud.toast(text, icon); } catch (e) { warn('toast', e); }
+  }
 
   /**
    * Construit le modèle 3D d'une espèce EN PASSANT PAR `evolve.fallbackModel()`.
@@ -129,7 +172,16 @@
 
   var LEGEND_ACTIVATE_DIST = 42;     // tuiles : distance à laquelle l'autel s'anime
   var LEGEND_FLEE_S = 90;            // fuite si pas affronté (§16, à la lettre)
-  var LEGEND_COOLDOWN_S = 600;       // 10 min de jeu avant de pouvoir réapparaître
+  var LEGEND_WARN_S = 20;            // « il s'apprête à repartir ! » : 20 s avant la fuite
+  var LEGEND_COOLDOWN_S = 600;       // 10 min : l'affaire est classée (capturé,
+                                     // vaincu, ou reparti sans que personne vienne)
+  // LE COMBAT s'est mal terminé (défaite, fuite, abandon du lancer) : on peut
+  // retenter vite. Attendre 10 minutes réelles après une défaite serait une
+  // double punition, et le jeu n'est jamais punitif (correction 2.3).
+  // ⚠️ NE PAS l'appliquer à `fleeLegendary()` : là personne n'est venu, il n'y
+  // a rien à adoucir, et 2 min transformaient les trois toasts du gardien en
+  // boucle de notifications toutes les trois minutes et demie.
+  var LEGEND_RETRY_S = 120;
 
   var ENCOUNTER_DIST = 0.62;         // unités monde : « touche » le joueur
 
@@ -420,6 +472,7 @@
       tileX: altar.x, tileY: altar.y,
       _phase: Math.random() * 6.2832,
       _spawnT: t, _altarId: altar.id, _ball: false, _encountered: false,
+      _warned: false,   // l'avertissement « il s'apprête à repartir » est-il déjà passé ?
       // Nom d'espèce mémorisé une fois pour toutes : `signalLegend()` le passe
       // à actors3d à CHAQUE image, il n'a pas le droit d'interroger le Pokédex
       // 60 fois par seconde.
@@ -428,22 +481,35 @@
     _legendary = ro;
     _roamers.push(ro);
 
-    // Petit signal sonore, facultatif : le contrat ne garantit le nom d'aucune
-    // fonction pour « un cri de légendaire ». On tente les plus probables et
-    // on abandonne en silence si rien ne correspond (§1.7 : jamais bloquant).
-    try {
-      if (typeof Audio_ !== 'undefined' && Audio_ && Audio_.sfx) {
-        var sfx = Audio_.sfx.legendary || Audio_.sfx.encounter || Audio_.sfx.levelUp || Audio_.sfx.catch_;
-        if (typeof sfx === 'function') sfx();
-      }
-    } catch (e) { /* le son est un bonus, jamais bloquant */ }
+    // Le cri du légendaire. Ce son n'existait nulle part : le code tentait
+    // `legendary || encounter || levelUp || catch_` et retombait toujours sur
+    // `encounter`, le jingle des rencontres ordinaires — le moment le plus rare
+    // du jeu sonnait comme n'importe quelle rencontre. `sfx3d.js` fournit
+    // maintenant un vrai 'legendary' (grondement grave puis fanfare) ; si
+    // l'extension manque, on garde l'ancien repli plutôt que le silence.
+    if (!sfx('legendary')) sfx('encounter');
+
+    // §16 : il ne reste que 90 secondes. Sans un mot, cette limite est
+    // invisible — l'enfant traverse la région, arrive à l'autel vide et ne
+    // comprend pas. On le prévient à l'apparition, puis 20 s avant la fuite.
+    toast(ro._nom + ' est apparu à son autel ! Vite, il ne restera pas longtemps…', '✨');
   }
 
+  /** Le légendaire repart de lui-même : PERSONNE n'est venu le voir.
+   *  Ici l'autel se repose `LEGEND_COOLDOWN_S` (10 min), pas le cooldown court :
+   *  il n'y a aucune punition à ne pas adoucir, Robin n'a rien perdu. À 2 min,
+   *  la boucle « apparu → s'apprête à repartir → reparti » se rejouait toutes
+   *  les trois minutes et demie tant qu'il traînait à 42 tuiles de l'autel :
+   *  trois bandeaux en rafale, en boucle, sans que personne l'ait demandé.
+   *  Le cooldown court reste réservé aux issues de COMBAT (voir `remove()`).
+   *  On le dit quand même — un autel vide sans explication, c'est déroutant. */
   function fleeLegendary(t) {
     if (!_legendary) return;
     var altarId = _legendary._altarId;
+    var nom = _legendary._nom;
     removeInternal(_legendary);       // remet déjà les PNJ au calme
     _legendCooldowns[altarId] = t + LEGEND_COOLDOWN_S;
+    toast(nom + ' est reparti… Reviens le voir à son autel plus tard !', '💨');
   }
 
   function updateLegendary(t, px, pz) {
@@ -453,7 +519,14 @@
     if (!region || !region.altars || !region.altars.length) return;
 
     if (_legendary) {
-      if (t - _legendary._spawnT >= LEGEND_FLEE_S) fleeLegendary(t);
+      var age = t - _legendary._spawnT;
+      // Le compte à rebours se DIT une fois, pas soixante fois par seconde :
+      // d'où le drapeau `_warned`.
+      if (!_legendary._warned && age >= LEGEND_FLEE_S - LEGEND_WARN_S) {
+        _legendary._warned = true;
+        toast(_legendary._nom + ' s\'apprête à repartir ! Dépêche-toi !', '⏳');
+      }
+      if (age >= LEGEND_FLEE_S) fleeLegendary(t);
       return;   // « un seul à la fois » — §16
     }
 
@@ -497,15 +570,51 @@
     }
   }
 
-  function remove(roamer) {
+  function now_() { return (R3.clock && typeof R3.clock.t === 'number') ? R3.clock.t : 0; }
+
+  /** L'affaire est-elle CLASSÉE pour ce légendaire ? Capturé ou mis K.O. : oui,
+   *  son autel se repose 10 minutes. Perdu, fui, parti tout seul : non, on
+   *  retente dans 2 minutes. */
+  function longCooldown(reason) { return reason === 'caught' || reason === 'defeated'; }
+
+  /**
+   * Retire un roamer de la carte.
+   *
+   * `reason` — POUR UN LÉGENDAIRE UNIQUEMENT, décide combien de temps son autel
+   * reste vide (correction 2.3) :
+   *   'caught' / 'defeated' -> LEGEND_COOLDOWN_S (10 min) : l'affaire est
+   *       classée, l'autel se repose.
+   *   tout le reste ('battle', 'fled', omis…) -> LEGEND_RETRY_S (2 min).
+   * Avant, TOUT retrait posait 10 minutes. Or `game3d.startRoamerBattle()`
+   * retire le légendaire AVANT le combat, quand on ne sait encore rien de son
+   * issue : perdre contre lui vidait donc son autel dix minutes réelles. Double
+   * punition — on est déjà K.O. — et rien à l'écran ne l'expliquait. Le jeu
+   * n'est jamais punitif : on repart sur le cooldown court, et `game3d.js`
+   * remonte à 10 minutes via `setLegendCooldown()` SI la capture aboutit.
+   *
+   * ⚠️ Le cooldown court est le DÉFAUT exprès : en monde ouvert, `remove()` est
+   * appelé DEUX FOIS sur la même référence (ici même à la fin du lancer, puis
+   * par `game3d.onCaught`). Le second appel réécrit le cooldown ; il doit donc
+   * passer la même raison que le premier, sans quoi il l'écraserait.
+   */
+  function remove(roamer, reason) {
     if (!roamer) return;
     var wasLegendary = !!roamer.legendary;
     var altarId = roamer._altarId;
     removeInternal(roamer);
     if (wasLegendary && altarId) {
-      var now = (R3.clock && typeof R3.clock.t === 'number') ? R3.clock.t : 0;
-      _legendCooldowns[altarId] = now + LEGEND_COOLDOWN_S;
+      _legendCooldowns[altarId] = now_() + (longCooldown(reason) ? LEGEND_COOLDOWN_S : LEGEND_RETRY_S);
     }
+  }
+
+  /** Règle le temps d'attente d'un autel après coup. Sert à `game3d.js` pour
+   *  rehausser à 10 minutes une fois la capture CONFIRMÉE en combat : à
+   *  l'entrée en combat, personne ne sait encore si Robin va gagner, perdre,
+   *  fuir ou capturer. Même vocabulaire que `remove()` pour que la durée ne
+   *  soit écrite qu'ICI, jamais recopiée ailleurs. */
+  function setLegendCooldown(altarId, reason) {
+    if (!altarId) return;
+    _legendCooldowns[altarId] = now_() + (longCooldown(reason) ? LEGEND_COOLDOWN_S : LEGEND_RETRY_S);
   }
 
   // ===========================================================================
@@ -648,10 +757,27 @@
 
   function throwBall(roamer, chance, cb) {
     if (!_scene || !THREE_OK || !_ball || !roamer || roamer._ball) {
-      if (cb) { try { cb('escaped'); } catch (e) { warn('callback throwBall (repli)', e); } }
+      // 'fled', PAS 'escaped' : aucune Ball n'a volé. `escaped` fait dire à
+      // game3d « Oh non… elle s'est échappée ! » et lui fait GARDER la Ball,
+      // alors que Robin n'a rien vu partir — il perdait un objet parce qu'un
+      // module manquait. 'fled' = le lancer n'a pas eu lieu, on rend la Ball.
+      if (cb) { try { cb('fled'); } catch (e) { warn('callback throwBall (repli)', e); } }
       return;
     }
-    if (_ballAnim && _ballAnim.active) return;   // un seul lancer à la fois
+    if (_ballAnim && _ballAnim.active) {
+      // Un seul lancer à la fois — mais on n'abandonne JAMAIS un lancer sans
+      // prévenir l'appelant (voir abortThrow).
+      if (!_ballAnim.resultDone) {
+        // Le lancer précédent n'a pas rendu son verdict : on refuse celui-ci
+        // et on le dit, pour que game3d rende la Ball et rouvre les touches.
+        if (cb) { try { cb('fled'); } catch (e) { warn('callback throwBall (refus)', e); } }
+        return;
+      }
+      // Le verdict est tombé (son cb est déjà parti), il ne reste que les
+      // ~350 ms de scintillement : on l'écrase et on accepte ce lancer-ci.
+      // C'est le cas de l'enfant qui martèle B.
+      abortThrow(null);
+    }
 
     var c = (typeof chance === 'number' && isFinite(chance)) ? R3.clamp01(chance) : 0.35;
     roamer._ball = true;   // gèle le roamer : plus de déplacement ni de rencontre pendant le lancer
@@ -692,6 +818,38 @@
     _ballAnim = null;
   }
 
+  /** Interrompt le lancer en cours, quoi qu'il arrive.
+   *  ⚠️ RÈGLE GRAVÉE (§16) : `throwBall` finit toujours par appeler son `cb`,
+   *  exactement une fois — même si le lancer est refusé ou interrompu. Sans
+   *  ça, `game3d.js` garde `state.throwing = true` pour TOUTE la session :
+   *  les touches B (lancer) et T (dirigeable) meurent jusqu'au rechargement.
+   *  `reason` est la valeur à passer au callback s'il n'est pas encore parti
+   *  ('fled' : le lancer n'a pas eu lieu, la Ball doit être rendue). */
+  function abortThrow(reason) {
+    var A = _ballAnim;
+    if (!A) return;
+    var fn = A.cb;
+    A.cb = null;               // le callback ne partira jamais deux fois
+    A.active = false; A.done = true;
+    if (A.resultDone) {
+      // Le verdict est déjà tombé : on termine le lancer comme l'aurait fait
+      // updateBallAnim, sans rejouer le résultat.
+      if (A.result === 'caught') _ballAnim = null;   // le roamer est déjà retiré
+      else finishThrow();                            // libère / retire le roamer
+    } else {
+      // Rien n'est décidé : la créature n'a rien demandé, on la dégèle telle
+      // qu'elle était (`_ball` à false, taille et visibilité rétablies).
+      var ro = A.roamer;
+      if (ro) {
+        ro._ball = false;
+        if (ro.group) { ro.group.scale.setScalar(1); ro.group.visible = true; }
+      }
+      _ballAnim = null;
+    }
+    if (_ball) _ball.visible = false;
+    if (fn) { try { fn(reason || 'fled'); } catch (e) { warn('callback throwBall (abandon)', e); } }
+  }
+
   function updateBallAnim(dt) {
     if (!_ballAnim || !_ballAnim.active || !_ball) return;
     var A = _ballAnim, ro = A.roamer;
@@ -721,7 +879,11 @@
       var sp = st % 400;
       if (idx !== A.lastShakeIdx) {
         A.lastShakeIdx = idx;
-        if (idx > 0) fxSparkle(A.to, '#ffe27a', 6);
+        // Le moment le plus tendu du jeu était MUET. Un « clac » par secousse,
+        // comme dans le jeu 2D : la Ball qui remue sans un bruit ne fait
+        // attendre personne. Sur `idx > 0` seulement, comme les étincelles —
+        // `idx === 0` est l'atterrissage, déjà occupé par le son du lancer.
+        if (idx > 0) { fxSparkle(A.to, '#ffe27a', 6); sfx('shake'); }
       }
       var tilt = 0, hop = 0;
       if (sp < 300) {
@@ -744,11 +906,15 @@
           // évite qu'un second lancer sur la même référence (avant la fin du
           // flourish) ne se heurte à un roamer « fantôme » encore marqué
           // occupé par une Ball.
-          if (A.roamer) { A.roamer._ball = false; remove(A.roamer); }
+          if (A.roamer) { A.roamer._ball = false; remove(A.roamer, 'caught'); }
         } else {
           fxSparkle(A.to, '#e8eef4', 10);
         }
-        if (A.cb) { try { A.cb(A.result); } catch (e) { warn('callback throwBall', e); } }
+        // Le callback part ICI, et on l'oublie aussitôt : c'est ce qui garantit
+        // qu'il ne partira pas deux fois si le lancer est ensuite écrasé ou
+        // interrompu (voir abortThrow).
+        var fin = A.cb; A.cb = null;
+        if (fin) { try { fin(A.result); } catch (e) { warn('callback throwBall', e); } }
       }
       var rt = (A.t - T_RESULT) / 1000;
       if (A.result === 'caught') {
@@ -778,12 +944,16 @@
     // On repart de zéro visuellement, mais on GARDE les cooldowns de
     // légendaires : sinon quitter puis revenir dans la même région ferait
     // réapparaître instantanément celui qui vient de fuir ou d'être capturé.
+    // ⚠️ D'ABORD le lancer en cours, AVANT de vider `_roamers` : abortThrow
+    // touche encore au roamer visé, et surtout il prévient game3d.js. Effacer
+    // l'animation en silence laissait `state.throwing = true` à vie (touches B
+    // et T mortes pour toute la session) — c'était le pire bug du jeu.
+    if (_ballAnim) abortThrow('fled');
     for (var i = 0; i < _roamers.length; i++) disposeGroup(_roamers[i].group);
     _roamers.length = 0;
     _legendary = null;
     _spawnClock = 0;
-    if (_ballAnim && _ball) _ball.visible = false;
-    _ballAnim = null;
+    if (_ball) _ball.visible = false;
     while (_fx.length) {
       var e = _fx.pop();
       if (e.group && e.group.parent) e.group.parent.remove(e.group);
@@ -887,10 +1057,21 @@
 
   function list() { return _roamers.slice(); }
 
-  /** Le roamer visé par le joueur : dans le cône de son regard, à portée. */
+  /**
+   * Le roamer visé par le joueur : dans le cône de son regard, à portée.
+   * @param {string|number} dir  direction cardinale ('up'…'right') OU angle de
+   *   vue libre en radians. En vue subjective, le regard n'est justement PAS
+   *   cardinal : viser à la cardinale la plus proche pouvait écarter la
+   *   créature qu'on avait pile en face. ⚠️ Un nombre tombait silencieusement
+   *   sur `DIR_VEC.down` ici — d'où ce test explicite.
+   *   Convention d'axes du contrat §1.4 : 'down' (yaw 0) = +z, 'right'
+   *   (yaw +π/2) = +x, donc fx = sin(a) et fz = cos(a).
+   */
   function aimed(px, pz, dir, range) {
     var r = (typeof range === 'number' && isFinite(range)) ? range : 2.2;
-    var dv = DIR_VEC[dir] || DIR_VEC.down;
+    var dv = (typeof dir === 'number' && isFinite(dir))
+      ? { dx: Math.sin(dir), dy: Math.cos(dir) }
+      : (DIR_VEC[dir] || DIR_VEC.down);
     var fx = dv.dx, fz = dv.dy;   // vecteur unitaire du regard, dans le plan (x,z)
     var best = null, bestScore = -1;
     for (var i = 0; i < _roamers.length; i++) {
@@ -922,6 +1103,17 @@
 
   function onEncounter(fn) { if (typeof fn === 'function') _encounterCbs.push(fn); }
 
+  /** Gerbe d'étoiles à un endroit du monde, en coordonnées de tuiles.
+   *  `fxStarsBurst` reste privé (il veut un THREE.Vector3 et la scène) : on
+   *  n'expose que ce dont `game3d.js` a besoin pour fêter une NOUVELLE ESPÈCE
+   *  par-dessus la gerbe ordinaire de la capture (correction 2.2). */
+  function starsAt(x, z, n) {
+    if (!THREE_OK || !_scene) return;
+    try {
+      fxStarsBurst(new THREE.Vector3(x, heightAt(x, z) + 0.45, z), n || 22);
+    } catch (e) { warn('gerbe d\'étoiles', e); }
+  }
+
   R3.register('roamers', {
     build: build,
     setRegion: setRegion,
@@ -931,6 +1123,8 @@
     nearest: nearest,
     throwBall: throwBall,
     remove: remove,
+    setLegendCooldown: setLegendCooldown,
+    starsAt: starsAt,
     onEncounter: onEncounter,
     setRepel: setRepel,
   });

@@ -237,8 +237,21 @@
     });
   }
 
-  /** Les bruitages du jeu 2D, sans jamais planter si Audio_ manque. */
+  /**
+   * Les bruitages, sans jamais planter si l'audio manque.
+   *
+   * DEUX catalogues, dans cet ordre : celui de `js3d/sfx3d.js` (les sons que
+   * la 3D appelait sans qu'ils existent — 'heal', 'legendary'), puis celui de
+   * `js/audio.js`, que le contrat gèle. `sfx3d.play()` renvoie false quand le
+   * nom ne lui appartient pas : les neuf sons d'origine passent donc au
+   * travers sans détour. C'est LE point de passage unique des bruitages de
+   * game3d — un son ajouté à sfx3d.js est jouable d'ici sans autre changement.
+   */
   function sfx(name) {
+    try {
+      const s = mod('sfx');
+      if (s && s.play && s.play(name)) return;
+    } catch (e) { /* extension indisponible : on tente le catalogue d'origine */ }
     try { if (typeof Audio_ !== 'undefined' && Audio_.sfx && Audio_.sfx[name]) Audio_.sfx[name](); }
     catch (e) { /* audio indisponible : le jeu continue */ }
   }
@@ -247,9 +260,109 @@
   //  1. INITIALISATION
   // ===========================================================================
 
+  // ---------------------------------------------------------------------------
+  //  CONTRÔLE DE DÉMARRAGE (correction 2.8)
+  //  Les 45 balises <script> d'index3d.html n'étaient gardées que par des
+  //  commentaires. Un fichier renommé, déplacé, ou cassé par une virgule
+  //  disparaissait en silence : le jeu démarrait quand même, en moins bien, et
+  //  personne ne savait pourquoi. On le DIT, en nommant le fichier.
+  //
+  //  ⚠️ CETTE LISTE EST UN CONTRAT : tout nouveau module s'y ajoute. Elle est
+  //  bon marché à tenir (une ligne) et c'est le seul endroit du jeu qui sache
+  //  ce qui est censé être chargé.
+  // ---------------------------------------------------------------------------
+
+  /** [ nom enregistré via R3.register, fichier qui le fournit ]. */
+  const MODULES_ATTENDUS = [
+    ['tiles', 'tiles3d.js'], ['types', 'types3d.js'], ['moves', 'moves3d.js'],
+    ['dex', 'dex3d.js'], ['evolve', 'evolve3d.js'], ['team', 'team3d.js'],
+    ['cities', 'cities3d.js'], ['arenas', 'arenas3d.js'], ['shop', 'shop3d.js'],
+    ['quest', 'quest3d.js'], ['regions', 'regions3d.js'],
+    ['water', 'water3d.js'], ['sky', 'sky3d.js'], ['citybuild', 'citybuild3d.js'],
+    ['world', 'world3d.js'],
+    ['clib', 'creatures3d.lib.js'], ['creaturesP3', 'creatures3d.p3.js'],
+    ['creatures3d.p5', 'creatures3d.p5.js'], ['llib', 'legendlib3d.js'],
+    ['gates', 'gates3d.js'], ['actors', 'actors3d.js'], ['roamers', 'roamers3d.js'],
+    ['buddy', 'buddy3d.js'], ['camera', 'camera3d.js'], ['airship', 'airship3d.js'],
+    ['music', 'music3d.js'], ['sfx', 'sfx3d.js'], ['tera', 'tera3d.js'],
+    ['hud', 'hud3d.js'], ['battle', 'battle3d.js'],
+  ];
+
+  /** Les lots de modèles ne s'enregistrent pas comme modules : on vérifie
+   *  qu'une créature de chacun est bien arrivée dans le registre de core3d. */
+  const MODELES_ATTENDUS = [
+    ['feuillou', 'creatures3d.p1.js'], ['fluffly', 'creatures3d.p2.js'],
+    ['etoilamer', 'creatures3d.p3.js'], ['stellini', 'creatures3d.p4.js'],
+    ['pyrathos', 'legend3d.p1.js'], ['cryonix', 'legend3d.p2.js'],
+    ['aureol', 'legend3d.p3.js'],
+  ];
+
+  /** Le jeu 2D fournit des données que la 3D relit. Ses fichiers déclarent des
+   *  `const` de haut niveau : elles ne sont PAS sur `window`, il faut donc un
+   *  `typeof` écrit en clair — d'où les petites fonctions. */
+  const FICHIERS_2D = [
+    [function () { return typeof PALETTE !== 'undefined'; }, 'js/palette.js'],
+    [function () { return typeof SPRITES !== 'undefined'; }, 'js/sprites.js'],
+    [function () { return typeof Audio_ !== 'undefined'; }, 'js/audio.js'],
+    [function () { return typeof MAP !== 'undefined'; }, 'js/world.js'],
+    [function () { return typeof NPCS !== 'undefined'; }, 'js/npcs.js'],
+    [function () { return typeof CREATURES !== 'undefined'; }, 'js/creatures.js'],
+  ];
+
+  /**
+   * checkBoot() — tout le monde est-il là ?
+   * -> true si oui. Sinon on affiche le panneau du filet (index3d.html) en
+   *    nommant les fichiers manquants, et on laisse le jeu démarrer quand même :
+   *    la philosophie du jeu est de ne jamais bloquer un enfant, et la plupart
+   *    des modules sont facultatifs (game3d les cherche tous à la volée).
+   */
+  function checkBoot() {
+    const manquants = [];
+    if (typeof THREE === 'undefined') manquants.push('js3d/vendor/three.min.js');
+    // Sans le socle, `R3` n'existe même pas comme variable : on s'arrête là
+    // plutôt que d'annoncer trente modules absents pour un seul fichier perdu.
+    if (typeof R3 === 'undefined') {
+      manquants.push('js3d/core3d.js');
+    } else {
+      for (let i = 0; i < MODULES_ATTENDUS.length; i++) {
+        if (!mod(MODULES_ATTENDUS[i][0])) manquants.push('js3d/' + MODULES_ATTENDUS[i][1]);
+      }
+      const modeles = R3.CREATURE_BUILDERS || {};
+      for (let i = 0; i < MODELES_ATTENDUS.length; i++) {
+        if (!modeles[MODELES_ATTENDUS[i][0]]) manquants.push('js3d/' + MODELES_ATTENDUS[i][1]);
+      }
+    }
+    for (let i = 0; i < FICHIERS_2D.length; i++) {
+      let ok = false;
+      try { ok = FICHIERS_2D[i][0](); } catch (e) { ok = false; }
+      if (!ok) manquants.push(FICHIERS_2D[i][1]);
+    }
+
+    if (!manquants.length) return true;
+
+    console.error('[game3d] démarrage incomplet — fichiers absents ou cassés :\n  ' +
+      manquants.join('\n  '));
+    const liste = manquants.slice(0, 6).join(', ')
+      + (manquants.length > 6 ? ' (et ' + (manquants.length - 6) + ' autres)' : '');
+    if (typeof window.ROBIN_OOPS === 'function') {
+      try {
+        window.ROBIN_OOPS('Il manque ' + manquants.length + ' morceau'
+          + (manquants.length > 1 ? 'x' : '') + ' du jeu.', [
+            'Ces fichiers n\'ont pas été chargés : ' + liste + '.',
+            'Le jeu démarre quand même, mais certaines choses vont manquer.',
+          ]);
+      } catch (e) { /* le panneau est un bonus */ }
+    }
+    return false;
+  }
+
   function init() {
     canvas = document.getElementById('game');
     if (!canvas) { console.error('[game3d] canvas #game introuvable.'); return; }
+
+    // AVANT tout le reste : on dit ce qui manque pendant que l'écran est encore
+    // vide. Le jeu continue ensuite, quoi qu'il arrive.
+    checkBoot();
 
     initRenderer();
     initScene();
@@ -534,7 +647,11 @@
 
   // ===========================================================================
   //  3. ENTRÉES CLAVIER (§19)
-  //     Flèches/ZQSD · Espace · B · E · C · N · V · Shift+←/→ · M · Échap
+  //     Flèches/ZQSD · Espace · B · X · F · E · C · J · N · T · V · H · P
+  //     · Shift+←/→ · M · Échap
+  //     H ouvre l'écran d'aide : c'est LA liste de référence des commandes,
+  //     tenue dans `HELP_SECTIONS` de hud3d.js. Toute touche ajoutée ici doit
+  //     y être ajoutée aussi, ainsi que dans #controls-hint (index3d.html).
   // ===========================================================================
 
   function onKeyDown(e) {
@@ -588,10 +705,12 @@
     // --- Boutique / journal / Académie ---------------------------------------
     // Le HUD gère ses propres clics et flèches ; ici on ne retient qu'Échap,
     // pour qu'aucun écran ne puisse retenir Robin prisonnier.
-    if (state.screen === 'shop' || state.screen === 'journal' || state.screen === 'academy') {
+    if (state.screen === 'shop' || state.screen === 'journal' || state.screen === 'academy'
+        || state.screen === 'help') {
       const k = e.key;
       const ferme = (k === 'Escape')
-        || (state.screen === 'journal' && (k === 'j' || k === 'J'));
+        || (state.screen === 'journal' && (k === 'j' || k === 'J'))
+        || (state.screen === 'help' && (k === 'h' || k === 'H'));
       if (ferme) { e.preventDefault(); closeOverlays(); }
       return;
     }
@@ -648,6 +767,20 @@
         e.preventDefault(); callAirship(); break;
       case 'm': case 'M':
         e.preventDefault(); toggleMute(); break;
+      case 'p': case 'P':
+        // Le compteur de performance. Il existait mais n'avait AUCUNE porte
+        // d'entrée : il fallait taper `index3d.html#fps` dans la barre
+        // d'adresse. Un clic dessus le referme aussi.
+        e.preventDefault(); call('hud', 'toggleFps', []); break;
+      case 'h': case 'H':
+        // Rappel des commandes. En pratique le HUD capte `H` en phase de
+        // CAPTURE et nous rappelle via `GAME3D.help()` : on n'arrive ici que
+        // s'il n'est pas chargé. `openHelpScreen()` sait déjà se replier tout
+        // seul en boîte de dialogue — inutile de tester le HUD ici, et le
+        // faire masquait justement ce repli.
+        e.preventDefault();
+        openHelpScreen();
+        break;
       case 'Escape':
         e.preventDefault(); closeOverlays(); break;
     }
@@ -721,9 +854,12 @@
   function toggleMute() {
     let muted = false;
     try { muted = Audio_.toggleMute(); } catch (e) { return; }
-    // Le bouton ♪ doit couper les DEUX sources : les bruitages de js/audio.js
-    // et la musique de music3d.js, qui a son propre contexte audio.
+    // Le bouton ♪ doit couper les TROIS sources, chacune ayant son propre
+    // contexte audio : les bruitages de js/audio.js (ci-dessus), la musique de
+    // music3d.js, et les bruitages ajoutés par sfx3d.js. En oublier une, c'est
+    // un jeu qu'on croit muet et qui continue de faire du bruit.
     call('music', 'setMuted', [muted]);
+    call('sfx', 'setMuted', [muted]);
     updateMuteButton(muted);
     call('hud', 'setMuted', [muted]);
   }
@@ -1666,6 +1802,14 @@
    *  dépendent. Utilisé aussi bien par les portails que par le dirigeable
    *  (appelé alors au milieu du vol, quand l'écran est noyé de nuages). */
   function loadRegionData(id) {
+    // Ceinture-bretelles : on change de région, plus aucune Ball n'est en vol.
+    // `roamers.setRegion` prévient maintenant son appelant (donc ce drapeau
+    // retombe déjà tout seul), mais s'il venait à manquer, `state.throwing`
+    // resté à `true` tuerait les touches B et T pour toute la session.
+    // Ce point de passage est le SEUL commun aux portails, au dirigeable
+    // (`arriveAtPort` appelle loadRegionData directement, sans applyRegion) et
+    // à la reprise de sauvegarde.
+    state.throwing = false;
     const R = regions();
     if (R && R.load) safeCall('regions.load', function () { R.load(id); });
     state.regionId = id;
@@ -2060,7 +2204,11 @@
     let r = null;
     if (ro.aimed) {
       r = safeCall('roamers.aimed', function () {
-        return ro.aimed(p.worldX, p.worldZ, p.dir, BALL_RANGE);
+        // En vue subjective on vise CE QU'ON REGARDE, pas la cardinale la
+        // plus proche : à 45°, la créature pile en face pouvait sortir du
+        // cône. Ailleurs, le regard EST cardinal, on garde `p.dir`.
+        const cap = isFpsView() ? fpsYaw() : p.dir;
+        return ro.aimed(p.worldX, p.worldZ, cap, BALL_RANGE);
       }) || null;
     }
     if (!r && ro.nearest) {
@@ -2096,18 +2244,122 @@
     sfx('throwBall');
     markSeen(target.speciesId);
 
-    if (!ro || !ro.throwBall) { state.throwing = false; return; }
+    // Aucune Ball n'a volé : on la remet dans le sac. Un enfant ne doit jamais
+    // perdre un objet parce qu'un module manque ou qu'un lancer a été annulé.
+    const rendreBall = function () {
+      state.items[ballId] = (state.items[ballId] | 0) + 1;
+      ensureActiveBall();
+      refreshHudCounters();
+    };
+
+    if (!ro || !ro.throwBall) { state.throwing = false; rendreBall(); return; }
     safeCall('roamers.throwBall', function () {
       ro.throwBall(target, chance, function (result) {
         state.throwing = false;
-        if (result === 'caught') onCaught(target.speciesId, target.level || 5, target);
-        else {
-          sfx('escape');
-          showToast('Oh non… elle s\'est échappée !', '💨');
+        if (result === 'caught') { onCaught(target.speciesId, target.level || 5, target); return; }
+        if (result === 'fled') {
+          // Lancer ABANDONNÉ (changement de région en plein vol, ou second
+          // lancer refusé) : on rend la Ball et on se tait. Annoncer un échec
+          // à un enfant qui n'a rien vu serait injuste.
+          rendreBall();
+          return;
         }
+        sfx('escape');
+        showToast('Oh non… elle s\'est échappée !', '💨');
       });
     });
-    if (_broken['roamers.throwBall']) state.throwing = false;
+    if (_broken['roamers.throwBall']) { state.throwing = false; rendreBall(); }
+  }
+
+  // ---------------------------------------------------------------------------
+  //  CE QUE RAPPORTE UNE CAPTURE  (correction 2.2)
+  //
+  //  Les rencontres surprises ont été coupées EXPRÈS (`ENCOUNTER_CHANCE = 0`) :
+  //  attraper les créatures qu'on voit sur la carte est LA boucle du jeu, celle
+  //  que Robin a demandée. Or elle ne rapportait rien — ni expérience, ni
+  //  argent — et disait exactement la même phrase pour la toute première espèce
+  //  et pour le quinzième doublon. Un enfant qui joue « attrapeur » arrivait
+  //  donc à l'arène avec une équipe trop faible, sans comprendre pourquoi.
+  //
+  //  Trois gains, dans cet ordre d'importance :
+  //   1. une espèce JAMAIS capturée se fête (message à part, son 'rare', gerbe
+  //      d'étoiles, compteur x/62) et verse une prime unique ;
+  //   2. toute capture donne un peu d'expérience à la créature au combat ;
+  //   3. toute capture donne quelques pièces.
+  //  Volontairement MOINS que le combat (moitié de l'XP, moitié de l'argent) :
+  //  se battre doit rester la façon la plus rapide de progresser.
+  // ---------------------------------------------------------------------------
+
+  const PRIME_ESPECE = 100;   // pièces, versées UNE SEULE FOIS par espèce
+
+  /** L'espèce n'a-t-elle jamais été capturée ? À demander IMPÉRATIVEMENT avant
+   *  d'incrémenter `state.collection`, sinon la réponse est toujours « non ».
+   *  Ne pas confondre avec `state.seen` : lui compte les espèces CROISÉES. */
+  function estNouvelleEspece(speciesId) {
+    return !!speciesId && !(state.collection[speciesId] > 0);
+  }
+
+  /**
+   * Les textes à afficher après une capture, gains VERSÉS au passage.
+   * À appeler APRÈS l'incrément de `state.collection` (le compteur x/62 doit
+   * compter la nouvelle venue) et AVANT `refreshHudCounters()` / `saveGame()`.
+   *
+   * `beneficiaire` est la créature qui reçoit l'XP — la créature active, ou
+   * celle qui est au combat ; jamais celle qu'on vient d'attraper.
+   */
+  function catchRewardTexts(speciesId, level, nouvelle, beneficiaire) {
+    const textes = [];
+    const dex = mod('dex');
+    const sp = (dex && dex.get) ? dex.get(speciesId) : null;
+    const nom = (sp && sp.name) || speciesId;
+    const lvl = Math.max(1, Math.round(level || 5));
+
+    // --- 1. La première fois qu'une espèce entre au Pokédex ---
+    if (nouvelle) {
+      const total = (dex && dex.count) || 62;
+      const uniques = Object.keys(state.collection).length;
+      state.money = Math.max(0, (state.money | 0) + PRIME_ESPECE);
+      textes.push('✨ NOUVELLE ESPÈCE ! ✨\n' + nom + ' n\'était jamais entré dans ton Pokédex.\n' +
+        'Tu en as maintenant ' + uniques + ' sur ' + total + ' !\n' +
+        '+' + PRIME_ESPECE + ' pièces 🪙 pour la découverte.');
+    }
+
+    // --- 2. Un peu d'expérience pour la créature qui t'accompagne ---
+    let ligne = '';
+    const team = teamApi();
+    if (beneficiaire && team && team.gainXp && team.xpFor) {
+      // La moitié du barème de combat : attraper fait progresser, se battre
+      // fait progresser plus vite. `xpFor` sait déjà qu'un légendaire vaut 2,5×.
+      const plein = safeCall('team.xpFor.capture', function () {
+        return team.xpFor({ id: speciesId, level: lvl });
+      }) || 0;
+      const gain = Math.max(1, Math.round(plein / 2));
+      const res = safeCall('team.gainXp.capture', function () { return team.gainXp(beneficiaire, gain); });
+      ligne += '\n' + (beneficiaire.nick || 'Ta créature') + ' gagne ' + gain + ' points d\'expérience !';
+      ligne += levelUpLines(beneficiaire, res);
+    }
+
+    // --- 3. Quelques pièces (la moitié d'un combat sauvage) ---
+    // SAUF POUR UN LÉGENDAIRE. Depuis la correction 1.4, l'ASSOMMER verse le
+    // barème `legendary` (20 × niveau + 200, soit ~1200 pièces au Nv 50) ; le
+    // CAPTURER n'en versait que 2 × niveau, soit 100. Mettre le gardien K.O.
+    // était donc SIX FOIS plus payant que l'attraper — l'exact contraire de la
+    // boucle que Robin a demandée (2.2), dans une économie où la Pokéball vaut
+    // 200. On verse ici la moitié du barème : le K.O. reste un peu mieux payé
+    // (c'est plus long et plus dur), mais les deux issues jouent enfin dans la
+    // même cour. On n'a rien retiré à personne : le jeu n'est jamais punitif.
+    const shop = mod('shop');
+    let pieces = Math.max(1, 2 * lvl);
+    if (sp && sp.legendary && shop && shop.rewardFor) {
+      const plein = safeCall('shop.rewardFor.legendaire', function () {
+        return shop.rewardFor('legendary', lvl);
+      }) || 0;
+      if (plein > 0) pieces = Math.max(pieces, Math.round(plein / 2));
+    }
+    state.money = Math.max(0, (state.money | 0) + pieces);
+    ligne += '\n+' + pieces + ' pièces 🪙';
+    textes.push(ligne.replace(/^\n/, ''));
+    return textes;
   }
 
   /** Capture réussie (monde ouvert OU combat) : équipe, collection, sauvegarde. */
@@ -2116,6 +2368,11 @@
     const dex = mod('dex');
     const species = (dex && dex.get) ? dex.get(speciesId) : null;
     const nom = (species && species.name) || speciesId;
+
+    // AVANT tout : qui touchera l'XP (surtout pas la créature qu'on attrape),
+    // et l'espèce est-elle nouvelle (avant l'incrément de la collection).
+    const beneficiaire = activeMon();
+    const nouvelle = estNouvelleEspece(speciesId);
 
     let where = 'box';
     if (team && team.create && team.add) {
@@ -2128,14 +2385,22 @@
     }
     state.collection[speciesId] = (state.collection[speciesId] || 0) + 1;
     markSeen(speciesId);
-    sfx('catch');
+    // Une première fois, ça s'entend : le son 'rare' au lieu du 'catch' habituel.
+    sfx(nouvelle ? 'rare' : 'catch');
+    // …et ça se voit : une seconde gerbe d'étoiles par-dessus celle que
+    // roamers3d joue déjà à chaque capture réussie.
+    if (nouvelle && roamer) call('roamers', 'starsAt', [roamer.x, roamer.z, 26]);
     call('buddy', 'reactTo', ['capture']);
+    const gains = catchRewardTexts(speciesId, level, nouvelle, beneficiaire);
     refreshHudCounters();
-    if (roamer) call('roamers', 'remove', [roamer]);
+    // 'caught' : l'autel du légendaire se repose 10 minutes (§16). Sans cette
+    // raison, il repartirait sur le cooldown court des défaites.
+    if (roamer) call('roamers', 'remove', [roamer, 'caught']);
     saveGame();
 
     showMessage('Bravo ! ' + nom + ' est capturé' + (species && species.legendary ? ' !!! ✨' : ' ! ✦') +
       (where === 'box' ? '\nTon équipe est pleine : il rejoint la Boîte.' : '\nIl rejoint ton équipe !'));
+    showMessages(gains);
     // §5 : la quête est prévenue APRÈS CHAQUE capture, monde ouvert compris.
     showMessages(questTextsForCatch(speciesId));
   }
@@ -2219,8 +2484,13 @@
     if (!roamer) return;
     const dex = mod('dex');
     const species = (dex && dex.get) ? dex.get(roamer.speciesId) : null;
-    call('roamers', 'remove', [roamer]);
-    startWildBattle(roamer.speciesId, roamer.level || 5, species);
+    // 'battle' : on retire le légendaire de la carte AVANT le combat, alors
+    // qu'on ne sait pas encore si Robin va gagner, perdre, fuir ou capturer.
+    // On part donc sur le cooldown COURT (2 min) — perdre ne doit pas vider
+    // l'autel dix minutes réelles — et `onCaughtInBattle` remontera à 10 min
+    // si la capture aboutit vraiment.
+    call('roamers', 'remove', [roamer, 'battle']);
+    startWildBattle(roamer.speciesId, roamer.level || 5, species, roamer._altarId || null);
   }
 
   // ===========================================================================
@@ -2278,7 +2548,10 @@
     startWildBattle(species.id, level, species);
   }
 
-  function startWildBattle(speciesId, level, species) {
+  /** `legendAltarId` (facultatif) : l'autel d'où vient un légendaire. Mémorisé
+   *  dans l'objet combat parce que `onCaughtInBattle` ne reçoit que le Mon et
+   *  n'aurait sinon aucun moyen de savoir quel autel remettre à 10 min (2.3). */
+  function startWildBattle(speciesId, level, species, legendAltarId) {
     const team = teamApi();
     const mine = activeMon();
     if (!mine) { showMessage('Toute ton équipe est K.O. !\nVa vite au centre de soins.'); return; }
@@ -2306,6 +2579,15 @@
       ball: { active: false, progress: 0, shakeIndex: 0, result: null },
       canFlee: true,
       canCatch: true,
+      // §6 / correction 1.4 : un légendaire reste un combat de `kind: 'wild'`
+      // — c'est ce `kind` qui décide qu'un combat sauvage s'arrête après une
+      // seule créature, et qui règle le multiplicateur d'XP « dresseur ». On
+      // ne le change SURTOUT pas ; on pose un drapeau à côté, et c'est lui
+      // qui choisit le barème d'argent. Sans ça, le barème `legendary` de
+      // shop3d.js (20 × niveau + 200) n'était jamais atteint : un légendaire
+      // de niveau 50 rapportait 200 pièces au lieu de 1200.
+      legendary: !!(sp && sp.legendary),
+      legendAltarId: legendAltarId || null,
     };
     enterBattle(b, 'Un ' + (foeMon.nick || speciesId) + ' sauvage apparaît !' +
       (sp && sp.description ? '\n' + sp.description : ''));
@@ -2703,6 +2985,9 @@
     // Une Ball : capture PENDANT le combat (uniquement en combat sauvage).
     if (isBallId(id)) {
       if (b.canCatch === false) { showToast('On ne capture pas la créature d\'un dresseur !', '🚫'); return; }
+      // Une Ball est DÉJÀ en vol : on refuse AVANT le décompte, sinon la Ball
+      // serait retirée du sac sans qu'aucune ne parte (soft-lock historique).
+      if (b.phase === 'ball' || (b.ball && b.ball.active)) return;
       // §11.2 : le sélecteur vaut AUSSI ici. Choisir une Ball dans le sac
       // devient donc le choix courant, il n'y a plus deux vérités.
       setActiveBall(id);
@@ -2774,16 +3059,33 @@
     sfx('throwBall');
 
     const bt = mod('battle');
-    if (!bt || !bt.throwBall) { resolveBattleCatch(Math.random() < chance ? 'caught' : 'escaped'); return; }
+    if (!bt || !bt.throwBall) { resolveBattleCatch(Math.random() < chance ? 'caught' : 'escaped', ballId); return; }
     const ok = safeCall('battle.throwBall', function () {
-      bt.throwBall(chance, function (result) { resolveBattleCatch(result); });
+      bt.throwBall(chance, function (result) { resolveBattleCatch(result, ballId); });
       return true;
     });
-    if (!ok) resolveBattleCatch(Math.random() < chance ? 'caught' : 'escaped');
+    if (!ok) resolveBattleCatch(Math.random() < chance ? 'caught' : 'escaped', ballId);
   }
 
-  function resolveBattleCatch(result) {
+  /** `result` vaut 'caught', 'escaped'… ou 'fled' : le lancer a été ABANDONNÉ
+   *  (refusé parce qu'une Ball volait déjà, ou combat quitté en plein vol).
+   *  Aucune Ball n'a volé : on la rend et on rouvre le menu. Jamais punitif —
+   *  un enfant ne doit pas perdre un objet à cause d'un bug. */
+  function resolveBattleCatch(result, ballId) {
     const b = state.battle;
+    if (result === 'fled') {
+      if (ballId) {
+        state.items[ballId] = (state.items[ballId] | 0) + 1;
+        ensureActiveBall();
+        refreshHudCounters();
+      }
+      if (!b) return;
+      if (b.ball) { b.ball.result = null; b.ball.active = false; }
+      // Le combat peut déjà être ailleurs (fin de combat) : on ne rouvre le
+      // menu que si on était bien resté bloqué sur le lancer.
+      if (b.phase === 'ball') setBattlePhase('choose');
+      return;
+    }
     if (!b) return;
     b.ball.result = result;
     b.ball.active = false;
@@ -2803,6 +3105,12 @@
    *  (niveau, PV, capacités) — c'est bien plus gratifiant qu'une copie neuve. */
   function onCaughtInBattle(mon) {
     const team = teamApi();
+    const b0 = state.battle;
+    // Comme en monde ouvert : l'XP va à la créature au combat, jamais à la
+    // capturée, et la question « nouvelle espèce ? » se pose AVANT l'incrément.
+    const beneficiaire = b0 ? b0.player.mon : null;
+    const nouvelle = estNouvelleEspece(mon.id);
+
     let where = 'box';
     if (team && team.add) {
       mon.caughtAt = { regionId: state.regionId, x: state.player.tileX, y: state.player.tileY };
@@ -2810,15 +3118,23 @@
     }
     state.collection[mon.id] = (state.collection[mon.id] || 0) + 1;
     markSeen(mon.id);
-    sfx('catch');
+    sfx(nouvelle ? 'rare' : 'catch');
+    // 2.3 : la capture est CONFIRMÉE, l'autel peut se reposer 10 minutes. À
+    // l'entrée en combat on n'avait posé que le cooldown court, pour ne pas
+    // punir une défaite.
+    if (b0 && b0.legendAltarId) call('roamers', 'setLegendCooldown', [b0.legendAltarId, 'caught']);
+    const gains = catchRewardTexts(mon.id, mon.level, nouvelle, beneficiaire);
     refreshHudCounters();
     saveGame();
     // On empile d'abord le texte de capture, puis celui de la quête : les
     // messages se lisent dans l'ordre, et le combat ne se termine qu'après.
     // Capture, puis ce qu'en dit la quête, et seulement ensuite la sortie du
     // combat — accrochée au tout dernier message.
+    // ⚠️ Les lignes de gains entrent AVANT `questTextsForCatch` : `showMessages`
+    // n'accroche la sortie du combat qu'au TOUT DERNIER message.
     const suite = ['Bravo ! ' + (mon.nick || mon.id) + ' est capturé ! ✦' +
       (where === 'box' ? '\nTon équipe est pleine : il rejoint la Boîte.' : '\nIl rejoint ton équipe !')]
+      .concat(gains)
       .concat(questTextsForCatch(mon.id));
     showMessages(suite, function () { endBattle(); });
   }
@@ -2876,17 +3192,15 @@
         // `r.pending` : des capacités que la nouvelle forme aurait apprises,
         // mais les 4 emplacements sont pleins. Exactement comme `pendingLearn`
         // d'une montée de niveau : on le DIT, on ne remplace rien tout seul.
+        // Même phrase que `pendingLearnLine`, pour ne pas déplacer le mensonge
+        // d'un écran à l'autre (`r.pending` contient des CHAÎNES, `pendingLearn`
+        // des objets : `moveNames` avale les deux).
         const lignes = [];
-        if (r.learned && r.learned.length) {
-          lignes.push((mon.nick || mon.id) + ' apprend ' + r.learned.map(function (id) {
-            return (moveOf(id).name || id);
-          }).join(', ') + ' !');
-        }
-        if (r.pending && r.pending.length) {
-          lignes.push((mon.nick || mon.id) + ' aimerait apprendre ' +
-            (moveOf(r.pending[0]).name || r.pending[0]) +
-            ',\nmais connaît déjà 4 capacités. Ce sera pour plus tard !');
-        }
+        const nom = mon.nick || mon.id;
+        const appris = moveNames(r.learned);
+        if (appris.length) lignes.push(nom + ' apprend ' + appris.join(', ') + ' !');
+        const attente = pendingLearnLine(nom, r.pending);
+        if (attente) lignes.push(attente.replace(/^\n/, ''));
         refreshHudCounters();
         saveGame();
         showMessages(lignes, function () {
@@ -2932,6 +3246,57 @@
 
   // --- Fin d'un camp ----------------------------------------------------------
 
+  /** Noms lisibles d'une liste de capacités, QUELLE QU'EN SOIT LA FORME :
+   *  `team.gainXp` rend des objets `{moveId, level}`, `evolve.evolve` des
+   *  chaînes. Les deux passent ici, personne n'a plus à s'en souvenir. */
+  function moveNames(list) {
+    const out = [];
+    const src = Array.isArray(list) ? list : [];
+    for (let i = 0; i < src.length; i++) {
+      const e = src[i];
+      const id = (typeof e === 'string') ? e : (e && e.moveId);
+      if (id) out.push(moveOf(id).name || id);
+    }
+    return out;
+  }
+
+  /**
+   * Ce qu'on dit quand une créature ne peut PAS apprendre une capacité.
+   *
+   * L'ancien texte promettait « Ce sera pour plus tard ! ». C'était faux :
+   * aucun écran de remplacement n'existe, `mon.moves` n'a même pas de point
+   * d'écriture officiel, et une créature à 4 capacités n'apprend plus jamais
+   * rien. On ne fait pas de promesse qu'on ne tient pas à un enfant de 10 ans :
+   * on dit ce qui se passe, sans en faire un drame — elle garde des capacités
+   * qui sont très bien. (L'écran de remplacement reste à écrire : chantier 3.4.)
+   *
+   * Toutes les capacités en attente sont citées, pas seulement la première :
+   * deux paliers au même niveau en perdaient une en silence.
+   */
+  function pendingLearnLine(nom, pending) {
+    const noms = moveNames(pending);
+    if (!noms.length) return '';
+    return '\n' + nom + ' garde ses 4 capacités : pas de place pour ' + noms.join(', ') + '.';
+  }
+
+  /**
+   * Les lignes à afficher après un gain d'XP. Sert à la créature au combat
+   * COMME à ses équipiers et au bonus de badge : pour eux, la valeur de retour
+   * de `gainXp` était purement jetée, si bien qu'un équipier pouvait franchir
+   * plusieurs niveaux et apprendre une capacité dans le silence complet.
+   */
+  function levelUpLines(mon, res) {
+    if (!res || !res.leveled) return '';
+    const nom = (mon && mon.nick) || 'Ta créature';
+    const appris = moveNames(res.learned);
+    // Une SEULE ligne par créature : le bonus de badge peut faire monter les six
+    // d'un coup, et la boîte de dialogue n'a pas de hauteur maximale.
+    let out = '\n' + nom + ' passe au niveau ' + res.level +
+      (appris.length ? ' et apprend ' + appris.join(', ') : '') + ' ! 🎉';
+    out += pendingLearnLine(nom, res.pendingLearn);
+    return out;
+  }
+
   function onFoeFainted() {
     const b = state.battle;
     if (!b) return;
@@ -2946,24 +3311,17 @@
       }) || 10;
       const res = safeCall('team.gainXp', function () { return team.gainXp(b.player.mon, gain); });
       lignes += '\n' + (b.player.mon.nick || 'Ta créature') + ' gagne ' + gain + ' points d\'expérience !';
-      if (res && res.leveled > 0) {
-        lignes += '\nNiveau ' + res.level + ' ! 🎉';
-        if (res.learned && res.learned.length) {
-          lignes += '\nNouvelle capacité : ' + res.learned.map(function (id) {
-            return (moveOf(id).name || id);
-          }).join(', ') + ' !';
-        }
-        if (res.pendingLearn && res.pendingLearn.length) {
-          lignes += '\n' + (b.player.mon.nick || 'Ta créature') + ' aimerait apprendre ' +
-            (moveOf(res.pendingLearn[0].moveId).name || res.pendingLearn[0].moveId) +
-            ',\nmais connaît déjà 4 capacités. Ce sera pour plus tard !';
-        }
-      }
+      lignes += levelUpLines(b.player.mon, res);
       // Un tiers de l'XP pour les autres membres présents : personne n'est oublié.
+      // Leur montée de niveau se DIT, elle aussi : le résultat de `gainXp` était
+      // jeté ici, un équipier changeait de niveau sans que Robin le sache.
       const list = b.player.team || [];
       for (let i = 0; i < list.length; i++) {
         if (list[i] && list[i] !== b.player.mon && list[i].hp > 0) {
-          safeCall('team.gainXp.reste', function () { team.gainXp(list[i], Math.round(gain / 3)); });
+          const r = safeCall('team.gainXp.reste', function () {
+            return team.gainXp(list[i], Math.round(gain / 3));
+          });
+          lignes += levelUpLines(list[i], r);
         }
       }
     }
@@ -2973,8 +3331,15 @@
     if (b.kind === 'wild') {
       b.result = 'win';
       setBattlePhase('result');
-      // §6 : l'argent gagné. `b.kind` vaut déjà 'wild' | 'trainer' | 'champion'.
-      lignes += payRewardLine(b.kind, vaincu && vaincu.level);
+      // §6 : l'argent gagné. `b.kind` vaut 'wild' | 'trainer' | 'champion' ;
+      // le barème « légendaire » se choisit sur le drapeau `b.legendary`, posé
+      // par `startWildBattle` (correction 1.4).
+      lignes += payRewardLine(b.legendary ? 'legendary' : b.kind, vaincu && vaincu.level);
+      // Le gardien est vaincu : l'affaire est classée, son autel se repose 10
+      // minutes comme s'il avait été capturé. Sans ça il reviendrait toutes les
+      // 2 minutes (le cooldown court des défaites) et le barème légendaire à
+      // 1200 pièces deviendrait une machine à sous devant l'autel (2.3 + 1.4).
+      if (b.legendAltarId) call('roamers', 'setLegendCooldown', [b.legendAltarId, 'defeated']);
       finishBattle(['Victoire ! ✦' + lignes]);
       return;
     }
@@ -3041,7 +3406,10 @@
       if (team && team.gainXp) {
         const list = b.player.team || [];
         for (let i = 0; i < list.length; i++) {
-          if (list[i]) safeCall('team.gainXp.badge', function () { team.gainXp(list[i], bonus); });
+          if (!list[i]) continue;
+          // 120 XP, c'est parfois plusieurs niveaux d'un coup : on le DIT.
+          const r = safeCall('team.gainXp.badge', function () { return team.gainXp(list[i], bonus); });
+          texte += levelUpLines(list[i], r);
         }
       }
 
@@ -3190,8 +3558,13 @@
     // Le contexte audio ne peut naître qu'après un geste de l'utilisateur :
     // le clic sur « Commencer l'aventure ! » est le bon moment.
     call('music', 'init', []);
-    call('music', 'setMuted', [
-      (typeof Audio_ !== 'undefined' && Audio_.isMuted && Audio_.isMuted()) || false]);
+    const dejaMuet = (typeof Audio_ !== 'undefined' && Audio_.isMuted && Audio_.isMuted()) || false;
+    call('music', 'setMuted', [dejaMuet]);
+    // Même chose pour l'extension de bruitages : elle a son propre contexte,
+    // donc son propre réveil et son propre silence à régler (`Audio_.isMuted()`
+    // reste la vérité unique).
+    call('sfx', 'init', []);
+    call('sfx', 'setMuted', [dejaMuet]);
 
     if (playerTeamList().length > 0) launchWorld();   // partie déjà commencée
     else { state.screen = 'starter'; openStarterSelection(); }
@@ -3321,7 +3694,8 @@
       '🚪 Suis les colonnes de lumière pour changer de région.\n' +
       'F : sortir ton compagnon de sa Ball · J : journal des légendes\n' +
       'T : appeler le dirigeable · V : changer de vue (dont la vue FPS)\n' +
-      'E : équipe · C : Pokédex · N : carte · M : son');
+      'E : équipe · C : Pokédex · N : carte · M : son\n' +
+      '❓ H : revoir toutes les commandes, quand tu veux.');
   }
 
   // ===========================================================================
@@ -3348,6 +3722,37 @@
     safeCall('hud.openDex', function () { hud.openDex(); });
   }
 
+  /** Écran d'aide (touche H) — les commandes, rappelables à tout moment.
+   *  Appelée aussi PAR LE HUD, qui capte `H` avant nous : lui seul sait
+   *  afficher l'écran, nous seuls savons poser `state.screen` et relâcher les
+   *  touches de déplacement — sinon Robin continue de marcher derrière. */
+  function openHelpScreen() {
+    if (state.screen !== 'world' || state.messages.length > 0) return;
+    const hud = mod('hud');
+    // ⚠️ On ne pose `state.screen = 'help'` QUE si l'écran s'est réellement
+    // affiché. `hud.openHelp()` renvoie false quand son overlay n'a pas pu
+    // être construit : sans ce test, Robin restait bloqué sur un écran 'help'
+    // invisible dont seules Échap et H sortaient, et le repli ci-dessous ne
+    // s'affichait jamais (il ne testait que l'EXISTENCE de la fonction).
+    if (hud && hud.openHelp) {
+      releaseAllKeys();
+      const ouvert = safeCall('hud.openHelp', function () { return hud.openHelp() !== false; });
+      if (ouvert) {
+        sfx('menu');
+        state.screen = 'help';
+        return;
+      }
+    }
+    // Repli : les commandes en boîte de dialogue. Robin doit pouvoir les
+    // revoir même si l'écran dédié manque.
+    showMessage('❓ Les commandes\n' +
+      'Flèches ou ZQSD : marcher · Maj + ←/→ : tourner la caméra\n' +
+      'Espace : parler, entrer, valider · Échap : fermer\n' +
+      'B : lancer une Ball · X : changer de Ball · F : compagnon\n' +
+      'E : équipe · C : Pokédex · N : carte · J : journal\n' +
+      'T : dirigeable · V : changer de vue · M : son · H : cette aide');
+  }
+
   function openMapScreen() {
     if (state.screen !== 'world' || state.messages.length > 0) return;
     const hud = mod('hud');
@@ -3370,11 +3775,12 @@
     call('hud', 'closeShop', []);
     call('hud', 'closeJournal', []);
     call('hud', 'closeAcademy', []);
+    call('hud', 'closeHelp', []);
     const ov = document.getElementById('collection-overlay');
     if (ov) ov.classList.add('hidden');
     releaseAllKeys();
     if (etait === 'team' || etait === 'dex' || etait === 'map' || etait === 'airship' ||
-        etait === 'shop' || etait === 'journal' || etait === 'academy') {
+        etait === 'shop' || etait === 'journal' || etait === 'academy' || etait === 'help') {
       sfx('menu');
       state.screen = 'world';
       refreshCompass();
@@ -3667,11 +4073,34 @@
       fpsDisplayTimer = 0;
       const hud = mod('hud');
       if (hud && hud.setFps) {
-        safeCall('hud.setFps', function () {
-          hud.setFps(Math.round(fpsAvg) + ' fps · ' + workAvg.toFixed(1) + ' ms');
-        });
+        safeCall('hud.setFps', function () { hud.setFps(perfText()); });
       }
     }
+  }
+
+  /** 94300 -> « 94 300 » : à trois chiffres près, un enfant ne lit plus rien. */
+  function milliers(n) {
+    return String(Math.round(n) || 0).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  }
+
+  /**
+   * Le texte du compteur de performance (touche P) — TROIS lignes :
+   *    60 fps · 4.2 ms
+   *    128 dessins
+   *    94 300 triangles
+   * Les deux dernières viennent de `renderer.info.render`, que Three.js remet à
+   * zéro au début de chaque `render()`. Comme `measurePerf()` est appelé APRÈS
+   * le rendu de l'image (frame -> tickGame -> render, puis measurePerf), les
+   * chiffres décrivent bien l'image qu'on vient de voir — y compris en combat,
+   * où battle3d dessine sur le MÊME renderer.
+   * Sans ces deux nombres, « ça rame » n'a aucune cause visible : c'est ce qui
+   * permet à Robin de mesurer lui-même l'effet d'un réglage.
+   */
+  function perfText() {
+    const ligne1 = Math.round(fpsAvg) + ' fps · ' + workAvg.toFixed(1) + ' ms';
+    const r = (renderer && renderer.info) ? renderer.info.render : null;
+    if (!r) return ligne1;
+    return ligne1 + '\n' + milliers(r.calls) + ' dessins\n' + milliers(r.triangles) + ' triangles';
   }
 
   function applyQuality(level, choixManuel) {
@@ -3747,8 +4176,353 @@
         tera: serializeOf('tera'),
         buddy: serializeOf('buddy'),
       };
-      localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+      // ⚠️ LE FILET DE DERNIÈRE LIGNE. On n'écrase JAMAIS une partie qui a des
+      // créatures par une partie qui n'en a AUCUNE. C'est exactement ce que
+      // produit la ligne `ser` ci-dessus quand `team3d.js` ne s'est pas chargé
+      // (une virgule en trop — le scénario même pour lequel checkBoot existe,
+      // et Robin peut cliquer « Continuer quand même ») : la partie repartait
+      // à zéro dans le stockage au premier changement de biome, en silence.
+      // Ici on refuse d'écrire, ET ON LE DIT : mieux vaut une session non
+      // enregistrée qu'une partie effacée.
+      if (!data.team.length && !data.box.length && nbCreatures(readSave(SAVE_KEY)) > 0) {
+        prevenirSauvegardeSuspendue();
+        return;
+      }
+      const json = JSON.stringify(data);
+      rotateBackup(false);     // la copie d'AVANT, mise à l'abri (§2.8)
+      ecrireSauvegarde(json);
     } catch (e) { /* localStorage indisponible : on ignore */ }
+  }
+
+  /** Le message « je n'enregistre plus », une seule fois par session : répété
+   *  à chaque sauvegarde (dix-sept points d'appel), il deviendrait du bruit. */
+  let _saveSuspendueDit = false;
+  function prevenirSauvegardeSuspendue() {
+    if (_saveSuspendueDit) return;
+    _saveSuspendueDit = true;
+    console.warn('[game3d] sauvegarde SUSPENDUE : l\'équipe est vide alors que la '
+      + 'partie enregistrée a des créatures. Un module manque sans doute '
+      + '(team3d.js ?). Rien n\'a été écrasé — recharge la page.');
+    showToast('Je n\'arrive pas à enregistrer, mais ta partie est intacte. '
+      + 'Recharge la page ! 🔄', '💾');
+  }
+
+  /**
+   * Écrit la sauvegarde principale, quoi qu'il en coûte.
+   * Les trois copies de secours du §2.8 occupent de la place, et cette place
+   * pourrait manquer à la VRAIE partie : le filet se retournerait alors contre
+   * ce qu'il protège. Si l'écriture échoue, on sacrifie donc les copies une par
+   * une — la plus vieille d'abord — et on réessaie à chaque fois.
+   * -> false seulement si même une sauvegarde toute seule ne rentre plus.
+   */
+  function ecrireSauvegarde(json) {
+    try { localStorage.setItem(SAVE_KEY, json); return true; }
+    catch (e) { /* plus de place, sans doute : on va en faire */ }
+    const keys = backupKeysRecentes();   // [la plus récente … la plus ancienne]
+    for (let i = keys.length - 1; i >= 0; i--) {
+      try { localStorage.removeItem(keys[i]); } catch (e) { /* rien */ }
+      try { localStorage.setItem(SAVE_KEY, json); return true; }
+      catch (e) { /* toujours pas : on libère la copie suivante */ }
+    }
+    console.warn('[game3d] la sauvegarde n\'a pas pu être écrite : plus de place '
+      + 'dans ce navigateur. Le bouton « Enregistrer ma partie dans un fichier » '
+      + 'de l\'écran d\'aide (H) reste le meilleur recours.');
+    return false;
+  }
+
+  // ---------------------------------------------------------------------------
+  //  LES FILETS DE LA SAUVEGARDE (correction 2.8)
+  //  La partie de Robin n'existe QUE dans le localStorage de ce navigateur.
+  //  Un nettoyage d'historique, un profil recréé, un bug de sérialisation, et
+  //  des mois de jeu disparaissent sans copie nulle part. D'où :
+  //    1. trois copies de secours tournantes dans le localStorage ;
+  //    2. un export / import en VRAI fichier, sur le disque (écran d'aide, H).
+  // ---------------------------------------------------------------------------
+  const BACKUP_KEYS = ['robinGame3d_bak1', 'robinGame3d_bak2', 'robinGame3d_bak3'];
+  const BACKUP_INDEX = 'robinGame3d_baks';        // { slot, at } : où en est la rotation
+  const BACKUP_MIN_MS = 3 * 60 * 1000;            // une copie toutes les 3 minutes au plus
+
+  /** L'état de la rotation. Relu du localStorage : sans lui, chaque session
+   *  recommencerait à l'emplacement 1 et écraserait toujours la même copie. */
+  let _bak = null;
+  function backupIndex() {
+    if (_bak) return _bak;
+    const o = readSave(BACKUP_INDEX) || {};
+    _bak = {
+      slot: (typeof o.slot === 'number' && o.slot >= 0) ? (o.slot | 0) % BACKUP_KEYS.length : -1,
+      at: (typeof o.at === 'number' && isFinite(o.at)) ? o.at : 0,
+    };
+    return _bak;
+  }
+
+  /**
+   * Recopie la sauvegarde DÉJÀ EN PLACE dans l'emplacement suivant.
+   * On copie l'ancienne, jamais celle qu'on s'apprête à écrire : c'est tout
+   * l'intérêt, revenir à un état qu'on savait bon. Trois emplacements en
+   * rotation, donc trois âges différents — même une partie abîmée sauvegardée
+   * deux fois de suite laisse une copie saine.
+   * `saveGame()` est appelé dix-sept fois (capture, badge, achat, évolution,
+   * changement de région…) : sans le délai de trois minutes, on triplerait le
+   * nombre d'écritures pour trois copies quasi identiques.
+   * @param {boolean} force  copier tout de suite (avant un import de fichier)
+   * -> l'emplacement écrit (0..2), ou -1 si rien n'a été copié.
+   */
+  function rotateBackup(force) {
+    const b = backupIndex();
+    const now = Date.now();
+    if (!force && (now - b.at) < BACKUP_MIN_MS) return -1;
+    let actuelle = null;
+    try { actuelle = localStorage.getItem(SAVE_KEY); } catch (e) { return -1; }
+    if (!actuelle) return -1;              // première partie : rien à copier
+    // ⚠️ ON NE RECOPIE JAMAIS UNE SAUVEGARDE ILLISIBLE. Sinon le jour où la clé
+    // principale s'abîme, `loadGame()` reprend une copie saine, appelle
+    // `saveGame()` — et la rotation écraserait une bonne copie avec la ruine
+    // qu'on vient justement de contourner.
+    if (!ressembleAUnePartie(actuelle)) return -1;
+    // ⚠️ ET SURTOUT : ON NE RECOPIE JAMAIS UNE PARTIE APPAUVRIE. « Lisible » ne
+    // suffisait pas — `saveGame()` écrit `team: []` dès que `team3d.js` ne se
+    // charge pas (une virgule en trop, exactement le cas de checkBoot), et
+    // cette sauvegarde-là passait le contrôle. Trois rotations plus tard, les
+    // trois copies étaient vides elles aussi : le filet se dissolvait dans le
+    // cas précis pour lequel il a été écrit. Deux gardes désormais :
+    //   1. une partie sans AUCUNE créature n'est jamais recopiée ;
+    //   2. une copie plus riche n'est jamais remplacée par une plus pauvre —
+    //      on saute alors à l'emplacement suivant plutôt que de bloquer la
+    //      rotation (relâcher une créature reste possible un jour).
+    const nb = nbCreatures(actuelle);
+    if (nb <= 0) return -1;
+    // Deux copies identiques, c'est une profondeur d'historique perdue pour
+    // rien (`closeOverlays()` sauvegarde à chaque écran refermé, même quand
+    // rien n'a changé).
+    try { if (localStorage.getItem(BACKUP_KEYS[b.slot]) === actuelle) return -1; }
+    catch (e) { /* tant pis, on recopiera */ }
+
+    for (let i = 1; i <= BACKUP_KEYS.length; i++) {
+      const slot = (b.slot + i) % BACKUP_KEYS.length;
+      let vieille = null;
+      try { vieille = localStorage.getItem(BACKUP_KEYS[slot]); } catch (e) { vieille = null; }
+      if (vieille && nbCreatures(vieille) > nb) continue;   // elle vaut mieux : on n'y touche pas
+      try {
+        localStorage.setItem(BACKUP_KEYS[slot], actuelle);
+        // ⚠️ L'INDEX D'ABORD, `_bak` ENSUITE. Si `setItem` de l'index échoue
+        // (plausible : on vient justement de remplir le stockage avec la
+        // copie), le `catch` efface la copie — mais un curseur déjà avancé en
+        // mémoire, lui, ne se remettrait pas en arrière : il aurait désigné un
+        // emplacement vide pour toute la session, et le délai de trois minutes
+        // aurait bloqué une copie qui n'a jamais eu lieu.
+        localStorage.setItem(BACKUP_INDEX, JSON.stringify({ slot: slot, at: now }));
+        b.slot = slot; b.at = now;
+        return slot;
+      } catch (e) {
+        // Plus de place ? On efface la copie ratée : LA VRAIE SAUVEGARDE PASSE
+        // AVANT TOUT, elle est écrite juste après nous et doit trouver la place.
+        try { localStorage.removeItem(BACKUP_KEYS[slot]); } catch (e2) { /* rien */ }
+        return -1;
+      }
+    }
+    return -1;   // les trois copies valent mieux que la partie en cours
+  }
+
+  /** Les copies de secours, de la plus récente à la plus ancienne. */
+  function backupKeysRecentes() {
+    const b = backupIndex();
+    const n = BACKUP_KEYS.length;
+    const out = [];
+    for (let i = 0; i < n; i++) out.push(BACKUP_KEYS[((b.slot - i) % n + n) % n]);
+    return out;
+  }
+
+  /** Nom du fichier d'export, lisible par un enfant : robin-partie-2026-08-01.json */
+  function saveFileName() {
+    const d = new Date();
+    const p = function (n) { return (n < 10 ? '0' : '') + n; };
+    return 'robin-partie-' + d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + '.json';
+  }
+
+  /**
+   * exportSave() — télécharge la partie dans un vrai fichier.
+   * Un Blob et un <a download>, rien d'autre : pas de dépendance, et ça marche
+   * même en file:// . On sauvegarde d'abord, pour exporter l'instant présent.
+   */
+  function exportSave() {
+    saveGame();
+    let raw = null;
+    try { raw = localStorage.getItem(SAVE_KEY); } catch (e) { raw = null; }
+    if (!raw) { showToast('Il n\'y a pas encore de partie à enregistrer.', '⚠️'); return false; }
+    try {
+      const nom = saveFileName();
+      const url = URL.createObjectURL(new Blob([raw], { type: 'application/json' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = nom;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      // On laisse au navigateur le temps d'écrire avant de libérer l'URL.
+      setTimeout(function () { try { URL.revokeObjectURL(url); } catch (e) { /* rien */ } }, 10000);
+      showToast('Partie enregistrée : ' + nom, '💾');
+      return true;
+    } catch (e) {
+      console.warn('[game3d] export impossible :', e);
+      showToast('Le fichier n\'a pas pu être écrit.', '⚠️');
+      return false;
+    }
+  }
+
+  /** L'<input type="file">, créé une seule fois et gardé caché. */
+  let _importInput = null;
+
+  /** importSave() — ouvre le sélecteur de fichier. La suite est asynchrone. */
+  function importSave() {
+    try {
+      if (!_importInput) {
+        _importInput = document.createElement('input');
+        _importInput.type = 'file';
+        _importInput.accept = '.json,application/json';
+        _importInput.style.display = 'none';
+        _importInput.addEventListener('change', function () {
+          const f = _importInput.files && _importInput.files[0];
+          // On vide tout de suite : sinon reprendre DEUX FOIS le même fichier
+          // ne déclencherait pas de second 'change'.
+          _importInput.value = '';
+          if (f) lireFichierPartie(f);
+        });
+        document.body.appendChild(_importInput);
+      }
+      _importInput.click();
+      return true;
+    } catch (e) {
+      console.warn('[game3d] import impossible :', e);
+      showToast('Impossible d\'ouvrir un fichier ici.', '⚠️');
+      return false;
+    }
+  }
+
+  function lireFichierPartie(file) {
+    const fr = new FileReader();
+    fr.onerror = function () {
+      closeOverlays();   // sinon le message resterait caché derrière l'écran d'aide
+      showMessage('Ce fichier n\'a pas pu être lu. 😥\nTa partie actuelle n\'a pas bougé.');
+    };
+    fr.onload = function () { installerPartie(String(fr.result || '')); };
+    try { fr.readAsText(file); } catch (e) { fr.onerror(); }
+  }
+
+  /** Ce texte est-il bien une sauvegarde du jeu ? Un seul critère, employé aux
+   *  DEUX endroits qui manipulent du texte brut (la rotation des copies et
+   *  l'import de fichier) : mieux vaut refuser trop que d'installer n'importe
+   *  quoi par-dessus la partie de Robin. */
+  function ressembleAUnePartie(texte) {
+    try {
+      const o = JSON.parse(texte);
+      return !!(o && typeof o === 'object' && Array.isArray(o.team));
+    } catch (e) { return false; }
+  }
+
+  /**
+   * Combien de créatures cette sauvegarde contient-elle (équipe + boîte) ?
+   * -> 0 si elle est vide, illisible, ou si ce n'est pas une partie.
+   * C'est la mesure de RICHESSE de la rotation des copies : « lisible » ne dit
+   * rien de la valeur, et une partie vide est précisément ce que `saveGame()`
+   * écrit quand `team3d.js` manque à l'appel.
+   */
+  function nbCreatures(texteOuObjet) {
+    let o = texteOuObjet;
+    if (typeof o === 'string') {
+      try { o = JSON.parse(o); } catch (e) { return 0; }
+    }
+    if (!o || typeof o !== 'object') return 0;
+    const t = Array.isArray(o.team) ? o.team.length : 0;
+    const b = Array.isArray(o.box) ? o.box.length : 0;
+    return t + b;
+  }
+
+  /**
+   * Écrit la partie importée par-dessus la clé principale, en faisant de la
+   * place au besoin. C'était le SEUL chemin d'écriture qui n'en savait pas
+   * faire (un `setItem` nu), alors que l'import est le dernier recours quand
+   * le stockage a mal tourné : Robin ressortait son fichier et s'entendait
+   * répondre « pas de place » alors qu'effacer les copies aurait suffi.
+   * @param {string} texte   la partie à installer
+   * @param {number} refuge  l'emplacement (0..2) que `rotateBackup(true)` vient
+   *   d'écrire : c'est le point de retour, on ne le sacrifie JAMAIS.
+   * -> false seulement si même une sauvegarde toute seule ne rentre plus.
+   */
+  function ecrireImport(texte, refuge) {
+    try { localStorage.setItem(SAVE_KEY, texte); return true; }
+    catch (e) { /* plus de place, sans doute : on va en faire */ }
+    const keys = backupKeysRecentes();   // [la plus récente … la plus ancienne]
+    const garde = (typeof refuge === 'number' && refuge >= 0) ? BACKUP_KEYS[refuge] : null;
+    for (let i = keys.length - 1; i >= 0; i--) {
+      if (keys[i] === garde) continue;   // surtout pas celle-là
+      try { localStorage.removeItem(keys[i]); } catch (e) { /* rien */ }
+      try { localStorage.setItem(SAVE_KEY, texte); return true; }
+      catch (e) { /* toujours pas : on libère la copie suivante */ }
+    }
+    console.warn('[game3d] la partie importée n\'a pas pu être écrite : plus de '
+      + 'place dans ce navigateur, même après avoir libéré les copies.');
+    return false;
+  }
+
+  /**
+   * Installe une partie venue d'un fichier. On refuse tout ce qui ne ressemble
+   * pas à une sauvegarde, et on met la partie EN COURS à l'abri avant : même
+   * une fausse manœuvre reste rattrapable (GAME3D.restoreBackup()).
+   */
+  function installerPartie(texte) {
+    // D'ABORD refermer l'écran d'aide, d'où viennent les deux boutons : la
+    // boîte de dialogue s'affiche SOUS les overlays (ils sont créés après elle
+    // dans le HUD), et sur l'écran 'help' ni Espace ni Entrée ne la font
+    // avancer — le « Le jeu redémarre… » serait resté invisible et muet.
+    // C'est aussi ce qui garantit l'ordre : le `saveGame()` de closeOverlays
+    // a lieu AVANT qu'on écrase la clé principale, jamais après.
+    closeOverlays();
+    if (!ressembleAUnePartie(texte)) {
+      showMessage('Ce fichier n\'est pas une partie du jeu de Robin. 🤔\n' +
+        'Rien n\'a été changé.');
+      return false;
+    }
+    // La partie en cours devient une copie. On retient QUEL emplacement, pour
+    // ne jamais le sacrifier ensuite : c'est le point de retour qu'on vient de
+    // créer, et `restoreBackup(0)` doit pouvoir y revenir.
+    const refuge = rotateBackup(true);
+    if (!ecrireImport(texte, refuge)) {
+      showMessage('La partie n\'a pas pu être installée. 😥\n' +
+        'Il n\'y a plus de place dans ce navigateur.\n' +
+        'Ta partie précédente est intacte, elle n\'a pas bougé.');
+      return false;
+    }
+    showMessage('Partie chargée ! 🎉\nLe jeu redémarre pour la reprendre…', function () {
+      location.reload();
+    });
+    return true;
+  }
+
+  /**
+   * Remet en place une copie de secours (0 = la plus récente). Console/debug.
+   * C'est la fonction de DERNIER RECOURS du jeu, celle qu'un parent lancera
+   * dans la console un soir de panique : elle ne s'arrête donc pas sur un
+   * emplacement vide, elle essaie les suivants. Avant, `restoreBackup(0)`
+   * répondait « copie de secours vide » alors que deux copies saines dormaient
+   * dans bak1 et bak3, et il fallait deviner d'essayer (1) puis (2).
+   */
+  function restoreBackup(n) {
+    const keys = backupKeysRecentes();
+    const debut = ((n | 0) % keys.length + keys.length) % keys.length;
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[(debut + i) % keys.length];
+      let raw = null;
+      try { raw = localStorage.getItem(k); } catch (e) { raw = null; }
+      if (!raw || !ressembleAUnePartie(raw)) {
+        console.warn('[game3d] copie de secours inutilisable :', k, '— on essaie la suivante.');
+        continue;
+      }
+      console.log('[game3d] copie de secours reprise :', k,
+        '(' + nbCreatures(raw) + ' créature(s))');
+      return installerPartie(raw);
+    }
+    console.warn('[game3d] aucune copie de secours utilisable.');
+    return false;
   }
 
   /**
@@ -3784,6 +4558,17 @@
     // Une partie de Robin ne se perd jamais.
     let data = readSave(SAVE_KEY);
     let migre = false;
+    let secours = null;
+    if (!data) {
+      // FILET 2.8 : la clé principale a disparu ou est illisible. On essaie les
+      // copies de secours AVANT la v1, qui est bien plus vieille — mais on ne
+      // les touche jamais tant que la clé principale répond.
+      const keys = backupKeysRecentes();
+      for (let i = 0; i < keys.length && !data; i++) {
+        data = readSave(keys[i]);
+        if (data) secours = keys[i];
+      }
+    }
     if (!data) {
       data = readSave(SAVE_KEY_V1);
       migre = !!data;
@@ -3866,6 +4651,18 @@
         console.log('[game3d] sauvegarde v1 reprise et convertie en v2.');
         saveGame();
       }
+      if (secours) {
+        // On le DIT : Robin doit comprendre pourquoi il lui manque peut-être
+        // les dernières minutes de jeu — et surtout que rien n'est perdu.
+        console.warn('[game3d] sauvegarde principale illisible : copie de secours '
+          + secours + ' reprise.');
+        saveGame();               // la copie redevient la sauvegarde principale
+        setTimeout(function () {
+          showMessage('Ta sauvegarde principale n\'a pas pu être relue… 😮\n' +
+            'Mais j\'avais gardé une copie : ta partie est de retour !\n' +
+            'Il te manque peut-être les toutes dernières minutes.');
+        }, 800);
+      }
 
       // La position sera sécurisée par applyRegion (keepPosition + teleport).
       _resumePosition = true;
@@ -3875,8 +4672,8 @@
       console.warn('[game3d] sauvegarde illisible, on repart de zéro :', e);
       setTimeout(function () {
         showMessage('Oh non… ta sauvegarde n\'a pas pu être relue. 😥\n' +
-          'On repart d\'une nouvelle partie — mais l\'ancienne est toujours\n' +
-          'sur cet ordinateur, rien n\'a été effacé.');
+          'On repart d\'une nouvelle partie — mais l\'ancienne et ses copies\n' +
+          'sont toujours sur cet ordinateur, rien n\'a été effacé.');
       }, 800);
     }
   }
@@ -3941,6 +4738,12 @@
     showMessage: showMessage,
     saveGame: saveGame,
     loadGame: loadGame,
+    // Mettre la partie à l'abri — appelées par les deux boutons de l'écran
+    // d'aide (touche H), et utilisables depuis la console.
+    exportSave: exportSave,
+    importSave: importSave,
+    restoreBackup: restoreBackup,
+    checkBoot: checkBoot,
     setQuality: applyQuality,
     // Une image de jeu à la main (utile quand requestAnimationFrame est gelé).
     tick: tickGame,
@@ -3975,10 +4778,15 @@
       saveGame();
     },
     reset: function () {
-      // Les DEUX clés : sans la v1, « repartir de zéro » ressusciterait
-      // l'ancienne partie au rechargement suivant.
+      // TOUTES les clés : sans la v1, « repartir de zéro » ressusciterait
+      // l'ancienne partie au rechargement suivant — et depuis la correction
+      // 2.8, les trois copies de secours feraient exactement la même chose.
       try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* rien */ }
       try { localStorage.removeItem(SAVE_KEY_V1); } catch (e) { /* rien */ }
+      for (let i = 0; i < BACKUP_KEYS.length; i++) {
+        try { localStorage.removeItem(BACKUP_KEYS[i]); } catch (e) { /* rien */ }
+      }
+      try { localStorage.removeItem(BACKUP_INDEX); } catch (e) { /* rien */ }
       location.reload();
     },
 
@@ -4000,6 +4808,7 @@
     shop: openShopScreen,
     academy: openAcademyScreen,
     journal: openJournalScreen,
+    help: openHelpScreen,
     buddy: toggleBuddy,
     ball: cycleBall,
     evolutions: runEvolutions,

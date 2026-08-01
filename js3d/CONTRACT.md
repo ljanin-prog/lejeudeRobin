@@ -76,6 +76,7 @@ R3.register('world', {
 R3.register('water', {
   makeSurface(tiles, kind),  // tiles: [{x, y, h}], kind: 'lake'|'sea'|'waves'|'shallow'|'pond'
                              // -> THREE.Mesh prêt à être ajouté à la scène
+  release(mesh),             // OBLIGATOIRE au déchargement — voir ci-dessous
   update(t),                 // anime toutes les surfaces créées
   material(kind),            // -> THREE.Material (pour un usage ponctuel, ex. fontaine)
 });
@@ -87,6 +88,26 @@ R3.register('water', {
   transparence. Reproduit les 8 animations d'eau du jeu 2D (lac, mer, vagues,
   bas-fonds, mare, fontaine).
 - Si `R3.quality.waterDetail === 0` : matériau plat animé en couleur uniquement.
+
+**Amendement du 2026-08-01 (chantier 1.10) — `release(mesh)` n'est pas facultatif.**
+`makeSurface` inscrit chaque nappe dans un tableau interne `surfaces`, parce qu'un
+changement de qualité doit pouvoir leur rééchanger leur matériau. Rien ne l'en retirait :
+`R3.disposeTree` ne libère que les buffers GPU, les `Float32Array` (position, normale,
+`aEdge`, index) restent en mémoire JS tant que le mesh est référencé — **mesuré : 16 641
+sommets et ~0,5 Mo pour un chunk d'eau plein de 32×32 tuiles.** Traverser une région puis
+en changer laissait des centaines d'entrées mortes, et `onQualityChange` leur donnait
+consciencieusement un matériau tout neuf.
+- Celui qui décharge un mesh d'eau **appelle `release(mesh)` avant `R3.disposeTree`**.
+  Côté monde, c'est `disposeChunkGroup()` de `world3d.js` : le SEUL point de libération
+  d'un chunk, utilisé par `disposeChunk()` **et** par `setRegion()` (le pire cas : tous
+  les chunks d'un coup). Ne pas rétablir un `R3.disposeTree` direct à ces deux endroits.
+- Marqueur d'une nappe : `mesh.userData.waterKind`. **Pas `mesh.name`** — water3d le met
+  à `'water:' + kind` mais world3d l'écrase aussitôt par `'eau-' + kind`.
+- Filet dans `onQualityChange` : les nappes dont la chaîne de parents ne remonte plus à
+  la scène sont jetées au passage. Le test remonte jusqu'à la racine, car `disposeTree`
+  détache le GROUPE du chunk et non ses enfants : `mesh.parent` reste renseigné.
+- `surfaces` est exporté **par référence** : on le mute en place (`splice`, `length = n`),
+  jamais `surfaces = [...]`.
 
 ---
 

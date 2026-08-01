@@ -719,6 +719,12 @@
       }
       let txt = nom + ' passe au niveau ' + res.level + ' ! 🎉';
       if (res.learned && res.learned.length) txt += '\nNouvelle capacité apprise !';
+      // `res.pendingLearn` était ignoré : le bonbon faisait franchir le palier
+      // d'une capacité que la créature ne pouvait pas prendre, et personne ne le
+      // disait. Même règle qu'en combat — on ne cache pas ce qui n'a pas eu lieu.
+      if (res.pendingLearn && res.pendingLearn.length) {
+        txt += '\n' + nom + ' garde ses 4 capacités : la nouvelle n\'a pas trouvé de place.';
+      }
       return { ok: true, consumed: true, message: txt, leveled: true };
     }
 

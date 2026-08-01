@@ -948,6 +948,33 @@
     return { x: cx, y: cy };
   }
 
+  // ==========================================================================
+  //  LES PNJ DE CHAQUE RÉGION — ET LA VRAIE TABLE DES DRESSEURS
+  //
+  //  ⚠️ C'EST ICI QUE VIVENT LES DRESSEURS QUE ROBIN RENCONTRE, nulle part
+  //  ailleurs. `arenas3d.TRAINERS` existe, est joliment rempli… et n'est
+  //  consommé par PERSONNE : `game3d.talkToNPC()` appelle `startTrainerBattle`
+  //  avec le PNJ issu de `npcsOf()`, donc d'ici, et `makeTrainerBattle()`
+  //  reconstruit l'équipe adverse depuis le `party` ci-dessous. Une correction
+  //  d'équilibrage appliquée à arenas3d.TRAINERS ne change RIEN en jeu — c'est
+  //  arrivé au chantier 2.5, voir CONTRACT2 §12.
+  //
+  //  `party: ['id']` — ces PNJ n'ont pas de niveau propre :
+  //  `startTrainerBattle()` leur pose `def.recommendedLevel` (5 · 12 · 20 · 28
+  //  · 36 · 45). Les plafonds du §12 sont donc respectés d'office.
+  //
+  //  FORMES ÉVOLUÉES à partir de Givre (chantier 2.5) : au Massif de Givre,
+  //  Robin n'a plus une seule forme de base dans son équipe (les évolutions
+  //  d'`evolve3d.js` tombent entre 16 et 36). Un dresseur Nv 45 qui envoyait
+  //  encore une Nuagette de base offrait un examen déjà passé. Val, Sylve et
+  //  Saphir gardent leurs formes de base, et c'est volontaire.
+  //  PIÈGE DES IDENTIFIANTS : `evolve3d.js` concatène STRICTEMENT `base+suffixe`
+  //  (Koronette -> `koronetteon`, le NOM affiché « Koronetton » n'est pas l'id ;
+  //  Doudoune -> `doudouneon` nommé « Doudounon » ; Étincelo -> `etinceloix`
+  //  nommé « Étincelix »). Un id inexistant ne lève AUCUNE erreur : la créature
+  //  devient un repli générique de 48 PV. Vérifier chaque id contre
+  //  `CHAIN_DATA` d'evolve3d.js, jamais de mémoire.
+  // ==========================================================================
   var NPC_TEMPLATES = {
     val: [
       { id: 'garde', name: 'Garde Forestier Elian', anchor: 'spawn', dx: 4, dy: 1, dir: 'down', colorMap: { j: 'g', l: '6' }, accessory: 'hat-ranger',
@@ -1029,13 +1056,13 @@
       { id: 'enfant_neige', name: 'Petite Frigg', anchor: 'city', dx: -10, dy: -6, dir: 'right', colorMap: { j: 'j', l: 'l' },
         dialog: ["On fait des bonhommes de neige toute l'année ici !", "Tu veux voir ma collection de flocons ?"] },
       { id: 't_pic', name: 'Grimpeur Axel', anchor: 'spawn', dx: -4, dy: 5, dir: 'down', colorMap: { j: 'F', l: '9' },
-        isTrainer: true, party: ['pandouki'], dialog: ["Pour passer, il faut battre mon Pandouki !"], dialogDefeated: ["Tu grimpes haut, dresseur !"] },
+        isTrainer: true, party: ['pandoukion'], dialog: ["Pour passer, il faut battre mon Pandoukion !"], dialogDefeated: ["Tu grimpes haut, dresseur !"] },
       { id: 't_glacier', name: 'Dresseuse Ylva', anchor: 'altar0', dx: -3, dy: 3, dir: 'left', colorMap: { j: 'd', l: '2' },
-        isTrainer: true, party: ['glydrak'], dialog: ["Mon Glydrak plane sur les vents glacés !"], dialogDefeated: ["Impressionnant... comme le vent du sommet."] },
+        isTrainer: true, party: ['glydrakon'], dialog: ["Mon Glydrakon plane sur les vents glacés !"], dialogDefeated: ["Impressionnant... comme le vent du sommet."] },
       { id: 't_lac_gele', name: 'Dresseur Finn', anchor: 'gate1', dx: -3, dy: 2, dir: 'left', colorMap: { j: 'g', l: '6' },
-        isTrainer: true, party: ['doudoune'], dialog: ["Mon Doudoune est tout doux mais très costaud !"], dialogDefeated: ["Doux mais costaud, tu as raison !"] },
+        isTrainer: true, party: ['doudouneon'], dialog: ["Mon Doudounon est tout doux mais très costaud !"], dialogDefeated: ["Doux mais costaud, tu as raison !"] },
       { id: 't_grotte', name: 'Dresseuse Siri', anchor: 'altar4', dx: -2, dy: 2, dir: 'up', colorMap: { j: 'l', l: 'a' },
-        isTrainer: true, party: ['stellini'], dialog: ["Mon Stellini brille dans le noir des grottes !"], dialogDefeated: ["Tu brilles encore plus, bravo !"] },
+        isTrainer: true, party: ['stellinion'], dialog: ["Mon Stellinion brille dans le noir des grottes !"], dialogDefeated: ["Tu brilles encore plus, bravo !"] },
     ],
     braise: [
       { id: 'guide_volcan', name: 'Guide Ember', anchor: 'spawn', dx: 2, dy: 2, dir: 'down', colorMap: { j: 'd', l: '3' },
@@ -1051,13 +1078,13 @@
       { id: 'marchand_epices', name: 'Marchand Nassim', anchor: 'city', dx: 10, dy: -4, dir: 'left', colorMap: { j: 'g', l: 'a' },
         dialog: ["Mes épices viennent des cendres les plus fines.", "Un peu de piquant ne fait jamais de mal !"] },
       { id: 't_lave', name: 'Dresseuse Nora', anchor: 'spawn', dx: -5, dy: 5, dir: 'down', colorMap: { j: 'd', l: '2' },
-        isTrainer: true, party: ['flamdrak'], dialog: ["Mon Flamdrak est la terreur de ces terres !"], dialogDefeated: ["Je n'y crois pas... tu es remarquable !"] },
+        isTrainer: true, party: ['flamdrakix'], dialog: ["Mon Flamdrakix est la terreur de ces terres !"], dialogDefeated: ["Je n'y crois pas... tu es remarquable !"] },
       { id: 't_dune', name: 'Dresseur Aziz', anchor: 'altar3', dx: -3, dy: -3, dir: 'left', colorMap: { j: 'F', l: '9' },
-        isTrainer: true, party: ['pandouki'], dialog: ["Mon Pandouki creuse les dunes en un instant !"], dialogDefeated: ["Bien creusé... dans ma défense !"] },
+        isTrainer: true, party: ['pandoukion'], dialog: ["Mon Pandoukion creuse les dunes en un instant !"], dialogDefeated: ["Bien creusé... dans ma défense !"] },
       { id: 't_cendre', name: 'Dresseuse Lina', anchor: 'gate1', dx: -3, dy: 3, dir: 'up', colorMap: { j: 'l', l: 'a' },
-        isTrainer: true, party: ['etincelo'], dialog: ["Mon Étincelo crépite comme les braises !"], dialogDefeated: ["Ça, c'était électrique !"] },
+        isTrainer: true, party: ['etinceloix'], dialog: ["Mon Étincelix crépite comme les braises !"], dialogDefeated: ["Ça, c'était électrique !"] },
       { id: 't_obsidienne', name: 'Dresseur Malo', anchor: 'altar4', dx: -2, dy: 2, dir: 'right', colorMap: { j: 'd', l: 'l' },
-        isTrainer: true, party: ['tonnedrak'], dialog: ["Mon Tonnedrak fend l'obsidienne d'un cri !"], dialogDefeated: ["Tu résistes à tout, bravo !"] },
+        isTrainer: true, party: ['tonnedrakon'], dialog: ["Mon Tonnedrakon fend l'obsidienne d'un cri !"], dialogDefeated: ["Tu résistes à tout, bravo !"] },
     ],
     aurore: [
       { id: 'guide_ciel', name: 'Guide Séraphine', anchor: 'spawn', dx: 2, dy: 2, dir: 'down', colorMap: { j: 'l', l: 'a' },
@@ -1073,13 +1100,13 @@
       { id: 'enfant_etoiles', name: 'Petite Luna', anchor: 'city', dx: -10, dy: 4, dir: 'right', colorMap: { j: 'j', l: 'a' },
         dialog: ["Je compte les étoiles filantes chaque soir.", "On dit que Vortexis en fait tomber exprès pour nous !"] },
       { id: 't_menhir', name: 'Championne Zara', anchor: 'spawn', dx: -4, dy: 5, dir: 'down', colorMap: { j: 'd', l: '7' },
-        isTrainer: true, party: ['tonnedrak'], dialog: ["Je suis la gardienne de ce plateau ! Affronte-moi !"], dialogDefeated: ["Extraordinaire... tu es digne de ces cieux !"] },
+        isTrainer: true, party: ['tonnedrakon'], dialog: ["Je suis la gardienne de ce plateau ! Affronte-moi !"], dialogDefeated: ["Extraordinaire... tu es digne de ces cieux !"] },
       { id: 't_ruine', name: 'Dresseur Tao', anchor: 'altar2', dx: -3, dy: 3, dir: 'left', colorMap: { j: 'g', l: '6' },
-        isTrainer: true, party: ['koronette'], dialog: ["Ma Koronette porte la lumière des ruines !"], dialogDefeated: ["Tu brilles autant qu'elle, bravo !"] },
+        isTrainer: true, party: ['koronetteon'], dialog: ["Ma Koronetton porte la lumière des ruines !"], dialogDefeated: ["Tu brilles autant qu'elle, bravo !"] },
       { id: 't_nuages', name: 'Dresseuse Aube', anchor: 'gate0', dx: 3, dy: 2, dir: 'right', colorMap: { j: 'l', l: 'a' },
         isTrainer: true, party: ['nuagette'], dialog: ["Ma Nuagette flotte plus haut que tes espoirs !"], dialogDefeated: ["Tu redescends sur terre en vainqueur !"] },
       { id: 't_observatoire', name: 'Dresseur Milo', anchor: 'city', dx: 12, dy: 6, dir: 'left', colorMap: { j: 'd', l: '9' },
-        isTrainer: true, party: ['stellini'], dialog: ["Mon Stellini a compté chaque étoile du ciel !"], dialogDefeated: ["Un vrai combat stellaire, bravo !"] },
+        isTrainer: true, party: ['stellinion'], dialog: ["Mon Stellinion a compté chaque étoile du ciel !"], dialogDefeated: ["Un vrai combat stellaire, bravo !"] },
     ],
   };
 

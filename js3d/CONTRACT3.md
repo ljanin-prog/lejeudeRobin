@@ -299,8 +299,28 @@ La **Ball Maîtresse ne se vend pas** : elle se gagne en accomplissant une quêt
 
 Monnaie : `state.money`, **500 pièces au départ**, gagnées en combat
 (`rewardFor` : ~`12 × niveau` pour un dresseur, ~`4 × niveau` pour une créature sauvage,
-`500 + 40 × niveau` pour un champion). Jamais de perte d'argent à la défaite — le jeu
-n'est pas punitif.
+`20 × niveau + 200` pour un **légendaire**, `500 + 40 × niveau` pour un champion). Jamais de
+perte d'argent à la défaite — le jeu n'est pas punitif.
+
+Le barème `legendary` se demande par le drapeau `state.battle.legendary`, **pas** par un
+`kind: 'legendary'` (voir CONTRACT2 §17 : `kind` pilote la mécanique du combat, pas la
+récompense). Il est resté du code mort pendant longtemps parce que `game3d.js` passait
+`b.kind`, qui vaut `'wild'` pour un légendaire.
+
+**Capturer rapporte aussi** (correction 2.2), et volontairement **moins que combattre** :
+~`2 × niveau` pièces et la moitié de l'XP de combat pour la créature active, plus une prime
+unique de **100 pièces** la première fois qu'une espèce entre au Pokédex. Les rencontres
+surprises étant coupées (`ENCOUNTER_CHANCE = 0`), un enfant qui joue « attrapeur » ne gagnait
+sinon strictement rien et arrivait à l'arène avec une équipe trop faible.
+
+**Exception : le LÉGENDAIRE capturé touche la moitié du barème `legendary`** (amendement du
+2026-08-01). Les deux barèmes ci-dessus ont été écrits séparément, et mis bout à bout ils
+disaient l'inverse de ce que le jeu veut : Sylvaros Nv 50 assommé rapportait ~1200 pièces,
+le même Sylvaros capturé 100 — **six fois moins pour l'issue que Robin préfère**, dans une
+économie où la Pokéball coûte 200. `catchRewardTexts()` demande donc `shop.rewardFor
+('legendary', niveau)` et en verse la moitié (~600) quand `species.legendary` est vrai.
+Le K.O. reste un peu mieux payé, parce qu'il est plus long et plus dur ; ce qui compte est
+qu'attraper ne soit plus le choix pauvre. Rien n'a été retiré au barème du K.O.
 
 Le **Centre soigne gratuitement** toute l'équipe (`R3.get('team').healAll()`), recharge la
 Téracristallisation (§7) et affiche un petit texte d'accueil.
@@ -337,8 +357,20 @@ Règles du jeu :
   facettes de la couleur du type (`R3.get('types').color(id)`), et un **éclat de cristaux**
   à l'activation. Réutiliser `R3.get('llib').crystalCluster()` si présent, repli sur des
   `R3.mat()` simples sinon. **Moins de 20 draw calls** pour l'ensemble.
-- `mon.tera` et `mon.teraType` sont sauvegardés ; `mon.tera` est remis à `false` en fin de
-  combat, `mon.teraType` reste.
+- `mon.teraType` est sauvegardé — mais **par `tera3d`**, dans `tera.types[uid]`, pas par
+  `team3d.packMon()`, qui n'écrit que `uid, id, nick, level, xp, hp, types, moves, caughtAt`.
+  `mon.tera` n'est **PAS** sauvegardé du tout : il est remis à `false` en fin de combat, et il
+  vaut `undefined` après tout rechargement. *(Ligne corrigée le 2026-08-01 : elle affirmait
+  que les deux champs étaient sauvegardés, ce qui était faux, et le filet de réparation de
+  `tera3d.repair()` se fiait justement à `mon.tera` — il ne s'exécutait donc jamais.)*
+- Le filet contre la sauvegarde faite EN PLEIN COMBAT passe donc par **`tera.base[uid]`**,
+  écrit par `tera.serialize()` depuis le registre `ACTIVE` : c'est la présence d'une entrée
+  dans `base`, et non le drapeau, qui déclenche la restitution des vrais types au chargement.
+  Ne jamais revenir à un test sur `mon.tera` — la créature resterait mono-type à vie.
+  L'ordre de chargement `team.deserialize()` **puis** `tera.deserialize()` est obligatoire :
+  `repair()` parcourt `team.team` et `team.box`.
+- Rien d'autre à réparer que `types` : le +20 % de défense se dissout tout seul, parce que
+  `team3d.unpackMon()` recalcule `def` depuis l'espèce et le niveau.
 
 ---
 
@@ -515,6 +547,11 @@ Style inchangé : cartes arrondies, ombres douces, palette du jeu, chaleureux et
 champs absents prennent leur valeur par défaut. Une partie de Robin ne se perd jamais —
 si le chargement échoue, on repart de zéro **en le disant**, jamais en silence.
 
+*Amendement du 2026-08-01 (correction 2.8)* : cette clé n'est plus seule. Trois copies de
+secours tournantes, un repli automatique au chargement, et un export/import en fichier
+l'entourent désormais — **voir le §22**, qui liste toutes les clés du jeu et les règles à
+ne pas enfreindre en y touchant. Le format ci-dessus, lui, n'a pas bougé d'un champ.
+
 ---
 
 ## 13. Assignation des fichiers — qui écrit quoi
@@ -554,12 +591,23 @@ Les nouveaux modules s'insèrent ainsi :
 …  js3d/creatures3d.p1..p5.js
 …  js3d/legendlib3d.js  js3d/legend3d.p1..p3.js
 …  js3d/actors3d.js  js3d/roamers3d.js  js3d/buddy3d.js
+…  js3d/music3d.js   js3d/sfx3d.js
 …  js3d/tera3d.js    js3d/hud3d.js      js3d/battle3d.js   js3d/game3d.js
 ```
+
+(`sfx3d.js` étend le catalogue de bruitages de `js/audio.js` — voir §20. Comme tous les
+modules, il est trouvé à la volée par `R3.get('sfx')` : sa seule contrainte d'ordre est
+d'être chargé après `core3d.js`.)
 
 Règle : un module se charge **après** ceux dont il lit les données au chargement, et
 **avant** ceux qui l'interrogent. En cas de doute, plus tôt — grâce au repli du §1.4,
 un module absent n'a jamais le droit de casser quoi que ce soit.
+
+*Amendement du 2026-08-01 (correction 2.8)* : un petit script **en ligne** ouvre désormais
+la page, **avant** `three.min.js` et tout le reste — c'est le panneau d'erreur du §22.4, et
+il doit rester la toute première balise `<script>` : il ne voit pas les erreurs de ce qui
+est chargé avant lui. Par ailleurs, la liste ci-dessus a maintenant un double exécutable :
+`MODULES_ATTENDUS` dans `game3d.js` (§22.5). Un module ajouté ici s'ajoute là aussi.
 
 ---
 
@@ -697,6 +745,14 @@ Vérifié en jeu : sur quatre caps, le cap réel égale le cap visé **au degré
 quatrième était contre un mur, d'où le glissement) ; en tournant tout en avançant, la
 trajectoire est un arc régulier — segments de 0,72 à 0,73 unité, plus aucun escalier.
 
+**Amendement 2026-08-01 (correction 2.10) — on VISE aussi dans l'axe du regard.** La marche
+suivait l'angle libre depuis le début, mais la visée, elle, restait cardinale :
+`aimedRoamer()` passait `p.dir` à `roamers.aimed()`. En regardant à 45°, on ne visait donc
+pas ce qu'on regardait — et le réticule non plus. La règle 1 vaut maintenant pour les deux :
+`aimedRoamer()` passe `fpsYaw()` dès que `isFpsView()`, et `roamers.aimed()` accepte un
+angle autant qu'une cardinale (détail et pièges dans le §16 de v2). Hors vue subjective,
+rien ne change : le regard y EST cardinal.
+
 ---
 
 ## 18. TROIS CORRECTIONS APRÈS LES TESTS DE ROBIN — 2026-07-31 (3)
@@ -740,6 +796,29 @@ marqueur. Ils n'y figuraient pas, alors que la fonction qui les fournit existait
 lot Bâtiments — personne ne l'appelait. La carte du monde signale en plus d'un 🔮 la seule
 région qui abrite l'Académie (Sylve d'Ambre, porte en **129,80**).
 
+**Amendement 2026-08-01 (correction 2.1) — le sanctuaire et les autels.** La liste des
+repères de `drawRegionMap()` s'allonge de deux entrées, et c'était la même erreur que
+l'Académie : les données existaient (`quest.sanctuary(regionId)` et `region.altars`),
+personne ne les affichait, et la quête demande pourtant « cherche leurs autels » sur
+384 × 224 tuiles.
+
+- **⛩️ Sanctuaire** — marqueur nommé, **toujours visible**, y compris avant l'ouverture ;
+  il porte alors le suffixe « (fermé) » et une opacité réduite. C'est la destination que
+  l'indice de quête annonce, la cacher n'apporterait rien.
+- **✦ Autels** — un par légendaire, **seulement une fois le sanctuaire ouvert**
+  (`sanc.open`, c'est-à-dire le badge gagné). Avant, la légende doit rester un mystère
+  qu'on entend raconter ; après, elle devient une liste de six lieux à visiter. Un autel
+  dont l'espèce figure déjà dans `state.collection` passe en **✅ vert**.
+- **Piège à ne pas « corriger »** : l'autel du légendaire chef est posé sur les
+  coordonnées EXACTES du sanctuaire (c'est voulu, cf. l'en-tête de `quest3d.js`). Le code
+  saute donc l'autel dont `(x, y)` coïncide avec le sanctuaire, sinon deux marqueurs se
+  superposent parfaitement et le nom du sanctuaire devient illisible.
+- Le bloc est dans son propre `try/catch`, comme ses voisins : la carte doit continuer de
+  s'afficher si `quest3d` manque. L'accès se fait par le nouvel accesseur `QUEST()` de
+  `hud3d.js`, au même endroit que `CITIES()`, `AIRSHIP()` et les autres.
+- Les deux entrées sont ajoutées à la légende sous la carte : un symbole non expliqué ne
+  vaut pas mieux qu'un symbole absent.
+
 ### Ce qui reste à vérifier à l'œil
 
 L'extension Chrome s'est déconnectée avant que le rendu de la carte corrigée ait pu être
@@ -747,3 +826,331 @@ constaté. Les **données** sont vérifiées pour les 6 régions (chaque repère
 tuile `HEAL_DOOR` / `ARENA_DOOR` / `ACADEMY_DOOR`, toutes marchables, et les bâtiments sont
 posés sur le terrain : 19 tuiles de décor `healCenter` à Ambrelune, 48 pour son arène, 119
 pour l'Académie). Le placement visuel des marqueurs, lui, reste à confirmer en jeu.
+
+---
+
+## 19. CONFORT D'USAGE — 2026-08-01 (correction 2.7)
+
+### 19.1 La touche `H` et l'écran d'aide
+
+Les commandes n'étaient dites qu'**une seule fois**, dans le message de bienvenue, puis
+rappelées en 11 px tout en bas de l'écran. Un enfant qui reprend sa partie trois jours plus
+tard n'avait aucun moyen de les revoir. `H` ouvre désormais un overlay qui les liste toutes.
+
+- **`H` était libre** : vérifié dans le `switch` de `game3d.js`, dans `onBattleKey`, dans
+  `hud3d.onGlobalKeydown` et dans le gestionnaire de vol d'`airship3d.js`.
+- **`HELP_SECTIONS` (hud3d.js) est la LISTE DE RÉFÉRENCE des commandes.** Toute touche
+  ajoutée au jeu doit y être ajoutée, ainsi que dans `#controls-hint` (index3d.html) et dans
+  le commentaire d'en-tête du §3 de `game3d.js`. Trois endroits, pas quatre.
+- Circuit identique à celui de `J` : le HUD capte la touche mais passe la main à
+  `window.GAME3D.help()` quand game3d est là — **lui seul** peut poser
+  `state.screen = 'help'` et appeler `releaseAllKeys()`. Sans ça, l'écran s'ouvre et Robin
+  continue de marcher derrière. `'help'` est ajouté aux deux listes de `closeOverlays()` et
+  au garde d'Échap de `onKeyDown`. `state.screen` n'est pas sauvegardé : rien à migrer.
+- L'overlay est ajouté à `anyOverlayOpen()`, sinon `B`, `X` et `J` resteraient actifs
+  par-dessus.
+- Repli sans HUD : `openHelpScreen()` affiche les commandes en boîte de dialogue.
+
+### 19.2 Le Pokédex se pilote au clavier
+
+C'était le seul grand écran à n'accepter que la souris. Les cartes portent maintenant
+`data-nav`, et `navReset(ui.dexOverlay)` est appelé à chaque reconstruction de la grille
+(ouverture, changement de filtre) — **`navCourant` est une variable globale partagée par
+tous les écrans**, sans ce reset le Pokédex héritait du curseur de la Boutique.
+
+Attention à l'ordre dans `openDex()` : `navElements()` écarte tout ce qui est invisible
+(`offsetParent === null`), donc le reset doit venir **après** `show()`.
+
+`dexNavKey(ev)` traduit les touches avant de les passer à `navEcran` : le Pokédex est une
+grille, pas une liste. `←/→` passent à la carte voisine, `↑/↓` sautent une **ligne**
+entière (nombre de colonnes mesuré sur le vif d'après `offsetTop`, la grille étant
+responsive). Sans cette traduction, `navEcran` aurait cherché `navCourant._moins/._plus`
+— la mécanique de quantité de la Boutique — et les flèches horizontales auraient été
+consommées sans rien faire.
+
+### 19.3 Les toasts durent le temps qu'on met à les lire
+
+2700 ms fixes, c'était réglé pour un adulte qui survole. `toastDuree(text)` rend
+`1800 + 70 ms par caractère`, borné à [2600, 8000] ms.
+
+**PIÈGE, à ne pas défaire** : la durée est écrite **deux fois**, dans le `setTimeout` de
+`toast()` et dans l'animation CSS `toast-vie`. Les keyframes étant en pourcentages, on
+pilote `t.style.animationDuration` en JS et le CSS ne porte plus qu'une durée de repli.
+Allonger seulement le `setTimeout` laisserait un toast **invisible** (opacité 0) pendant
+tout le temps ajouté.
+
+Au passage : le bloc `prefers-reduced-motion` écrasait la durée à `.01 ms`, ce qui, avec un
+`animation-fill-mode: both` finissant à `opacity: 0`, rendait les toasts **totalement
+invisibles** pour qui a désactivé les animations. `.toast` y est désormais exclu
+(`animation: none`), et c'est le `setTimeout` qui le retire.
+
+### 19.4 Planchers de police
+
+Relevés pour un lecteur de 10 ans : `#controls-hint` 11 → 13 px, `.wn-sub` (sous-titre des
+régions, où s'écrit l'avertissement de niveau du dirigeable) 10 → 12 px, `.map-legend`
+11 → 12 px, `.mk-label` 10,5 → 11,5 px. Tout l'écran d'aide est à 13 px minimum.
+
+---
+
+## 20. LES SONS — `js3d/sfx3d.js` *(nouveau module, 2026-08-01, corrections 1.7 et 2.6)*
+
+### 20.1 Pourquoi un module de plus
+
+Le catalogue de bruitages est l'objet `SFX` de `js/audio.js` et contient **neuf** sons, ni
+un de plus : `footstep`, `encounter`, `throwBall`, `hit`, `shake`, `catch`, `escape`,
+`menu`, `rare`. La 3D en appelait deux qui n'ont jamais existé — et **en silence total** :
+le helper `sfx(nom)` teste `Audio_.sfx[nom]` avant d'appeler, un nom inconnu ne produit
+donc ni son, ni erreur, ni avertissement. Un son fantôme ne se voit jamais.
+
+`js/audio.js` étant gelé par le §1 règle 2, le catalogue s'ÉTEND depuis
+`js3d/sfx3d.js` : `R3.register('sfx', { init, play, has, names, setMuted, isMuted })`.
+
+```js
+R3.get('sfx').play(nom)   // -> true si CE module a pris le son en charge,
+                          //    false si le nom ne lui appartient pas
+```
+
+Sons ajoutés : **`heal`** (objet utilisé hors combat, `useItemOnMon` de game3d.js) et
+**`legendary`** (apparition à l'autel, `roamers3d.js`). Pour en ajouter un : une entrée
+dans l'objet `SONS` de sfx3d.js, et rien d'autre — il est aussitôt jouable partout.
+
+### 20.2 Le motif d'appel, identique dans les trois modules
+
+`game3d.js`, `roamers3d.js` et `battle3d.js` ont chacun un helper privé `sfx(nom)` qui
+consulte **l'extension d'abord, `js/audio.js` ensuite** :
+
+```js
+var s = R3.get('sfx');
+if (s && s.play && s.play(nom)) return;                       // son 3D
+if (Audio_.sfx && Audio_.sfx[nom]) Audio_.sfx[nom]();         // son 2D
+```
+
+`play()` renvoyant `false` pour les neuf sons d'origine, ils passent au travers sans
+détour. Avant cette correction, `battle3d.js` et `roamers3d.js` n'avaient **aucun** accès
+à l'audio : toute la mise en scène sonore venait de game3d.js, qui ne connaît pas le
+détail des animations. C'est ce trou qui rendait les secousses de la Ball muettes.
+
+### 20.3 PIÈGE — le bouton ♪ coupe TROIS sources
+
+`js/audio.js` garde son `AudioContext` et ses gains pour lui (variables privées) : ni
+`music3d.js` ni `sfx3d.js` ne peuvent s'y brancher, chacun a donc **son propre contexte**.
+`toggleMute()` de game3d.js doit couper les trois, et `startGame()` en réveiller trois :
+
+```js
+Audio_.toggleMute();  call('music','setMuted',[muted]);  call('sfx','setMuted',[muted]);
+```
+
+En oublier une, c'est un jeu qu'on croit muet et qui continue de faire du bruit.
+`Audio_.isMuted()` reste **la vérité unique** de l'état muet (le HUD et le bouton la
+lisent) ; les deux autres modules ne font que suivre.
+
+### 20.4 Les secousses de la Pokéball ne sont plus muettes
+
+Le moment le plus tendu du jeu — les trois balancements de la Ball, entre 600 et 1800 ms —
+ne faisait aucun bruit, alors que le jeu 2D le sonorise (`js/game.js` l.558). Corrigé des
+**deux** côtés, `battle3d.js` (combat) et `roamers3d.js` (monde ouvert), avec exactement la
+règle du 2D : un `sfx('shake')` quand l'indice de secousse change **et qu'il est > 0**.
+
+`idx === 0`, c'est l'atterrissage : il est déjà occupé par le son du lancer et par
+l'aspiration. On entend donc **deux** « clac » avant le verdict, aux mêmes instants que les
+deux gerbes d'étincelles. Ne pas « corriger » cela en passant à `idx >= 0` : le son
+tomberait sur l'atterrissage, et les trois blips se colleraient au son du lancer.
+
+### 20.5 Ce qui reste muet, volontairement
+
+- Le repli de `hud3d.js` (~l.1826) qui appelle `shop.useFrom()` directement quand
+  `window.GAME3D` manque ne joue aucun son. Ce chemin n'existe que si le contrôleur est
+  absent, c'est-à-dire si le jeu est déjà cassé.
+- `levelUp` et `catch_`, cités par l'ancienne chaîne de repli de roamers3d, n'ont pas été
+  créés : plus personne ne les demande. Une montée de niveau reste sans bruitage propre.
+
+---
+
+## 21. LE COMPTEUR DE PERFORMANCE — touche `P` *(2026-08-01, correction 2.9)*
+
+Le compteur n'affichait que `60 fps · 4.2 ms`, et n'était atteignable qu'en tapant
+`index3d.html#fps` dans la barre d'adresse. Autant dire qu'il n'existait pas : « ça rame »
+n'avait aucune cause visible, et aucune optimisation future n'était mesurable.
+
+### 21.1 Trois lignes, et une porte d'entrée
+
+`perfText()` (game3d.js, à côté de `measurePerf`) compose :
+
+```
+60 fps · 4.2 ms
+128 dessins
+94 300 triangles
+```
+
+- Les deux dernières lignes viennent de **`renderer.info.render.calls` et `.triangles`**,
+  l'API standard de `THREE.WebGLRenderer`. Three.js les remet à zéro au début de chaque
+  `render()`. **L'ordre joue en notre faveur** : `frame()` appelle `tickGame()`, qui rend,
+  PUIS `measurePerf()` — les chiffres décrivent donc l'image qu'on vient de voir. En
+  combat c'est `battle.render(renderer)` qui dessine, sur le MÊME renderer : toujours bon.
+- **Touche `P`** en monde ouvert : `hud.toggleFps()`. La fonction existait déjà et
+  n'était branchée à rien. Un clic sur le badge le referme (comportement d'origine).
+- Le texte contient des `\n` : `.fps-counter` est passé en `white-space: pre`. Ne pas
+  revenir à `normal`, « 94 300 triangles » se couperait au milieu du nombre.
+- Repère utile à Robin : le budget du contrat v1 est de **moins de 200 dessins** avec
+  tout le monde visible.
+
+### 21.2 Le cache des couleurs de sol de `world3d.js`
+
+`sampleGroundColor()` faisait `_sampleColor.set(st.ground)` — décoder une chaîne
+`'#63b846'` — à chaque sommet. Un chunk fait 65×65 sommets et en échantillonne 1, 2 ou 4
+chacun : **~9 500 analyses de chaîne par chunk**, et le monde en construit jusqu'à deux
+par image, pour un budget total de 14 ms. Mesuré sous Node sur le vrai `three.min.js` :
+**6,3 ms par chunk avant, 0,07 ms après** — soit jusqu'à 12 ms par image rendus au
+streaming, la moitié du budget.
+
+- Le cache est un objet `type → THREE.Color` (`_groundColors`), rempli à la demande. Même
+  motif que `water3d.js`, qui pré-calcule `_deep` / `_shallow` au chargement.
+- **La `THREE.Color` renvoyée est PARTAGÉE : on la LIT, on ne la mute JAMAIS.**
+  `out[0] = c.r * v` est sûr ; un `c.multiplyScalar(v)` teindrait toutes les tuiles du
+  même type. C'est pour cela que le scratch `_sampleColor` a été supprimé plutôt que
+  gardé : il invitait à la faute.
+- Clé = le TYPE de tuile, pas la chaîne : sans danger, car personne ne remplace le style
+  d'un type déjà connu (`cities3d` et `regions3d` n'ajoutent que des clés absentes,
+  `tiles3d` réécrit la table au chargement, avant toute construction de chunk).
+- Restent non mis en cache, volontairement, parce qu'ils sont froids : le
+  `new THREE.Color('#1b2c62')` de la jupe d'océan (une fois par région) et les
+  `new THREE.Color(roofColor)` des prototypes de maison (une fois par prototype).
+
+---
+
+## 22. LES FILETS DE SÉCURITÉ — sauvegarde, erreurs, démarrage *(2026-08-01, correction 2.8)*
+
+La partie de Robin n'existe que dans le `localStorage` d'un navigateur, sans aucune copie
+nulle part : un nettoyage d'historique, un profil recréé, un disque changé, et des mois de
+jeu disparaissent. Ce chantier ajoute trois filets — des copies, un fichier, et de quoi
+comprendre ce qui casse. **C'est le code le plus dangereux du jeu : il est le seul à
+écrire par-dessus la sauvegarde.** Rien de ce qui suit n'a le droit d'abîmer une partie.
+
+### 22.1 Toutes les clés de `localStorage`
+
+| Clé | Rôle | Écrite par |
+|-----|------|------------|
+| `robinGame3d_v2` | **LA partie** (format du §12) | `saveGame()` |
+| `robinGame3d_v1` | ancienne 3D, migration | personne (lecture seule) |
+| `robinGame_v2` | partie du jeu **2D**, reprise au premier lancement | personne (lecture seule) |
+| `robinGame3d_bak1/2/3` | les trois copies de secours tournantes | `rotateBackup()` |
+| `robinGame3d_baks` | `{ slot, at }` : où en est la rotation | `rotateBackup()` |
+
+**RÈGLE** : toute clé ajoutée ici doit l'être aussi dans `GAME3D.reset()`. Sans cela,
+« repartir de zéro » ressuscite l'ancienne partie au rechargement suivant — le piège
+s'est déjà produit une fois avec la clé v1, il se reproduirait avec les copies.
+
+### 22.2 Les copies de secours tournantes
+
+`saveGame()` appelle `rotateBackup(false)` **avant** d'écrire, et ce qui est recopié est la
+sauvegarde **déjà en place** — jamais celle qu'on s'apprête à écrire. C'est tout l'intérêt :
+revenir à un état qu'on savait bon. Trois emplacements en rotation = trois âges différents,
+donc une partie abîmée sauvegardée deux fois de suite laisse encore une copie saine.
+
+Sept règles, chacune payée par un défaut réel :
+
+1. **Au plus une copie toutes les trois minutes** (`BACKUP_MIN_MS`). `saveGame()` est appelé
+   dix-sept fois (capture, badge, achat, évolution, changement de région, fermeture d'un
+   écran…) : sans le délai, on triplerait les écritures pour trois copies identiques.
+2. **On ne recopie jamais un texte qui n'est pas une partie** (`ressembleAUnePartie()`).
+   Sinon, le jour où la clé principale s'abîme, `loadGame()` reprend une copie saine,
+   appelle `saveGame()` — et la rotation écraserait une bonne copie avec la ruine qu'on
+   vient justement de contourner.
+3. **On ne recopie jamais une partie APPAUVRIE** — amendement du 2026-08-01, et c'est la
+   règle la plus importante des sept. « Lisible » ne suffisait pas : `saveGame()` écrit
+   `team: []` dès que `team3d.js` ne se charge pas (une virgule en trop, le scénario même
+   de `checkBoot()`, et Robin peut cliquer « Continuer quand même »), et cette sauvegarde-là
+   passait `ressembleAUnePartie()` sans broncher. Trois rotations plus tard les trois copies
+   étaient vides à leur tour : **le filet se dissolvait dans le cas précis pour lequel il
+   avait été écrit**, en une douzaine de minutes de jeu. Trois gardes désormais :
+   - `rotateBackup()` ne recopie pas une partie à **zéro créature** (`nbCreatures()` compte
+     l'équipe **et** la boîte) ;
+   - il ne remplace pas une copie **plus riche** par une plus pauvre : il saute alors à
+     l'emplacement suivant, il ne bloque pas la rotation ;
+   - `saveGame()` lui-même **refuse d'écraser** une clé principale qui a des créatures par
+     un état qui n'en a aucune, et le DIT une fois (`prevenirSauvegardeSuspendue()` :
+     console + toast « ta partie est intacte, recharge la page »). Mieux vaut une session
+     non enregistrée qu'une partie effacée.
+4. **On ne recopie jamais deux fois le même texte.** `closeOverlays()` sauvegarde à chaque
+   écran refermé, même quand rien n'a changé : sans ce garde-fou, trois copies identiques
+   remplaceraient trois âges différents.
+5. **Une copie ne prend jamais la place de la vraie partie.** Si le `localStorage` est plein,
+   `ecrireSauvegarde()` sacrifie les copies **une par une, la plus vieille d'abord**, et
+   réessaie à chaque fois. Le filet ne doit jamais se retourner contre ce qu'il protège.
+6. **Le curseur de rotation n'avance qu'une fois l'index ÉCRIT.** `localStorage.setItem`
+   de l'index passe **avant** `_bak.slot = …` / `_bak.at = …`. Sinon un échec d'écriture de
+   l'index (plausible : on vient de remplir le stockage avec la copie) laissait un curseur
+   avancé en mémoire désignant un emplacement que le `catch` venait d'effacer — pour toute
+   la session, et le délai de trois minutes bloquait une copie qui n'avait jamais eu lieu.
+7. **`rotateBackup()` renvoie l'emplacement écrit** (`0..2`, ou `-1`). `installerPartie()`
+   s'en sert pour ne jamais sacrifier le point de retour qu'il vient de créer (§22.3).
+
+**Ordre de lecture de `loadGame()`** : `robinGame3d_v2`, puis les copies **de la plus récente
+à la plus ancienne**, puis la v1. Les copies ne sont **jamais** lues tant que la clé
+principale répond. Quand une copie a servi, on le DIT à Robin (« il te manque peut-être les
+toutes dernières minutes ») et on la réinstalle aussitôt comme sauvegarde principale.
+
+`GAME3D.restoreBackup(n)` (console) remonte plus loin : 0 = la plus récente. **Il ne
+s'arrête pas sur un emplacement vide** : il essaie les suivants, dans l'ordre, et ne renvoie
+`false` qu'après les avoir tous essayés. C'est la fonction de dernier recours du jeu, celle
+qu'un parent lancera un soir de panique — elle ne doit pas répondre « copie de secours vide »
+quand deux copies saines dorment juste à côté.
+
+### 22.3 Enregistrer et reprendre une partie en FICHIER
+
+`GAME3D.exportSave()` / `GAME3D.importSave()`, et surtout **deux boutons dans l'écran d'aide
+(touche `H`)** : depuis la console, ces fonctions n'existent pas pour un enfant de 10 ans.
+Un `Blob` et un `<a download>`, un `<input type="file">` et un `FileReader` — rien d'autre,
+ça marche en `file://`. Nom du fichier : `robin-partie-AAAA-MM-JJ.json`.
+
+- L'import **refuse** tout ce qui n'est pas une partie (`ressembleAUnePartie()`), et met la
+  partie en cours à l'abri (`rotateBackup(true)`) **avant** d'écrire : une fausse manœuvre
+  reste rattrapable par `restoreBackup(0)`.
+- L'import **sait faire de la place** (`ecrireImport()`, amendement du 2026-08-01). C'était
+  le seul chemin d'écriture qui ne le savait pas — un `setItem` nu — alors que ressortir son
+  fichier est justement ce qu'on fait quand le stockage a mal tourné : Robin s'entendait
+  répondre « pas de place » quand effacer les copies aurait suffi. `ecrireImport()` libère
+  les copies **de la plus vieille à la plus récente**, en **sautant** l'emplacement que
+  `rotateBackup(true)` vient d'écrire : le point de retour survit à l'import. Et le message
+  d'échec ne prétend plus que « rien n'a été changé » — il dit que la partie précédente est
+  intacte, ce qui est vrai, la clé principale n'ayant pas bougé.
+- **PIÈGE, et il est vicieux** : `installerPartie()` commence par `closeOverlays()`. Deux
+  raisons, les deux indispensables. (a) `#message-box` est déclarée dans `index3d.html`
+  AVANT que le HUD n'ajoute ses overlays : une boîte de dialogue s'affiche donc **sous**
+  l'écran d'aide, et sur l'écran `'help'` ni Espace ni Entrée ne la font avancer — le
+  « Le jeu redémarre… » serait resté invisible ET muet, avec un rechargement qui n'arrive
+  jamais. (b) `closeOverlays()` appelle `saveGame()` : il doit donc avoir lieu **avant**
+  qu'on écrase la clé principale, sinon il réécrirait la partie en cours par-dessus celle
+  qu'on vient d'importer. **Ne déplacez pas cet appel.**
+
+### 22.4 Le panneau d'erreur — `index3d.html`, tout en haut
+
+Une virgule oubliée tuait un fichier ENTIER en silence : plus de boutique, plus de combats,
+et rien à l'écran pour le dire. Un petit script sans dépendance, écrit en `var`/ES5 pour
+survivre à tout, écoute `window.addEventListener('error', …, true)` et affiche un panneau
+lisible qui nomme le fichier et la ligne — et qui dit toujours la seule chose qui compte :
+**« Ta partie est en sécurité : rien n'a été effacé. »**
+
+- **Il doit rester la TOUTE PREMIÈRE balise `<script>` de la page** : il ne voit pas les
+  erreurs des scripts chargés avant lui.
+- `true` en 3ᵉ argument = phase de **capture** : c'est la seule façon d'attraper aussi un
+  `<script src>` introuvable, qui ne remonte pas d'erreur autrement.
+- Un seul panneau par session (une erreur en entraîne dix), et un bouton « Continuer quand
+  même » : on informe, on ne bloque jamais.
+- Il publie `window.ROBIN_OOPS(titre, lignes, detail)`, dont `checkBoot()` se sert.
+
+### 22.5 `checkBoot()` et la liste des modules attendus
+
+Les 45 balises `<script src>` d'`index3d.html` n'étaient gardées que par des commentaires.
+`checkBoot()`, appelé en tête d'`init()`, vérifie que tout le monde a répondu : `THREE`,
+`R3`, les 30 modules de `MODULES_ATTENDUS`, un modèle témoin par lot de créatures
+(`MODELES_ATTENDUS`), et les six fichiers du jeu 2D (`FICHIERS_2D`).
+
+- **`MODULES_ATTENDUS` EST UN CONTRAT : tout nouveau module s'y ajoute**, une ligne
+  `[nom enregistré, fichier]`. C'est le seul endroit du jeu qui sache ce qui est censé
+  être chargé. Idem pour un nouveau lot de modèles dans `MODELES_ATTENDUS`.
+- Les fichiers 2D déclarent des `const` de haut niveau : elles ne sont **pas** sur `window`,
+  d'où les petites fonctions `typeof PALETTE !== 'undefined'` écrites en clair.
+- `checkBoot()` **ne bloque jamais** : il nomme ce qui manque et laisse le jeu démarrer.
+  La plupart des modules sont facultatifs (§1.4), et un enfant privé de son jeu parce
+  qu'un fichier manque serait exactement la punition que ce jeu s'interdit.

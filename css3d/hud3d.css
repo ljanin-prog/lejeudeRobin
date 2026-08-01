@@ -659,7 +659,10 @@ html, body {
   transform: translateX(-50%);
   margin: 0;
   padding: 7px 18px;
-  font-size: clamp(11px, 1.2vw, 14px);
+  /* Plancher relevé de 11 à 13 px : Robin a 10 ans et lit lentement. La barre
+     est déjà `text-overflow: ellipsis`, et la touche H rappelle désormais
+     toutes les commandes en grand — la coupure n'est plus une perte. */
+  font-size: clamp(13px, 1.2vw, 15px);
   color: var(--gris);
   background: rgba(20, 22, 40, .62);
   border-radius: 999px;
@@ -682,6 +685,11 @@ html, body {
   left: 12px;
   padding: 4px 10px;
   font-size: 12px;
+  /* Trois lignes depuis le chantier 2.9 (images, dessins, triangles) : `pre`
+     respecte les retours à la ligne du texte ET empêche « 94 300 triangles »
+     de se couper en deux au milieu du nombre. */
+  white-space: pre;
+  line-height: 1.35;
   font-variant-numeric: tabular-nums;
   color: var(--vert-clair);
   background: rgba(13, 16, 32, .72);
@@ -1342,7 +1350,7 @@ html, body {
 .map-marker.nomme { display: flex; align-items: center; gap: 3px; white-space: nowrap; }
 .map-marker.nomme .mk-icon { font-size: 18px; }
 .map-marker.nomme .mk-label {
-  font-size: 10.5px;
+  font-size: 11.5px;
   font-weight: 700;
   color: #fff;
   background: rgba(26, 28, 44, .82);
@@ -1353,6 +1361,15 @@ html, body {
 .map-marker.academy .mk-label { background: rgba(122, 92, 191, .92); }
 .map-marker.center  .mk-label { background: rgba(255, 107, 157, .92); }
 .map-marker.arena   .mk-label { background: rgba(255, 107, 61, .92); }
+/* Quête des légendes : le sanctuaire (doré) et les autels de ses six gardiens
+   (violet, comme les pastilles de `regions3d.minimap`). Un autel dont la
+   créature est déjà attrapée passe en vert : la carte devient une liste de
+   ce qu'il reste à trouver. */
+.map-marker.sanctuary .mk-label { background: rgba(196, 148, 42, .94); }
+.map-marker.sanctuary.ferme { opacity: .62; }
+.map-marker.altar   .mk-icon  { font-size: 15px; color: #c8b3ff; }
+.map-marker.altar   .mk-label { background: rgba(122, 92, 191, .9); font-size: 11px; }
+.map-marker.altar.pris .mk-label { background: rgba(56, 183, 100, .9); }
 .map-marker.player.blink { opacity: .55; }
 
 .map-legend {
@@ -1360,7 +1377,7 @@ html, body {
   flex-wrap: wrap;
   justify-content: center;
   gap: 6px 14px;
-  font-size: clamp(11px, 1.2vw, 14px);
+  font-size: clamp(12px, 1.2vw, 14px);
   color: var(--creme);
 }
 .map-legend span { display: inline-flex; align-items: center; gap: 6px; }
@@ -1368,13 +1385,26 @@ html, body {
 
 /* --- Grille des 6 régions (carte du monde + menu du dirigeable) ------------- */
 
-.world-grid-wrap { width: min(680px, 92vw); }
-
+/* Les pastilles sont posées en `position: absolute` avec un `top` en % : il
+   leur faut donc un parent positionné ET qui ait une hauteur. `.world-grid-wrap`
+   n'avait ni l'un ni l'autre — le parent s'effondrait à zéro, les six pastilles
+   se calaient toutes sur la même bande et se recouvraient. Le défaut existait
+   déjà, discrètement (23 à 40 px de recouvrement) ; le niveau conseillé du
+   dirigeable, en allongeant les pastilles, l'a rendu franchement visible.
+   La hauteur vient de `.world-grid` ci-dessous, qui portait la bonne règle
+   depuis le début mais que personne n'appliquait. */
+.world-grid-wrap,
 .world-grid {
   position: relative;
-  width: 100%;
+  width: min(680px, 92vw);
   aspect-ratio: 3 / 2;
+  /* Deux rangées à 25 % et 75 % : leurs centres sont écartés de la moitié de
+     la hauteur. Il faut 2 × la plus haute pastille (~155 px) pour qu'elles ne
+     se touchent pas, même sur une fenêtre étroite. */
+  min-height: 330px;
 }
+
+.world-grid { width: 100%; }
 
 .world-links { position: absolute; inset: 0; width: 100%; height: 100%; }
 .world-link { stroke: rgba(168, 186, 207, .35); stroke-width: 1.4; stroke-dasharray: 3 2.4; }
@@ -1387,8 +1417,14 @@ html, body {
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  width: clamp(80px, 14vw, 118px);
-  padding: 10px 6px 8px;
+  /* 118 px suffisaient tant que le sous-titre tenait en deux lignes. Depuis
+     que le dirigeable y écrit aussi le niveau conseillé, une pastille de
+     118 px montait à 205 px de haut et mordait sur celle du dessous (les
+     pastilles sont posées à des coordonnées fixes sur la carte du monde).
+     Élargir la pastille est ce qui coûte le moins : le texte reste entier et
+     les colonnes, distantes de 250 px, ne se touchent toujours pas. */
+  width: clamp(96px, 16vw, 152px);
+  padding: 10px 8px 8px;
   background: rgba(18, 20, 42, .92) !important;
   border: 3px solid rgba(61, 94, 140, .8) !important;
   border-radius: 16px !important;
@@ -1399,8 +1435,14 @@ html, body {
 }
 
 .wn-dot { font-size: 22px; }
-.wn-label { font-size: clamp(10.5px, 1.2vw, 13px); font-weight: 700; }
-.wn-sub { font-size: 10px; color: var(--gris); }
+.wn-label { font-size: clamp(11.5px, 1.2vw, 13.5px); font-weight: 700; }
+/* 10 px, c'était illisible — et c'est ici que s'écrit l'avertissement de
+   niveau du dirigeable, la ligne la plus utile de l'écran.
+   `pre-line` : le dirigeable écrit DEUX renseignements séparés par un `\n`
+   (« Jamais visitée » puis « Nv 45 conseillé · toi Nv 8 ⚠️ »). Sans lui, les
+   deux se colleraient sur une seule phrase illisible. */
+.wn-sub { font-size: 12px; line-height: 1.25; color: var(--gris); white-space: pre-line; }
+.wn-sub.alerte { color: #ffd166; font-weight: 700; }
 
 .world-node:hover { transform: translate(-50%, -50%) translateY(-3px) !important; border-color: var(--rose) !important; }
 
@@ -1410,10 +1452,112 @@ html, body {
   box-shadow: 0 0 0 4px rgba(252, 236, 108, .28), var(--ombre-douce) !important;
   transform: translate(-50%, -50%) translateY(-3px) !important;
 }
+/* Destination très au-dessus du niveau de l'équipe, en attente d'un second
+   clic. On ne bloque rien : on rend l'hésitation visible. */
+.world-node.doute { border-color: #ffd166 !important; box-shadow: 0 0 0 4px rgba(255, 209, 102, .25), var(--ombre-douce) !important; }
 .world-node.visited { border-color: rgba(126, 224, 143, .7) !important; }
 .world-node.current { border-color: var(--jaune-clair) !important; box-shadow: 0 0 0 4px rgba(252, 236, 108, .3) !important; }
 .world-node.locked { opacity: .5; filter: grayscale(.5); cursor: not-allowed; }
 .world-node.locked:hover { transform: translate(-50%, -50%) !important; border-color: rgba(61, 94, 140, .8) !important; }
+
+/* =============================================================================
+   ÉCRAN D'AIDE (touche H)
+   ----------------------------------------------------------------------------
+   Même gabarit que le menu du dirigeable, en plus large : deux ou trois
+   colonnes de rubriques selon la place. Tout y est écrit à 13 px au minimum —
+   c'est justement le reproche fait à la barre d'astuces du bas.
+   ============================================================================= */
+
+.help-frame {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: min(860px, 94vw);
+  max-height: 88vh;
+  overflow-y: auto;
+  padding: clamp(16px, 2.4vw, 26px);
+  background: var(--verre);
+  border: 3px solid rgba(252, 236, 108, .7);
+  border-radius: var(--rayon);
+  box-shadow: var(--ombre);
+  animation: carte-arrivee .3s ease both;
+}
+
+.help-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px 18px;
+  width: 100%;
+  text-align: left;
+}
+
+.help-sec {
+  padding: 10px 12px;
+  background: rgba(20, 22, 40, .55);
+  border-radius: var(--rayon-petit);
+}
+.help-sec h3 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  color: var(--jaune-clair);
+}
+
+.help-row { display: flex; align-items: baseline; gap: 8px; padding: 2px 0; }
+
+.help-key {
+  flex: none;
+  min-width: 74px;
+  padding: 2px 8px;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+  color: var(--nuit);
+  background: linear-gradient(180deg, #ffe9a0, var(--jaune-clair));
+  border-radius: 7px;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, .35);
+}
+.help-txt { font-size: 13.5px; color: var(--creme); }
+
+.help-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--gris);
+}
+
+/* Mettre sa partie à l'abri (correction 2.8) — les deux boutons vivent au bas
+   de l'écran d'aide, le seul endroit calme du jeu toujours atteignable par H. */
+.help-save {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px;
+  background: rgba(20, 22, 40, .55);
+  border-radius: var(--rayon-petit);
+}
+.help-save-txt {
+  margin: 0;
+  font-size: 13px;
+  color: var(--creme);
+  text-align: center;
+}
+.help-save-btn {
+  width: min(420px, 100%);
+  padding: 9px 14px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--nuit);
+  background: linear-gradient(180deg, #ffe9a0, var(--jaune-clair));
+  border: none;
+  border-radius: 10px;
+  box-shadow: 0 3px 0 rgba(0, 0, 0, .35);
+  cursor: pointer;
+}
+.help-save-btn:hover, .help-save-btn:focus-visible { filter: brightness(1.08); }
+.help-save-btn:active { transform: translateY(2px); box-shadow: 0 1px 0 rgba(0, 0, 0, .35); }
 
 /* =============================================================================
    Menu du dirigeable (§17 bis)
@@ -1458,9 +1602,21 @@ html, body {
   font-weight: 700;
   color: var(--nuit);
   background: linear-gradient(180deg, #ffe9a0, var(--jaune-clair));
-  border-radius: 999px;
+  border-radius: 22px;
   box-shadow: var(--ombre);
-  white-space: nowrap;
+  /* ⚠️ PAS DE `nowrap`. `#hud` est en `overflow: hidden` et `.toast-layer` est
+     centré par `translateX(-50%)` : un bandeau plus large que la fenêtre se
+     fait rogner AUX DEUX BOUTS. Le plus long toast du jeu (l'avertissement du
+     dirigeable, 108 caractères) demandait ~850 px ; sur une fenêtre de 800 px,
+     la moitié actionnable (« Reclique pour y aller quand même ! ») n'était
+     jamais lue. On passe donc à la ligne, borné à la largeur de l'écran.
+     `toastDuree()` donne déjà 8 s à ces textes-là. */
+  white-space: normal;
+  max-width: min(560px, 90vw);
+  text-align: center;
+  /* Durée de repli seulement : `hud3d.toast()` la remplace par une durée
+     proportionnelle à la longueur du texte (`t.style.animationDuration`).
+     Les keyframes sont en POURCENTAGES, donc elles suivent toutes seules. */
   animation: toast-vie 2.6s ease both;
 }
 .toast-icon { font-size: 16px; }
@@ -2003,6 +2159,10 @@ html, body {
     animation-iteration-count: 1 !important;
     transition-duration: .01ms !important;
   }
+  /* …sauf le toast : `toast-vie` finit à `opacity: 0` en mode `both`, donc
+     l'écraser à .01 ms le rendait INVISIBLE au lieu de simplement immobile.
+     Sans animation, c'est le `setTimeout` de `toast()` qui le retire. */
+  .toast { animation: none !important; opacity: 1; }
 }
 
 /* ---------------------------------------------------------------------------

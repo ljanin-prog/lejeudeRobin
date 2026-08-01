@@ -360,6 +360,45 @@ donnant un type et un `fx` — **les noms français existants doivent être cons
 pas dérouter Robin. Les nouvelles capacités portent des noms **français, imagés, lisibles
 par un enfant** (« Griffe de braise », « Vague déferlante », « Fissure du temps »).
 
+### Les soins sont TOUJOURS des fractions — amendement du 2026-08-01 (chantier 2.5)
+
+`heal` accepte toujours les deux formes (le nombre de PV existe encore dans `compute()` pour
+les vieilles sauvegardes et les modules tiers), mais **plus aucune capacité du catalogue n'y
+recourt, et aucune nouvelle ne le doit.** Un nombre fixe est juste une fois dans la partie et
+faux partout ailleurs : les six soins hérités du jeu 2D rendaient 10 à 18 PV, c'est-à-dire
+15 % des PV d'une créature de niveau 6 et **2,5 % de ceux d'un Auréol niveau 53**. La case
+devenait inutile au moment précis où l'enfant en avait besoin.
+
+Barème en vigueur, du plus faible au plus fort :
+
+| capacité | frac | PP | budget (frac × PP) |
+|---|---|---|---|
+| `soin1` Repos léger | 0,15 | 20 | 3,00 |
+| `calin` Câlin soin | 0,20 | 15 | 3,00 |
+| `soin2` · `ronron` · `chant` | 0,22 | 15 | 3,30 |
+| `concentration` | 0,25 | 10 | 2,50 |
+| `soinMagie` | 0,25 | 15 | 3,75 |
+| `repos` | 0,40 | 10 | 4,00 |
+| soins **typés** (un par type) | 0,45 | 10 | 4,50 |
+| `remonterLeTemps` | 0,50 | 10 | 5,00 |
+
+Deux règles à respecter en ajoutant un soin :
+
+1. **La fraction est calée pour rendre à peu près l'ancien nombre de PV au niveau où la
+   capacité s'apprend.** Un Feuillou niveau 6 récupère toujours 9-10 PV avec Repos léger ;
+   c'est plus haut que la conversion se voit. Vérifié espèce par espèce : aucun adversaire
+   des trois premières régions ne varie de plus de 6 PV.
+2. **Le budget `frac × PP` est le vrai bouton d'équilibrage**, parce que `pickAI` se soigne à
+   80 % dès que l'adversaire passe sous 30 % de PV : c'est lui qui décide combien de PV
+   l'IA peut régénérer dans un combat. Aucun des soins convertis ne dépasse 3,75, donc aucun
+   ne dépasse les soins typés (4,50) déjà en jeu — la conversion n'a créé aucun nouveau
+   record. La guerre d'usure contre les légendaires (Pyrathos : 7,00) est un problème
+   antérieur et distinct, traité par le chantier 3.9 de l'audit ; **ne pas la « corriger »
+   en rabaissant ces fractions**, la bonne cible est la probabilité de soin de `pickAI`.
+
+Piège : `move.heal` étant un objet, tout test de la forme `Number(m.heal)` ou
+`num(m.heal, 0)` répond **faux** sur une fraction. Voir §11, `isHealMove`.
+
 ---
 
 ## 8. `dex3d.js` — le Pokédex complet (26 + 36)
@@ -560,13 +599,58 @@ Mon = {
 Progression : `maxHp = round(baseHp * (1 + level * 0.06))`, idem pour atk/def/speed avec
 `0.05`. `xpNext = 20 + level * level * 4`. Niveau max **60**.
 
+**Réorganiser l'équipe préserve la CRÉATURE active, pas son numéro d'emplacement.**
+`remove(uid)`, `toBox(teamIndex)` et `swap(i, j)` recalent `activeIndex` pour qu'`active()`
+rende toujours la créature que le joueur a désignée par `setActive()`. Ne jamais se contenter
+de borner l'indice : ranger une créature d'indice inférieur décale toutes les suivantes, et
+un indice « resté dans les bornes » désigne alors quelqu'un d'autre — c'est silencieux, et le
+badge ⚔️ de l'écran Équipe se déplace tout seul. Seule exception, assumée : `toTeam(boxIndex,
+teamIndex)` sur une équipe pleine remplace l'occupante de `teamIndex` ; si c'était l'active,
+la remplaçante hérite du rôle, puisque le joueur vient de la choisir pour cette place.
+
+`movesForLevel()` (interne, utilisée par `create()`) n'éjecte **jamais l'unique capacité de
+soin** d'une créature quand le learnset dépasse 4 emplacements : `dex3d.js` garantit un soin
+par espèce, l'oubli premier-entré-premier-sorti le supprimait en premier. Vaut aussi pour les
+équipes des dresseurs et des champions.
+
+> **Amendement du 2026-08-01 (chantier 2.5).** Cette protection s'appuie sur `isHealMove(id)`,
+> qui testait `num(moveDef(id).heal, 0)`. Or `heal` a **deux formes** (§9) et `num()` répond
+> `0` sur un objet : la règle ne voyait donc que les soins en PV absolus et **ratait toutes
+> les fractions**, c'est-à-dire tout le catalogue typé. Mesuré : 387 couples (espèce, niveau)
+> étaient déjà créés sans le moindre soin, et la conversion des six soins hérités du 2D en
+> fractions serait montée à 1132. `isHealMove` teste maintenant les deux formes. **Ne jamais
+> revenir à un test numérique unique sur `heal`** — c'est silencieux et invisible en jeu.
+
+**`gainXp` rend en plus `pendingLearn: [{moveId, level}]`** (extension hors contrat) : les
+capacités qu'une créature à 4 emplacements n'a PAS pu apprendre. Rien ne les apprend jamais —
+il n'existe aucun écran de remplacement, ni même de point d'écriture officiel sur `mon.moves`
+(chantier ouvert). Tant que c'est le cas, **les messages ne doivent rien promettre** : ils
+disent que la créature garde ses 4 capacités, jamais « ce sera pour plus tard ». Tout
+consommateur doit citer TOUTE la liste, pas seulement `pendingLearn[0]` — deux paliers au même
+niveau en perdaient une en silence. Attention à la forme : `evolve3d.evolve()` rend le même
+renseignement sous le nom `pending`, et en **chaînes** au lieu d'objets.
+Enfin, la valeur de retour de `gainXp` **s'utilise partout**, y compris pour l'XP partagée aux
+équipiers et le bonus de badge : sans cela une créature monte de plusieurs niveaux en silence.
+
 **Taux de capture** (généreux, c'est un jeu d'enfant) :
 ```
 base = species.catchRate
 soin = 1 + (1 - mon.hp / mon.maxHp) * 1.6        // une créature affaiblie se capture mieux
+if (ballBonus >= 99) chance = 1                  // Ball Maîtresse : JAMAIS de clamp à 0.97
 chance = clamp(base * soin * ballBonus, 0.03, 0.97)
 ```
 `ballBonus` : Pokéball 1.0, Super Ball 1.5, Hyper Ball 2.2, Ball Maîtresse 99.
+
+⚠️ **AMENDEMENT (correction 2.4) — la Ball Maîtresse rend exactement `1`, pas `0.97`.**
+La borne haute de 0,97 s'appliquait à TOUTES les Balls, Ball Maîtresse comprise. Or
+`shop3d.js` la décrit « Elle ne rate jamais », `quest3d.js` répète « celle qui ne rate
+jamais », et on n'en gagne que **deux** dans tout le jeu : un enfant qui garde la sienne
+pendant des heures pour son légendaire préféré et la voit rater (3 % du temps) vivrait la
+pire trahison possible. Une promesse écrite dans le jeu se tient. Le test porte sur le
+**bonus** (`>= 99`) et non sur l'identifiant de la Ball, pour que `team3d.js` reste
+indépendant de `shop3d.js` — la signature ne passe qu'un nombre. Le clamp 0,03–0,97 reste
+la règle pour toutes les autres Balls. **Ne « réparez » pas ceci en remettant le clamp
+unique : ce n'est pas une régression, c'est la correction.**
 
 ---
 
@@ -579,7 +663,7 @@ R3.register('arenas', {
   championNpc(regionId),     // -> npc (format js/npcs.js) à ajouter à la région
   makeBattle(regionId, playerTeam),   // -> battleState prêt pour battle3d
   badgeOf(regionId),         // -> { id, name, icon, color }
-  TRAINERS,                  // { regionId: [npc] } — 4 dresseurs par région
+  TRAINERS,                  // ⚠️ TABLE MORTE — voir l'encadré du §12 plus bas
   rewardText(regionId),
 });
 ```
@@ -605,6 +689,62 @@ combat de champion démarre. Gagner donne le badge et beaucoup d'XP.
 Les équipes de champions montent en puissance selon l'ordre de progression du §3
 (niveaux ~10, ~18, ~26, ~34, ~42, ~50) et comportent **3 à 5 créatures**, dont au moins
 un légendaire pour les trois dernières arènes.
+
+### ⚠️ `arenas3d.TRAINERS` N'EST BRANCHÉ SUR RIEN — constat du 2026-08-01
+
+**Les dresseurs que Robin rencontre ne viennent PAS d'ici.** `TRAINERS`, `trainersOf()` et
+`findTrainer()` sont exportés et n'ont **aucun consommateur** dans tout le dépôt (`grep` :
+zéro occurrence hors de `arenas3d.js`). `regions3d.js` ne récupère d'`arenas3d` que
+`championNpc()`. La vraie table des dresseurs est **`NPC_TEMPLATES` dans `regions3d.js`** :
+`game3d.talkToNPC()` → `startTrainerBattle(npc)` → `arenas3d.makeTrainerBattle(npc)`, qui
+reconstruit l'équipe adverse depuis le `party: ['id']` du PNJ (`npc.team` étant absent).
+
+Conséquence à retenir : **une retouche d'équilibrage faite dans `arenas3d.TRAINERS` ne change
+rien en jeu.** C'est arrivé au chantier 2.5, et ce paragraphe a affirmé pendant une journée
+que les dresseurs tardifs alignaient des formes évoluées alors qu'ils envoyaient toujours des
+formes de base. La table est conservée (elle est riche en dialogues, elle servira peut-être
+un jour), mais **elle est décorative** : toute modification d'un dresseur se fait dans
+`regions3d.js`, et là seulement.
+
+### À armes égales — amendement du 2026-08-01 (chantier 2.5)
+
+Les arènes **4 à 6** et les dresseurs des **trois dernières régions** (givre, braise, aurore)
+alignent des **formes ÉVOLUÉES**, pas des formes de base. Les évolutions d'`evolve3d.js`
+tombent entre les niveaux 16 et 36 : à partir de Cimefroide, le joueur n'a plus une seule
+forme de base dans son équipe, et un champion qui en opposait encore offrait un examen que
+l'enfant avait déjà passé. Astréa envoyait une Koronette 47 contre un Koronetton — ×1,55 en
+statistiques, en sa défaveur.
+
+- **Les niveaux et les plafonds ne bougent pas.** `levelCap` reste 12 · 20 · 28 · 36 · 45 · 55.
+  C'est l'espèce qui change, jamais la courbe. Mesuré, puissance totale (PV + atq + déf + vit)
+  des six équipes de CHAMPIONS : 945 → 1527 → 2058 → **3900** → **5426** → **5691** ; l'ordre
+  reste strictement croissant, et chaque dresseur reste plus faible que le champion de sa
+  région.
+- **Les 12 dresseurs de givre/braise/aurore ont été portés dans `regions3d.js`** (et pas
+  seulement dans la table morte ci-dessus) : `pandouki`→`pandoukion`, `glydrak`→`glydrakon`,
+  `doudoune`→`doudouneon`, `stellini`→`stellinion`, `flamdrak`→`flamdrakix`,
+  `etincelo`→`etinceloix`, `tonnedrak`→`tonnedrakon`, `koronette`→`koronetteon`. `nuagette`
+  reste en l'état (`NO_EVOLUTION`). Les quatre dialogues qui NOMMAIENT la créature ont suivi
+  (« Mon Glydrakon plane… », « Mon Flamdrakix est la terreur… », « Mon Doudounon… »,
+  « Mon Étincelix… »). Ces PNJ n'ont pas de niveau propre : `startTrainerBattle()` leur pose
+  `def.recommendedLevel` (28 · 36 · 45), les plafonds sont donc respectés d'office. Mesuré,
+  puissance totale des dresseurs par région : 832 → 1083 → 1249 → **2816** → **3744** →
+  **3719**, tous très en dessous du champion de leur région.
+- **Les trois premières arènes gardent leurs formes de base**, et c'est volontaire : jusqu'au
+  niveau 24, c'est aussi ce que le joueur a dans son équipe.
+- **PIÈGE DES IDENTIFIANTS, à relire avant toute retouche.** `evolve3d.js` fabrique l'id par
+  concaténation **stricte** `base + suffixe` : Koronette → `koronetteon` (le NOM affiché est
+  « Koronetton », l'id ne l'est pas), Crabilino → `crabilinoon`, Miaouche → `miaouchear` puis
+  `miaoucheix`, Flamdrak → `flamdrakon` puis `flamdrakix`. Un id inexistant **ne lève aucune
+  erreur** : `makeMon()` retombe sur `fallbackMon()` et le champion devient une créature
+  générique de 48 PV de type plante, sans un mot dans la console. Vérifier chaque id contre
+  `CHAIN_DATA` d'evolve3d.js — et surtout pas contre `idsCanoniques()` de
+  `creatures3d.p5.js`, qui liste des variantes de modèle 3D qui ne sont pas toutes des ids.
+- `nuagette` (Astréa) et `papillon` (dresseurs) restent en forme de base : elles sont dans
+  `NO_EVOLUTION`, elles n'ont pas de forme évoluée. Ce n'est pas un oubli.
+- Effet de bord assumé : les formes évoluées portent les soins **typés** (`{frac: 0.45}`) là
+  où les formes de base avaient `soin1`/`soin2`. L'IA de `pickAI` se soigne donc mieux chez
+  les champions 4-6. C'est symétrique — le joueur a exactement les mêmes créatures.
 
 ---
 
@@ -701,6 +841,13 @@ R3.register('world', {
 - L'eau reste confiée à `R3.get('water').makeSurface(tiles, kind)`, par chunk. Nouveaux
   types à gérer : `'lava'` (émissif, lent), `'swamp'` (trouble, opaque), `'ice'`
   (réfléchissant, immobile).
+  *Amendement du 2026-08-01 (chantier 1.10)* : un chunk se libère par
+  `disposeChunkGroup(grp)`, jamais par un `R3.disposeTree(grp)` direct. Cette fonction
+  rend d'abord chaque mesh `userData.waterKind` à `water.release()` — sans quoi water3d
+  retient la géométrie des nappes disparues (~0,5 Mo par chunk d'eau plein). Les deux
+  appelants sont `disposeChunk()` et `setRegion()`. Détail : les nappes de repli
+  (`fallbackWaterMesh`, types `lava`/`swamp`/`ice`) portent le même marqueur mais ne sont
+  pas connues de water3d — `release()` répond `false` et c'est sans conséquence.
 - Garder la « jupe » qui plonge hors carte et le grand quad d'océan lointain (voir les
   pièges documentés dans `CONTRACT.md` v1) — sans eux, l'horizon est vert et le ciel disparaît.
 - Nouveaux décors à modéliser (instanciés) : `jungletree`, `vinetree`, `fern`, `mangrove`,
@@ -720,10 +867,18 @@ R3.register('roamers', {
   update(t, dt, px, pz),
   list(),                          // -> [roamer]
   aimed(px, pz, dir, range),       // -> le roamer visé par le joueur, ou null
+                                   // `dir` : cardinale 'up'|'down'|'left'|'right'
+                                   // OU un ANGLE en radians (vue subjective)
   nearest(px, pz, maxDist),
   throwBall(roamer, chance, cb),   // animation de lancer ; cb(result) avec
                                    // result ∈ 'caught' | 'escaped' | 'fled'
-  remove(roamer),
+                                   // cb est appelé EXACTEMENT UNE FOIS, même
+                                   // si le lancer est refusé ou interrompu
+  remove(roamer, reason),          // reason: 'caught'|'defeated' (10 min) ou
+                                   // autre chose (2 min) — cooldown de l'autel
+                                   // d'un légendaire
+  setLegendCooldown(altarId, reason),  // même vocabulaire, après coup
+  starsAt(x, z, n),                // gerbe d'étoiles à une position du monde
   onEncounter(fn),                 // appelé si un roamer touche le joueur
 });
 ```
@@ -744,10 +899,58 @@ Règles :
 - Les **légendaires** n'apparaissent qu'à leur autel (`LEGEND_ALTAR`), un seul à la fois,
   avec une aura visible de loin et un son. Ils ne se déplacent pas ; ils fuient au bout de
   90 secondes si on ne les affronte pas.
+- **Les 90 secondes s'annoncent** (correction 2.3) : un toast à l'apparition (« Vite, il ne
+  restera pas longtemps… »), un autre 20 s avant la fuite, un dernier au départ (« Reviens le
+  voir à son autel dans un moment ! »). Une limite de temps invisible n'est pas une règle du
+  jeu, c'est un piège. Le drapeau `_legendary._warned` empêche de répéter l'avertissement
+  soixante fois par seconde, et `_legendary._nom` évite d'interroger le Pokédex à chaque image.
+- **Le temps d'attente d'un autel dépend de ce qui s'est passé** (correction 2.3) :
+  `LEGEND_COOLDOWN_S = 600` (10 min) si l'affaire est **classée** — `reason` vaut `'caught'`
+  (capturé) ou `'defeated'` (mis K.O.) — et `LEGEND_RETRY_S = 120` (2 min) dans tous les
+  autres cas : défaite du joueur, fuite, ou départ du légendaire. `'defeated'` compte comme
+  `'caught'` pour une raison d'économie et non de punition : avec la correction 1.4 un
+  légendaire vaincu rapporte ~1200 pièces, et un retour toutes les 2 minutes en ferait une
+  machine à sous devant l'autel. Avant, tout retrait posait 10 minutes : comme `game3d.js` retire le
+  roamer **au début** du combat, perdre contre le gardien vidait son autel dix minutes
+  réelles. On est déjà K.O. : ajouter une attente subie est une double punition, contraire à
+  la philosophie du jeu. Le cooldown court est donc le **défaut** de `remove()`, et c'est
+  voulu — en monde ouvert, `remove()` est appelé deux fois sur la même référence (fin du
+  lancer, puis `game3d.onCaught`) et le second appel réécrit le cooldown. Comme l'issue du
+  combat n'est pas connue au moment du retrait, `game3d.js` mémorise `battle.legendAltarId`
+  et appelle `setLegendCooldown(altarId, 'caught')` depuis `onCaughtInBattle()` — c'est le
+  seul endroit où la capture est certaine. La durée n'est écrite que dans `roamers3d.js` :
+  ne la recopiez pas ailleurs.
+- **`aimed()` accepte un ANGLE autant qu'une cardinale** (correction 2.10). En vue
+  subjective le regard n'est justement pas cardinal : à 45°, la créature qu'on avait pile en
+  face pouvait sortir du cône parce que `game3d.js` passait `p.dir`, la cardinale la plus
+  proche. `game3d.aimedRoamer()` passe désormais `fpsYaw()` quand `isFpsView()`, et `p.dir`
+  partout ailleurs. ⚠️ **Un nombre tombait silencieusement sur `DIR_VEC.down`** — on ne peut
+  donc pas se contenter de passer l'angle sans le test explicite
+  `typeof dir === 'number' && isFinite(dir)`. Vecteur du regard : `fx = sin(a)`,
+  `fz = cos(a)`, conformément à la convention d'axes du §1.4 (`'down'` = yaw 0 = +z,
+  `'right'` = yaw +π/2 = +x) — c'est exactement la formule d'`updateFpsMove`, ne la
+  réinventez pas. La signature reste rétro-compatible : une cardinale se comporte comme
+  avant, une cardinale inconnue retombe toujours sur `down`. Cette visée sert AUSSI au
+  réticule (`state.aimed` / `hud.showAimReticle`), qui suit donc le regard lui aussi.
 - `throwBall` : Pokéball 3D lancée en parabole depuis le joueur, atterrissage, aspiration de
   la créature, **3 secousses**, puis gerbe d'étoiles (capture) ou éclat + fuite (échec).
   Reprendre les timings du jeu 2D : lancer 0→600 ms, secousses 600→1800 ms, résultat à 1800 ms.
   **Tout se passe dans le monde ouvert, sans écran de combat.**
+- ⚠️ **`throwBall` appelle TOUJOURS son `cb`, exactement une fois** — y compris quand il
+  refuse le lancer (une Ball déjà en vol) ou l'interrompt (`setRegion` en plein vol). C'est
+  une règle de survie, pas un détail : `game3d.js` pose `state.throwing = true` avant l'appel
+  et ne le remet à `false` que dans le callback. Un `return` sec, comme celui qui existait
+  avant, laissait `state.throwing` à `true` pour TOUTE la session — touches B (lancer) et T
+  (dirigeable) mortes jusqu'au rechargement. C'était le pire bug du jeu.
+  Mise en œuvre : `abortThrow(reason)` centralise l'abandon, et `A.cb` est mis à `null` dès
+  qu'il est parti. Ne « simplifiez » jamais ça en remettant un `return` nu.
+- **`'fled'` = lancer ABANDONNÉ, aucune Ball n'a volé.** `game3d.js` rend alors la Ball au
+  sac et reste silencieux (pas de son d'échec, pas de bandeau) : annoncer une fuite à un
+  enfant qui n'a rien vu, ou lui prendre un objet à cause d'un bug, serait punitif.
+  `'escaped'` reste la vraie fuite, celle qu'on a vue à l'écran.
+- Ceinture-bretelles côté `game3d.js` : `loadRegionData()` remet `state.throwing = false`.
+  C'est le seul point de passage commun aux portails, au dirigeable (`arriveAtPort` appelle
+  `loadRegionData` **sans** passer par `applyRegion`) et à la reprise de sauvegarde.
 - Espace face à un roamer → `onEncounter` : `game3d.js` démarre un vrai combat.
 
 ---
@@ -761,9 +964,27 @@ R3.register('battle', {
   notifyMove(side, move),          // side: 'player' | 'foe'
   swapIn(side, mon),               // animation de changement de créature
   playFx(side, move),              // effet visuel selon move.fx
-  throwBall(chance, cb),           // capture PENDANT un combat
+  throwBall(chance, cb),           // capture PENDANT un combat ; cb est appelé
+                                   // EXACTEMENT UNE FOIS, même si le lancer
+                                   // est refusé ou interrompu (voir plus bas)
 });
 ```
+
+⚠️ **`throwBall` appelle TOUJOURS son `cb`, exactement une fois.** `game3d.js` pose
+`b.phase = 'ball'` avant l'appel et n'en sort QUE par le callback ; or aucune touche n'est
+lue en phase `'ball'`. Un `return` sec — comme celui qui gardait « un seul lancer à la
+fois » — gelait donc la partie jusqu'au rechargement, Ball perdue. Deux cas d'abandon :
+le lancer précédent n'a pas encore rendu son verdict → on refuse le nouveau avec
+`cb('fled')` ; il n'en est qu'au scintillement de fin (son `cb` est déjà parti) → on
+l'écrase et on accepte le nouveau. `exit()` en plein vol prévient aussi avec `'fled'`.
+`A.cb` est mis à `null` dès qu'il est parti : c'est ce qui garantit l'appel *unique*.
+
+**`'fled'` en retour de `throwBall` = lancer ABANDONNÉ**, aucune Ball n'a volé :
+`game3d.js` rend la Ball au sac et rouvre le menu `'choose'`, sans faire perdre le tour.
+Jamais punitif : un enfant ne perd pas un objet à cause d'un bug. À ne pas confondre avec
+`state.battle.result === 'fled'`, qui veut dire « le joueur a pris la fuite ».
+Le garde de confort est en amont, dans `useBagItem()` : une Ball est refusée si une autre
+est déjà en vol, **avant** le décompte du sac.
 
 `battleState` (construit par `game3d.js`, lu par `battle3d.js` **et** `hud3d.js`) :
 
@@ -782,8 +1003,19 @@ state.battle = {
   ball: { active, progress, shakeIndex, result },
   canFlee,           // false contre un dresseur ou un champion
   canCatch,          // true seulement en combat sauvage
+  legendary,         // true si l'adversaire est un légendaire (extension, voir ci-dessous)
+  legendAltarId,     // l'autel d'où il vient, ou null (extension, §16 : cooldown)
 }
 ```
+
+**`kind` NE PREND JAMAIS la valeur `'legendary'`** (correction 1.4). Un combat de légendaire
+est un combat `'wild'` : c'est `kind === 'wild'` qui fait s'arrêter le combat après une seule
+créature adverse, et `kind !== 'wild'` qui applique le ×1,5 « dresseur » à l'XP. Inventer un
+quatrième `kind` ferait chercher un adversaire suivant qui n'existe pas, puis afficher « Ton
+adversaire est battu ! » à la place de la fin de combat sauvage. Le drapeau **`legendary`**
+(booléen, posé par `startWildBattle` d'après `species.legendary`) porte donc l'information à
+côté : il sert à choisir le barème d'argent `shop.payReward('legendary', …)`, qui n'était
+jamais atteint — un légendaire de niveau 50 rapportait 200 pièces au lieu de 1200.
 
 Rendu :
 - **Scène Three.js séparée**, plateforme circulaire pour chaque camp, décor de fond accordé
@@ -995,6 +1227,9 @@ livrés. Il assure :
 **Touches** : flèches / ZQSD — Espace parler·valider — **B** lancer une Ball —
 **E** équipe — **C** Pokédex — **N** carte — **V** changer de vue —
 **Shift + ←/→** pivoter (vue RPG) — **M** son — Échap fermer — molette zoom.
+*(Complété depuis : **X** changer de Ball, **F** compagnon, **J** journal,
+**T** dirigeable, **H** écran d'aide, **P** compteur de performance. La liste de
+référence tenue à jour est `HELP_SECTIONS` dans `hud3d.js` — voir contrat v3 §19.1.)*
 
 ---
 
@@ -1111,6 +1346,23 @@ que ce que l'on voit et que l'on choisit.**
 - Le menu se pilote au clavier : `hud3d.js` expose `setAirshipCursor`,
   `moveAirshipCursor`, `confirmAirship`, `airshipCount`. Sans ça, aucune touche ne
   répondait — pas même Échap — et on restait coincé dans l'écran.
+- **Le niveau conseillé s'affiche, et un grand écart demande confirmation**
+  (correction 2.10). Puisque **toutes** les régions sont atteignables (voir ci-dessus),
+  rien n'empêchait Robin de filer au Plateau d'Aurore (Nv 45 conseillé) avec une équipe
+  Nv 12 et de s'y faire écraser sans avoir été prévenu. La donnée était pourtant
+  transmise depuis toujours et simplement ignorée : `airshipOptions()` pose
+  `level: def.recommendedLevel` et `normalizePorts()` la laisse passer intacte. Chaque
+  destination affiche donc « Conseillé : Nv 45 · ton équipe : Nv 12 ⚠️ » dans son
+  sous-titre (`states[id].sub`, plus `subAlerte` pour la couleur).
+  **On informe, on ne bloque JAMAIS** : au-delà de `ECART_ALERTE = 10` niveaux, le
+  premier clic ne fait qu'avertir (toast + « Reclique pour y aller quand même » écrit sur
+  le bouton), le second part. Le niveau de l'équipe est celui de la créature **la plus
+  forte** — on avertit le moins souvent possible. Une équipe vide ou un niveau conseillé
+  absent n'avertissent pas.
+  Le second appui doit être espacé d'au moins `DOUTE_DELAI = 0,5 s` : `onKeyDown` ne
+  filtre pas `e.repeat`, et garder Espace enfoncé aurait balayé l'avertissement en 30 ms.
+  La confirmation vit dans le `onClick` de `buildWorldGrid` : `confirmAirship()` fait
+  `btn.click()`, elle traverse donc le même chemin sans code en double.
 
 ### 23.5 `gates3d.js` — les repères visibles de loin *(nouveau module)*
 

@@ -1387,19 +1387,32 @@
   //  seul le champ de hauteur doit être global d'après le contrat), avec le
   //  même grain déterministe que la v1.
   // ---------------------------------------------------------------------------
-  const _sampleColor = new THREE.Color();
   const _tmp3 = [0, 0, 0];
+
+  // Couleurs de sol pré-parsées, une par type de tuile (il y en a 40). Sans ce
+  // cache, `st.ground` — une chaîne comme '#63b846' — était re-décodée à CHAQUE
+  // sommet : un chunk fait 65×65 sommets et en échantillonne 1, 2 ou 4 chacun,
+  // soit ~9 500 analyses de chaîne par chunk construit. Même motif que
+  // water3d.js (couleurs `_deep` / `_shallow` pré-calculées au chargement).
+  // ⚠️ La THREE.Color renvoyée est PARTAGÉE : on la LIT, on ne la mute jamais.
+  const _groundColors = Object.create(null);
+
+  function groundColorOf(type, st) {
+    let c = _groundColors[type];
+    if (!c) c = _groundColors[type] = new THREE.Color(st.ground);
+    return c;
+  }
 
   function sampleGroundColor(tx, ty, out) {
     const cx = tx < 0 ? 0 : (tx >= W ? W - 1 : tx);
     const cy = ty < 0 ? 0 : (ty >= H ? H - 1 : ty);
     const type = tileAt(cx, cy);
     const st = R3.tileStyle(type);
-    _sampleColor.set(st.ground);
+    const c = groundColorOf(type, st);
     const flatish = isFlatType(type, st);
     const r = R3.hash(cx * 3 + 1, cy * 5 + 2);
     const v = flatish ? (0.975 + 0.05 * r) : (0.905 + 0.185 * r);
-    out[0] = _sampleColor.r * v; out[1] = _sampleColor.g * v; out[2] = _sampleColor.b * v;
+    out[0] = c.r * v; out[1] = c.g * v; out[2] = c.b * v;
   }
 
   function tileColorInto(m, n, out) {
@@ -1833,10 +1846,31 @@
     chunkMap.set(key, { group: grp, cx: cxw, cz: czw, radius: radius });
   }
 
+  /**
+   * Libère le groupe d'un chunk. On rend d'abord ses nappes d'eau à water3d :
+   * `R3.disposeTree` ne libère que les buffers GPU, et water3d garde une liste
+   * de toutes les surfaces créées (pour rééchanger leurs matériaux au
+   * changement de qualité). Sans ce `release`, traverser une région entière
+   * laissait des centaines de géométries d'eau vivantes en mémoire.
+   * C'est le SEUL point de libération d'un chunk : disposeChunk et setRegion
+   * passent tous les deux par ici.
+   */
+  function disposeChunkGroup(grp) {
+    const w = waterApi();
+    if (w && typeof w.release === 'function') {
+      grp.traverse(function (o) {
+        if (o.userData && o.userData.waterKind) {
+          try { w.release(o); } catch (e) { /* une nappe de repli n'y est pas */ }
+        }
+      });
+    }
+    R3.disposeTree(grp);
+  }
+
   function disposeChunk(key) {
     const c = chunkMap.get(key);
     if (!c) return;
-    try { R3.disposeTree(c.group); } catch (e) { console.warn('[world3d] échec de libération du chunk', key, e); }
+    try { disposeChunkGroup(c.group); } catch (e) { console.warn('[world3d] échec de libération du chunk', key, e); }
     chunkMap.delete(key);
   }
 
@@ -1863,7 +1897,8 @@
 
     // Libère TOUT ce qui existait (contrat §15 : « setRegion : libère tout et
     // repart sur la nouvelle région »).
-    chunkMap.forEach(function (c) { try { R3.disposeTree(c.group); } catch (e) { /* déjà orphelin */ } });
+    // Le pire cas de la fuite d'eau : ici on libère TOUS les chunks d'un coup.
+    chunkMap.forEach(function (c) { try { disposeChunkGroup(c.group); } catch (e) { /* déjà orphelin */ } });
     chunkMap.clear();
     if (skirtMesh) { try { R3.disposeTree(skirtMesh); } catch (e) { /* ignore */ } skirtMesh = null; }
     for (let i = 0; i < farOceanMeshes.length; i++) {

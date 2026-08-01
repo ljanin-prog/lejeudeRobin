@@ -51,7 +51,11 @@
 
     <!-- Bandeau de biome, compteur, menu de combat et carte : créés par hud3d.js -->
 
+    <!-- `H` est en PREMIER : la barre est en `nowrap` avec `text-overflow:
+         ellipsis`, donc c'est la fin de la ligne qui saute sur un écran étroit
+         — et ce serait justement la touche qui explique toutes les autres. -->
     <p id="controls-hint" class="controls-hint hidden">
+      <strong>H</strong> aide &nbsp;·&nbsp;
       <strong>Flèches</strong> se déplacer &nbsp;·&nbsp;
       <strong>Espace</strong> parler &nbsp;·&nbsp;
       <strong>B</strong> lancer une Ball &nbsp;·&nbsp;
@@ -63,10 +67,111 @@
       <strong>N</strong> carte &nbsp;·&nbsp;
       <strong>T</strong> dirigeable &nbsp;·&nbsp;
       <strong>V</strong> vue (dont FPS) &nbsp;·&nbsp;
-      <strong>M</strong> son
+      <strong>M</strong> son &nbsp;·&nbsp;
+      <strong>P</strong> compteur de vitesse
     </p>
 
   </div>
+
+  <!-- ---------------------------------------------------------------------
+       0. LE FILET — à charger AVANT tout le reste (correction 2.8)
+
+       Le jeu est fait de 45 fichiers. Une simple virgule oubliée dans l'un
+       d'eux tuait le fichier ENTIER, en silence : plus de boutique, plus de
+       combats, et rien à l'écran pour le dire. Un enfant de 10 ans n'ouvre pas
+       la console du navigateur.
+
+       Ce petit script, volontairement sans dépendance et écrit à l'ancienne
+       (var, pas de const : il doit survivre à tout), affiche un panneau
+       lisible dès qu'un fichier a un problème, et dit toujours la seule chose
+       qui compte vraiment : la partie n'est pas perdue.
+
+       `true` en 3ᵉ argument = phase de CAPTURE : c'est la seule façon
+       d'attraper aussi les fichiers qui ne se chargent pas du tout (un
+       <script> introuvable ne fait pas remonter d'erreur autrement).
+       --------------------------------------------------------------------- -->
+  <script>
+  (function () {
+    'use strict';
+    var deja = false;
+
+    /** Le panneau. Un seul par session : une erreur en entraîne souvent dix,
+     *  et dix panneaux empilés n'apprennent rien de plus. */
+    function panneau(titre, lignes, detail) {
+      if (deja) return;
+      deja = true;
+      try {
+        var d = document.createElement('div');
+        d.setAttribute('id', 'oops-panneau');
+        d.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;' +
+          'align-items:center;justify-content:center;background:rgba(8,10,22,.88);' +
+          'font-family:system-ui,Segoe UI,Roboto,sans-serif;padding:16px;';
+        var b = document.createElement('div');
+        b.style.cssText = 'max-width:560px;background:#161a2e;color:#eef2ff;' +
+          'border:3px solid #ffcc4d;border-radius:16px;padding:20px 22px;' +
+          'box-shadow:0 12px 40px rgba(0,0,0,.5);';
+        var h = document.createElement('div');
+        h.style.cssText = 'font-size:20px;font-weight:700;margin-bottom:10px;';
+        h.textContent = '😅 ' + titre;
+        b.appendChild(h);
+        for (var i = 0; i < lignes.length; i++) {
+          var p = document.createElement('p');
+          p.style.cssText = 'margin:6px 0;font-size:15px;line-height:1.45;';
+          p.textContent = lignes[i];
+          b.appendChild(p);
+        }
+        var rassure = document.createElement('p');
+        rassure.style.cssText = 'margin:14px 0 6px;font-size:15px;line-height:1.45;color:#9ef0a8;';
+        rassure.textContent = '✅ Ta partie est en sécurité : rien n\'a été effacé. '
+          + 'Recharge la page (F5) pour réessayer.';
+        b.appendChild(rassure);
+        if (detail) {
+          var pre = document.createElement('p');
+          pre.style.cssText = 'margin-top:12px;font-size:11px;line-height:1.4;color:#9aa3c7;'
+            + 'word-break:break-word;';
+          pre.textContent = detail;
+          b.appendChild(pre);
+        }
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = 'Continuer quand même';
+        btn.style.cssText = 'margin-top:16px;padding:9px 18px;font-size:15px;cursor:pointer;' +
+          'border:none;border-radius:10px;background:#ffcc4d;color:#20240f;font-weight:700;';
+        btn.onclick = function () { if (d.parentNode) d.parentNode.removeChild(d); };
+        b.appendChild(btn);
+        d.appendChild(b);
+        (document.body || document.documentElement).appendChild(d);
+      } catch (e) { /* même le panneau a échoué : il reste la console */ }
+    }
+
+    // Rendu public : game3d.js s'en sert pour le contrôle de démarrage.
+    window.ROBIN_OOPS = panneau;
+
+    function nomCourt(url) {
+      var s = String(url || '');
+      var i = s.lastIndexOf('/');
+      return (i >= 0) ? s.slice(i + 1) : s;
+    }
+
+    window.addEventListener('error', function (ev) {
+      // Cas 1 : un fichier n'a pas pu être CHARGÉ (chemin faux, fichier absent).
+      var cible = ev.target;
+      if (cible && cible !== window && (cible.tagName === 'SCRIPT' || cible.tagName === 'LINK')) {
+        panneau('Un morceau du jeu n\'a pas pu être ouvert.', [
+          'Fichier manquant : ' + nomCourt(cible.src || cible.href),
+          'Il est peut-être déplacé, renommé, ou absent du dossier.',
+        ]);
+        return;
+      }
+      // Cas 2 : une erreur dans le code (syntaxe ou exécution).
+      panneau('Le fichier ' + nomCourt(ev.filename) + ' a un problème.', [
+        'Fichier : ' + (nomCourt(ev.filename) || 'inconnu')
+          + (ev.lineno ? '  ·  ligne ' + ev.lineno : ''),
+        'Le reste du jeu continue de fonctionner du mieux qu\'il peut.',
+      ], ev.message || '');
+    }, true);
+  })();
+  </script>
 
   <!-- ---------------------------------------------------------------------
        1. Three.js (build UMD local : le jeu reste jouable hors ligne)
@@ -148,6 +253,13 @@
        pincée, basse, batterie, réverbe). Elle remplace la mélodie à une voix de
        js/audio.js, que Robin trouvait « usante à la longue ». -->
   <script src="js3d/music3d.js"></script>
+
+  <!-- Les bruitages que la 3D appelle et que js/audio.js n'a jamais eus (le
+       son de soin, le cri du légendaire). Ce module ÉTEND le catalogue sans
+       toucher à js/audio.js, que le contrat gèle. Comme tous les modules, il
+       est trouvé à la volée par `R3.get('sfx')` : sa seule contrainte d'ordre
+       est d'être chargé après core3d.js. -->
+  <script src="js3d/sfx3d.js"></script>
 
   <!-- Téracristallisation, interface, combat, contrôleur.
        tera3d AVANT hud3d : le bouton Téra du menu de combat lit son état. -->

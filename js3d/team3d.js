@@ -49,18 +49,27 @@
   // ne sait rien des capacités d'une espèce.
   const FALLBACK_MOVES = ['charge', 'vitesse', 'repos', 'concentration'];
 
-  // Types des 26 créatures d'origine. Sert UNIQUEMENT si `dex3d.js` est absent :
-  // sans cette table, un repli donnerait des types au hasard et la table
-  // d'efficacité renverrait n'importe quoi en plein combat.
+  // Types des 26 créatures d'origine — et d'elles SEULES : les 36 légendaires et
+  // les formes évoluées n'y figurent pas et retombent sur ['plante'].
+  // Sert UNIQUEMENT si `dex3d.js` est absent : sans cette table, un repli
+  // donnerait des types au hasard et la table d'efficacité renverrait n'importe
+  // quoi en plein combat.
+  //
+  // RECOPIÉE MOT POUR MOT du champ `types:` de `BASE_DATA` (dex3d.js), ORDRE
+  // COMPRIS : `types[0]` décide de la couleur de la carte, du type Téra par
+  // défaut et du soin choisi par `dex3d.resolveMoves()`. Onze entrées se
+  // contredisaient avec le dex (lapinou était plante au lieu de terre, miaouche
+  // ombre au lieu de lumière) : le repli fabriquait alors une créature aux
+  // faiblesses inversées. dex3d fait foi, jamais l'inverse (CONTRACT3 §3).
   const FALLBACK_TYPES = {
-    feuillou: ['plante'], petalia: ['plante'], goutella: ['eau'], bullini: ['eau'],
-    etincelo: ['foudre'], meduzia: ['eau'], coralou: ['eau', 'roche'], fluffly: ['air'],
-    glanou: ['plante'], papillon: ['air', 'plante'], cygnik: ['air', 'eau'],
-    lotira: ['plante', 'eau'], lapinou: ['plante'], hibouche: ['air'],
-    etoilamer: ['eau'], crabilino: ['eau', 'roche'], nuagette: ['air', 'lumiere'],
-    miaouche: ['ombre'], pandouki: ['terre'], koronette: ['lumiere'],
-    stellini: ['lumiere'], doudoune: ['air'], flamdrak: ['feu', 'air'],
-    glydrak: ['glace', 'air'], aquadrak: ['eau'], tonnedrak: ['foudre', 'air'],
+    feuillou: ['plante'], petalia: ['plante', 'lumiere'], goutella: ['eau'], bullini: ['eau'],
+    etincelo: ['foudre'], meduzia: ['eau', 'ombre'], coralou: ['eau', 'roche'], fluffly: ['air'],
+    glanou: ['plante', 'terre'], papillon: ['air', 'plante'], cygnik: ['eau', 'air'],
+    lotira: ['plante', 'eau'], lapinou: ['terre'], hibouche: ['air', 'ombre'],
+    etoilamer: ['eau', 'lumiere'], crabilino: ['eau', 'roche'], nuagette: ['air', 'lumiere'],
+    miaouche: ['lumiere'], pandouki: ['plante', 'terre'], koronette: ['lumiere'],
+    stellini: ['lumiere', 'espace'], doudoune: ['air'], flamdrak: ['feu', 'air'],
+    glydrak: ['glace', 'air'], aquadrak: ['eau', 'air'], tonnedrak: ['foudre', 'air'],
   };
 
   // ---------------------------------------------------------------------------
@@ -263,10 +272,43 @@
     return { id: id, pp: pp, ppMax: pp };
   }
 
+  /** Vrai si cette capacité rend des PV. Sans le catalogue `moves3d`, le repli
+   *  de `moveDef` n'a pas de champ `heal` : on répond « non », ce qui ramène
+   *  simplement à l'ancien oubli premier-entré-premier-sorti. Jamais d'exception.
+   *
+   *  ATTENTION : `heal` a DEUX formes (CONTRACT2 §9), un nombre de PV ou
+   *  `{ frac }`. Ne tester que `num(...)` renvoyait « non » sur toutes les
+   *  fractions — c'est-à-dire sur la quasi-totalité du catalogue typé. */
+  function isHealMove(id) {
+    const h = moveDef(id).heal;
+    return !!(num(h, 0) || (h && num(h.frac, 0)));
+  }
+
+  /**
+   * Emplacement à effacer quand une 5ᵉ capacité arrive : la plus ancienne,
+   * SAUF si c'est le dernier soin de la créature — dans ce cas on efface la
+   * plus ancienne des autres.
+   *
+   * `dex3d.js` garantit que CHAQUE espèce possède une capacité de soin (elle en
+   * réécrit une au besoin dans `moveIds`). L'oubli purement premier-entré-
+   * premier-sorti la jetait la première, puisqu'elle occupe un emplacement de
+   * base : 23 espèces sur 62 finissaient sans aucun moyen de se soigner dès
+   * qu'on les créait à un niveau assez haut (Feuillou dès le niveau 27).
+   */
+  function slotToForget(known, incomingId) {
+    let heals = 0;
+    for (let i = 0; i < known.length; i++) if (isHealMove(known[i])) heals++;
+    // Le nouveau venu soigne, ou il reste un autre soin : rien à protéger.
+    if (heals !== 1 || isHealMove(incomingId)) return 0;
+    for (let i = 0; i < known.length; i++) if (!isHealMove(known[i])) return i;
+    return 0;   // que des soins : inatteignable puisque heals === 1
+  }
+
   /**
    * Jeu de capacités d'une créature CRÉÉE au niveau `level` (sauvage, dresseur,
    * champion). On part des 4 capacités de base, puis on applique le `learnset`
-   * dans l'ordre : au-delà de 4, la plus ancienne s'efface.
+   * dans l'ordre : au-delà de 4, la plus ancienne s'efface — mais jamais son
+   * unique soin (voir `slotToForget`).
    *
    * Pourquoi cet oubli automatique ici, alors que `gainXp` ne l'autorise jamais ?
    * Parce qu'ici personne n'a choisi ces capacités : sans cela, un légendaire de
@@ -281,7 +323,7 @@
       if (e.level > level) break;
       if (known.indexOf(e.moveId) >= 0) continue;
       if (known.length < 4) known.push(e.moveId);
-      else { known.shift(); known.push(e.moveId); }
+      else { known.splice(slotToForget(known, e.moveId), 1); known.push(e.moveId); }
     }
     if (!known.length) known.push(FALLBACK_MOVES[0]);
     return known.map(makeMoveSlot);
@@ -359,12 +401,29 @@
     return i >= 0 ? box[i] : null;
   }
 
+  /**
+   * Recale `activeIndex` après le retrait de l'emplacement `i` de l'équipe.
+   *
+   * On suit la CRÉATURE choisie par Robin, pas son numéro d'emplacement : un
+   * simple bornage laissait dériver le choix. Équipe [A, B, C] avec C au
+   * combat (`activeIndex = 2`) : ranger A donnait [B, C] et `activeIndex`
+   * repartait à 0, donc c'était B qui montait au front. Pire avec B au combat
+   * (`activeIndex = 1`) : l'indice restait dans les bornes, personne ne
+   * corrigeait rien, et C partait au combat sans un mot. `swap()` gère déjà le
+   * cas correctement — c'est le même principe ici.
+   */
+  function reindexAfterRemoval(i) {
+    if (i < activeIndex) activeIndex--;            // tout le monde a glissé d'un cran
+    else if (i === activeIndex) activeIndex = 0;   // le champion lui-même est parti
+    if (activeIndex >= team.length) activeIndex = 0;   // filet : c'était le dernier
+  }
+
   /** Retire définitivement un individu. -> le Mon retiré, ou null. */
   function remove(uid) {
     let i = indexOfUid(team, uid);
     if (i >= 0) {
       const m = team.splice(i, 1)[0];
-      if (activeIndex >= team.length) activeIndex = 0;
+      reindexAfterRemoval(i);
       return m;
     }
     i = indexOfUid(box, uid);
@@ -399,6 +458,10 @@
     const out = team[ti];
     team[ti] = box.splice(boxIndex, 1)[0];
     box.push(out);
+    // `activeIndex` ne bouge pas : les emplacements ne glissent pas. Si Robin
+    // échange précisément sa créature active, c'est la remplaçante qui prend sa
+    // place ET son rôle — il vient de la choisir, la lui refuser serait plus
+    // surprenant que de la lui donner. Décision documentée, pas un oubli.
     return true;
   }
 
@@ -409,7 +472,7 @@
     if (team.length <= 1) return false;
     box.push(team.splice(teamIndex, 1)[0]);
     if (box.length > MAX_BOX) box.shift();
-    if (activeIndex >= team.length) activeIndex = 0;
+    reindexAfterRemoval(teamIndex);
     return true;
   }
 
@@ -603,7 +666,8 @@
   // ---------------------------------------------------------------------------
 
   /**
-   * Chance de capture, entre 0.03 et 0.97 (contrat §11).
+   * Chance de capture, entre 0.03 et 0.97 (contrat §11) — SAUF la Ball
+   * Maîtresse, qui rend exactement 1 (voir plus bas).
    * Volontairement GÉNÉREUSE : un enfant de 10 ans ne doit pas rater dix fois
    * de suite. `ballBonus` : Pokéball 1.0 · Super Ball 1.5 · Hyper Ball 2.2 ·
    * Ball Maîtresse 99.
@@ -615,6 +679,13 @@
     const hp = m ? clamp(num(m.hp, maxHp), 0, maxHp) : maxHp;
     const soin = 1 + (1 - hp / maxHp) * 1.6;   // affaiblie = bien plus facile
     const bonus = Math.max(0, num(ballBonus, 1));
+    // LA BALL MAÎTRESSE NE RATE JAMAIS — 1, pas 0.97 (contrat §11 amendé).
+    // La boutique promet « Elle ne rate jamais », la quête aussi, et on n'en
+    // gagne que DEUX dans tout le jeu. Un enfant qui garde la sienne pendant
+    // des heures et la voit rater 3 fois sur 100 vivrait la pire trahison du
+    // jeu. On teste le bonus (>= 99) et pas l'identifiant de la Ball : ce
+    // module ne doit rien savoir de `shop3d.js`.
+    if (bonus >= 99) return 1;
     return clamp(base * soin * bonus, 0.03, 0.97);
   }
 

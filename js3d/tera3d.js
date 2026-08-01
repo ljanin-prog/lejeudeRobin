@@ -519,6 +519,23 @@
    * Répare les créatures sauvegardées en pleine cristallisation : on leur rend
    * leurs types d'origine et on éteint le drapeau. Une partie de Robin ne se
    * perd jamais, et surtout : une créature ne reste jamais coincée mono-type.
+   *
+   * ON NE PEUT PAS SE FIER À `m.tera` : `team3d.packMon()` n'enregistre pas ce
+   * drapeau (uniquement uid, id, nick, level, xp, hp, types, moves, caughtAt).
+   * Après un rechargement il vaut donc toujours `undefined`, et le filet ne
+   * s'exécutait jamais — la créature gardait `types = [typeTéra]` à vie, avec
+   * les faiblesses de ce seul type. C'est arrivable pour de bon : `saveGame()`
+   * est appelé AVANT `endBattle()` dans `onCaughtInBattle`, `onTrainerDefeated`
+   * et `onPlayerFainted`, et il suffit de fermer l'onglet sur l'un de ces
+   * messages.
+   *
+   * La bonne source, c'est `base` : `serialize()` y a rangé les vrais types de
+   * chaque créature cristallisée, précisément pour ce cas. Une entrée dans
+   * `base` VAUT le drapeau, et suffit à déclencher la réparation.
+   *
+   * Il n'y a que `types` à réparer : le +20 % de défense d'`activate()` se
+   * dissout tout seul, `team3d.unpackMon()` recalculant `def` depuis l'espèce
+   * et le niveau.
    */
   function repair(base) {
     const team = mod('team');
@@ -531,10 +548,12 @@
       for (let i = 0; i < list.length; i++) {
         const m = list[i];
         if (!m) continue;
+        // TOUJOURS avant le `continue` : le type Téra choisi à l'Académie
+        // appartient aussi aux créatures qui n'ont jamais cristallisé.
         if (state.types[m.uid]) m.teraType = state.types[m.uid];
-        if (!m.tera) continue;
-        m.tera = false;
         const saved = base && base[m.uid];
+        if (!m.tera && !saved) continue;
+        m.tera = false;
         if (Array.isArray(saved) && saved.length) m.types = saved.slice();
       }
     }

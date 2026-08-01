@@ -116,6 +116,26 @@
   };
   function arena(b) { return ARENA[b] || ARENA.plain; }
 
+  /**
+   * Un bruitage, jamais bloquant. Deux catalogues dans cet ordre : l'extension
+   * `js3d/sfx3d.js` (sons propres à la 3D), puis les neuf sons de `js/audio.js`,
+   * que le contrat gèle. Même helper que dans game3d.js et roamers3d.js.
+   *
+   * Ce module n'avait AUCUN accès à l'audio : toute la mise en scène du combat
+   * était sonorisée depuis game3d.js, qui ne connaît pas le détail des
+   * animations. C'est pour ça que les secousses de la Pokéball, dont lui seul
+   * ici connaît le rythme, étaient muettes.
+   */
+  function sfx(name) {
+    try {
+      const s = R3.get('sfx');
+      if (s && s.play && s.play(name)) return;
+    } catch (e) { /* extension indisponible : on tente le catalogue d'origine */ }
+    try {
+      if (typeof Audio_ !== 'undefined' && Audio_.sfx && Audio_.sfx[name]) Audio_.sfx[name]();
+    } catch (e) { /* audio indisponible : le jeu continue */ }
+  }
+
   // ---------------------------------------------------------------------------
   //  Cache de géométries propres à ce module.
   //  Elles sont marquées `shared` pour que R3.disposeTree() ne les libère pas :
@@ -2668,6 +2688,11 @@
 
     while (scene.children.length) scene.remove(scene.children[0]);
 
+    // Quitter le combat pendant qu'une Ball est en vol : on prévient l'appelant
+    // avant de tout jeter, sinon il attendrait un callback qui ne viendrait
+    // plus (et la Ball serait perdue pour rien).
+    abortBall('fled');
+
     scene = null; camera = null;
     sunLight = rimLight = hemiLight = punchLight = null;
     cloudRing = null; ball = null; foe = null; plr = null; bs = null;
@@ -2901,9 +2926,37 @@
   //  progression dans battleState.ball pour que hud3d puisse en tenir compte.
   // ---------------------------------------------------------------------------
 
+  /** Prévient l'appelant qu'un lancer est abandonné, UNE SEULE FOIS.
+   *  ⚠️ RÈGLE GRAVÉE (§17) : `throwBall` finit toujours par appeler son `cb`,
+   *  exactement une fois — même si le lancer est refusé ou interrompu. Sans
+   *  ça, `game3d.js` reste en phase `'ball'` pour toujours : plus aucune
+   *  touche n'est acceptée, il faut recharger la page. */
+  function abortBall(reason) {
+    const A = ballAnim;
+    if (!A) return;
+    const fn = A.cb;
+    A.cb = null;                 // le callback ne partira jamais deux fois
+    A.active = false; A.done = true;
+    if (fn) { try { fn(reason || 'fled'); } catch (e) { console.error('[battle3d] callback throwBall (abandon) :', e); } }
+  }
+
   function throwBall(chance, cb) {
     if (!scene || !foe) { if (cb) cb('escaped'); return; }
-    if (ballAnim && ballAnim.active) return;   // un seul lancer à la fois
+    if (ballAnim && ballAnim.active) {
+      // Un seul lancer à la fois — mais on n'abandonne JAMAIS un lancer sans
+      // prévenir (voir abortBall).
+      if (!ballAnim.resultDone) {
+        // Le lancer précédent n'a pas encore rendu son verdict : on refuse
+        // celui-ci, et on le dit tout de suite pour que game3d rende la Ball
+        // et rouvre le menu.
+        if (cb) { try { cb('fled'); } catch (e) { console.error('[battle3d] callback throwBall (refus) :', e); } }
+        return;
+      }
+      // Le verdict est déjà tombé (son cb est parti), il ne reste que le
+      // scintillement de fin : on l'écrase franchement et on accepte le
+      // nouveau lancer. C'est le cas de l'enfant qui garde Espace enfoncé.
+      abortBall(null);
+    }
     const c = (typeof chance === 'number' && isFinite(chance)) ? R3.clamp01(chance) : 0.3;
     ballAnim = {
       active: true, t: 0, chance: c, cb: cb, result: null,
@@ -2958,6 +3011,10 @@
         if (idx > 0) {
           fxSparks(new THREE.Vector3(ballRest.x, ballRest.y + 0.12, ballRest.z), 5, '#ffe27a', 0.9);
           setBallLit(ball, true);
+          // Le moment le plus tendu du jeu était MUET. Un « clac » par secousse,
+          // comme dans le jeu 2D. Sur `idx > 0` seulement, comme les étincelles :
+          // `idx === 0` est l'atterrissage, déjà occupé par le son du lancer.
+          sfx('shake');
         }
       }
       // Secousse : 300 ms de balancement, 100 ms de repos, direction alternée.
@@ -3001,7 +3058,11 @@
           foe.visible = true;
           foe.shrink = 0.001;
         }
-        if (A.cb) { try { A.cb(A.result); } catch (e) { console.error('[battle3d] callback throwBall :', e); } }
+        // Le callback part ICI, et on l'oublie aussitôt : c'est ce qui garantit
+        // qu'il ne partira pas une seconde fois si le lancer est ensuite
+        // écrasé ou interrompu (voir abortBall).
+        const fin = A.cb; A.cb = null;
+        if (fin) { try { fin(A.result); } catch (e) { console.error('[battle3d] callback throwBall :', e); } }
       }
 
       const rt = (A.t - T_RESULT) / 1000 + 0.0001;   // secondes depuis le résultat
