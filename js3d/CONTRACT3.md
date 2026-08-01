@@ -337,8 +337,20 @@ Règles du jeu :
   facettes de la couleur du type (`R3.get('types').color(id)`), et un **éclat de cristaux**
   à l'activation. Réutiliser `R3.get('llib').crystalCluster()` si présent, repli sur des
   `R3.mat()` simples sinon. **Moins de 20 draw calls** pour l'ensemble.
-- `mon.tera` et `mon.teraType` sont sauvegardés ; `mon.tera` est remis à `false` en fin de
-  combat, `mon.teraType` reste.
+- `mon.teraType` est sauvegardé — mais **par `tera3d`**, dans `tera.types[uid]`, pas par
+  `team3d.packMon()`, qui n'écrit que `uid, id, nick, level, xp, hp, types, moves, caughtAt`.
+  `mon.tera` n'est **PAS** sauvegardé du tout : il est remis à `false` en fin de combat, et il
+  vaut `undefined` après tout rechargement. *(Ligne corrigée le 2026-08-01 : elle affirmait
+  que les deux champs étaient sauvegardés, ce qui était faux, et le filet de réparation de
+  `tera3d.repair()` se fiait justement à `mon.tera` — il ne s'exécutait donc jamais.)*
+- Le filet contre la sauvegarde faite EN PLEIN COMBAT passe donc par **`tera.base[uid]`**,
+  écrit par `tera.serialize()` depuis le registre `ACTIVE` : c'est la présence d'une entrée
+  dans `base`, et non le drapeau, qui déclenche la restitution des vrais types au chargement.
+  Ne jamais revenir à un test sur `mon.tera` — la créature resterait mono-type à vie.
+  L'ordre de chargement `team.deserialize()` **puis** `tera.deserialize()` est obligatoire :
+  `repair()` parcourt `team.team` et `team.box`.
+- Rien d'autre à réparer que `types` : le +20 % de défense se dissout tout seul, parce que
+  `team3d.unpackMon()` recalcule `def` depuis l'espèce et le niveau.
 
 ---
 
