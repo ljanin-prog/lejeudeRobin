@@ -2131,12 +2131,93 @@
     if (_broken['roamers.throwBall']) { state.throwing = false; rendreBall(); }
   }
 
+  // ---------------------------------------------------------------------------
+  //  CE QUE RAPPORTE UNE CAPTURE  (correction 2.2)
+  //
+  //  Les rencontres surprises ont été coupées EXPRÈS (`ENCOUNTER_CHANCE = 0`) :
+  //  attraper les créatures qu'on voit sur la carte est LA boucle du jeu, celle
+  //  que Robin a demandée. Or elle ne rapportait rien — ni expérience, ni
+  //  argent — et disait exactement la même phrase pour la toute première espèce
+  //  et pour le quinzième doublon. Un enfant qui joue « attrapeur » arrivait
+  //  donc à l'arène avec une équipe trop faible, sans comprendre pourquoi.
+  //
+  //  Trois gains, dans cet ordre d'importance :
+  //   1. une espèce JAMAIS capturée se fête (message à part, son 'rare', gerbe
+  //      d'étoiles, compteur x/62) et verse une prime unique ;
+  //   2. toute capture donne un peu d'expérience à la créature au combat ;
+  //   3. toute capture donne quelques pièces.
+  //  Volontairement MOINS que le combat (moitié de l'XP, moitié de l'argent) :
+  //  se battre doit rester la façon la plus rapide de progresser.
+  // ---------------------------------------------------------------------------
+
+  const PRIME_ESPECE = 100;   // pièces, versées UNE SEULE FOIS par espèce
+
+  /** L'espèce n'a-t-elle jamais été capturée ? À demander IMPÉRATIVEMENT avant
+   *  d'incrémenter `state.collection`, sinon la réponse est toujours « non ».
+   *  Ne pas confondre avec `state.seen` : lui compte les espèces CROISÉES. */
+  function estNouvelleEspece(speciesId) {
+    return !!speciesId && !(state.collection[speciesId] > 0);
+  }
+
+  /**
+   * Les textes à afficher après une capture, gains VERSÉS au passage.
+   * À appeler APRÈS l'incrément de `state.collection` (le compteur x/62 doit
+   * compter la nouvelle venue) et AVANT `refreshHudCounters()` / `saveGame()`.
+   *
+   * `beneficiaire` est la créature qui reçoit l'XP — la créature active, ou
+   * celle qui est au combat ; jamais celle qu'on vient d'attraper.
+   */
+  function catchRewardTexts(speciesId, level, nouvelle, beneficiaire) {
+    const textes = [];
+    const dex = mod('dex');
+    const sp = (dex && dex.get) ? dex.get(speciesId) : null;
+    const nom = (sp && sp.name) || speciesId;
+    const lvl = Math.max(1, Math.round(level || 5));
+
+    // --- 1. La première fois qu'une espèce entre au Pokédex ---
+    if (nouvelle) {
+      const total = (dex && dex.count) || 62;
+      const uniques = Object.keys(state.collection).length;
+      state.money = Math.max(0, (state.money | 0) + PRIME_ESPECE);
+      textes.push('✨ NOUVELLE ESPÈCE ! ✨\n' + nom + ' n\'était jamais entré dans ton Pokédex.\n' +
+        'Tu en as maintenant ' + uniques + ' sur ' + total + ' !\n' +
+        '+' + PRIME_ESPECE + ' pièces 🪙 pour la découverte.');
+    }
+
+    // --- 2. Un peu d'expérience pour la créature qui t'accompagne ---
+    let ligne = '';
+    const team = teamApi();
+    if (beneficiaire && team && team.gainXp && team.xpFor) {
+      // La moitié du barème de combat : attraper fait progresser, se battre
+      // fait progresser plus vite. `xpFor` sait déjà qu'un légendaire vaut 2,5×.
+      const plein = safeCall('team.xpFor.capture', function () {
+        return team.xpFor({ id: speciesId, level: lvl });
+      }) || 0;
+      const gain = Math.max(1, Math.round(plein / 2));
+      const res = safeCall('team.gainXp.capture', function () { return team.gainXp(beneficiaire, gain); });
+      ligne += '\n' + (beneficiaire.nick || 'Ta créature') + ' gagne ' + gain + ' points d\'expérience !';
+      ligne += levelUpLines(beneficiaire, res);
+    }
+
+    // --- 3. Quelques pièces (la moitié d'un combat sauvage) ---
+    const pieces = Math.max(1, 2 * lvl);
+    state.money = Math.max(0, (state.money | 0) + pieces);
+    ligne += '\n+' + pieces + ' pièces 🪙';
+    textes.push(ligne.replace(/^\n/, ''));
+    return textes;
+  }
+
   /** Capture réussie (monde ouvert OU combat) : équipe, collection, sauvegarde. */
   function onCaught(speciesId, level, roamer) {
     const team = mod('team');
     const dex = mod('dex');
     const species = (dex && dex.get) ? dex.get(speciesId) : null;
     const nom = (species && species.name) || speciesId;
+
+    // AVANT tout : qui touchera l'XP (surtout pas la créature qu'on attrape),
+    // et l'espèce est-elle nouvelle (avant l'incrément de la collection).
+    const beneficiaire = activeMon();
+    const nouvelle = estNouvelleEspece(speciesId);
 
     let where = 'box';
     if (team && team.create && team.add) {
@@ -2149,8 +2230,13 @@
     }
     state.collection[speciesId] = (state.collection[speciesId] || 0) + 1;
     markSeen(speciesId);
-    sfx('catch');
+    // Une première fois, ça s'entend : le son 'rare' au lieu du 'catch' habituel.
+    sfx(nouvelle ? 'rare' : 'catch');
+    // …et ça se voit : une seconde gerbe d'étoiles par-dessus celle que
+    // roamers3d joue déjà à chaque capture réussie.
+    if (nouvelle && roamer) call('roamers', 'starsAt', [roamer.x, roamer.z, 26]);
     call('buddy', 'reactTo', ['capture']);
+    const gains = catchRewardTexts(speciesId, level, nouvelle, beneficiaire);
     refreshHudCounters();
     // 'caught' : l'autel du légendaire se repose 10 minutes (§16). Sans cette
     // raison, il repartirait sur le cooldown court des défaites.
@@ -2159,6 +2245,7 @@
 
     showMessage('Bravo ! ' + nom + ' est capturé' + (species && species.legendary ? ' !!! ✨' : ' ! ✦') +
       (where === 'box' ? '\nTon équipe est pleine : il rejoint la Boîte.' : '\nIl rejoint ton équipe !'));
+    showMessages(gains);
     // §5 : la quête est prévenue APRÈS CHAQUE capture, monde ouvert compris.
     showMessages(questTextsForCatch(speciesId));
   }
@@ -2863,6 +2950,12 @@
    *  (niveau, PV, capacités) — c'est bien plus gratifiant qu'une copie neuve. */
   function onCaughtInBattle(mon) {
     const team = teamApi();
+    const b0 = state.battle;
+    // Comme en monde ouvert : l'XP va à la créature au combat, jamais à la
+    // capturée, et la question « nouvelle espèce ? » se pose AVANT l'incrément.
+    const beneficiaire = b0 ? b0.player.mon : null;
+    const nouvelle = estNouvelleEspece(mon.id);
+
     let where = 'box';
     if (team && team.add) {
       mon.caughtAt = { regionId: state.regionId, x: state.player.tileX, y: state.player.tileY };
@@ -2870,20 +2963,23 @@
     }
     state.collection[mon.id] = (state.collection[mon.id] || 0) + 1;
     markSeen(mon.id);
-    sfx('catch');
+    sfx(nouvelle ? 'rare' : 'catch');
     // 2.3 : la capture est CONFIRMÉE, l'autel peut se reposer 10 minutes. À
     // l'entrée en combat on n'avait posé que le cooldown court, pour ne pas
     // punir une défaite.
-    const b0 = state.battle;
     if (b0 && b0.legendAltarId) call('roamers', 'setLegendCooldown', [b0.legendAltarId, 'caught']);
+    const gains = catchRewardTexts(mon.id, mon.level, nouvelle, beneficiaire);
     refreshHudCounters();
     saveGame();
     // On empile d'abord le texte de capture, puis celui de la quête : les
     // messages se lisent dans l'ordre, et le combat ne se termine qu'après.
     // Capture, puis ce qu'en dit la quête, et seulement ensuite la sortie du
     // combat — accrochée au tout dernier message.
+    // ⚠️ Les lignes de gains entrent AVANT `questTextsForCatch` : `showMessages`
+    // n'accroche la sortie du combat qu'au TOUT DERNIER message.
     const suite = ['Bravo ! ' + (mon.nick || mon.id) + ' est capturé ! ✦' +
       (where === 'box' ? '\nTon équipe est pleine : il rejoint la Boîte.' : '\nIl rejoint ton équipe !')]
+      .concat(gains)
       .concat(questTextsForCatch(mon.id));
     showMessages(suite, function () { endBattle(); });
   }
