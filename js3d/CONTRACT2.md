@@ -723,6 +723,8 @@ R3.register('roamers', {
   nearest(px, pz, maxDist),
   throwBall(roamer, chance, cb),   // animation de lancer ; cb(result) avec
                                    // result ∈ 'caught' | 'escaped' | 'fled'
+                                   // cb est appelé EXACTEMENT UNE FOIS, même
+                                   // si le lancer est refusé ou interrompu
   remove(roamer),
   onEncounter(fn),                 // appelé si un roamer touche le joueur
 });
@@ -748,6 +750,21 @@ Règles :
   la créature, **3 secousses**, puis gerbe d'étoiles (capture) ou éclat + fuite (échec).
   Reprendre les timings du jeu 2D : lancer 0→600 ms, secousses 600→1800 ms, résultat à 1800 ms.
   **Tout se passe dans le monde ouvert, sans écran de combat.**
+- ⚠️ **`throwBall` appelle TOUJOURS son `cb`, exactement une fois** — y compris quand il
+  refuse le lancer (une Ball déjà en vol) ou l'interrompt (`setRegion` en plein vol). C'est
+  une règle de survie, pas un détail : `game3d.js` pose `state.throwing = true` avant l'appel
+  et ne le remet à `false` que dans le callback. Un `return` sec, comme celui qui existait
+  avant, laissait `state.throwing` à `true` pour TOUTE la session — touches B (lancer) et T
+  (dirigeable) mortes jusqu'au rechargement. C'était le pire bug du jeu.
+  Mise en œuvre : `abortThrow(reason)` centralise l'abandon, et `A.cb` est mis à `null` dès
+  qu'il est parti. Ne « simplifiez » jamais ça en remettant un `return` nu.
+- **`'fled'` = lancer ABANDONNÉ, aucune Ball n'a volé.** `game3d.js` rend alors la Ball au
+  sac et reste silencieux (pas de son d'échec, pas de bandeau) : annoncer une fuite à un
+  enfant qui n'a rien vu, ou lui prendre un objet à cause d'un bug, serait punitif.
+  `'escaped'` reste la vraie fuite, celle qu'on a vue à l'écran.
+- Ceinture-bretelles côté `game3d.js` : `loadRegionData()` remet `state.throwing = false`.
+  C'est le seul point de passage commun aux portails, au dirigeable (`arriveAtPort` appelle
+  `loadRegionData` **sans** passer par `applyRegion`) et à la reprise de sauvegarde.
 - Espace face à un roamer → `onEncounter` : `game3d.js` démarre un vrai combat.
 
 ---

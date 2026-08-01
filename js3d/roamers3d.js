@@ -651,7 +651,20 @@
       if (cb) { try { cb('escaped'); } catch (e) { warn('callback throwBall (repli)', e); } }
       return;
     }
-    if (_ballAnim && _ballAnim.active) return;   // un seul lancer à la fois
+    if (_ballAnim && _ballAnim.active) {
+      // Un seul lancer à la fois — mais on n'abandonne JAMAIS un lancer sans
+      // prévenir l'appelant (voir abortThrow).
+      if (!_ballAnim.resultDone) {
+        // Le lancer précédent n'a pas rendu son verdict : on refuse celui-ci
+        // et on le dit, pour que game3d rende la Ball et rouvre les touches.
+        if (cb) { try { cb('fled'); } catch (e) { warn('callback throwBall (refus)', e); } }
+        return;
+      }
+      // Le verdict est tombé (son cb est déjà parti), il ne reste que les
+      // ~350 ms de scintillement : on l'écrase et on accepte ce lancer-ci.
+      // C'est le cas de l'enfant qui martèle B.
+      abortThrow(null);
+    }
 
     var c = (typeof chance === 'number' && isFinite(chance)) ? R3.clamp01(chance) : 0.35;
     roamer._ball = true;   // gèle le roamer : plus de déplacement ni de rencontre pendant le lancer
@@ -690,6 +703,38 @@
       }
     }
     _ballAnim = null;
+  }
+
+  /** Interrompt le lancer en cours, quoi qu'il arrive.
+   *  ⚠️ RÈGLE GRAVÉE (§16) : `throwBall` finit toujours par appeler son `cb`,
+   *  exactement une fois — même si le lancer est refusé ou interrompu. Sans
+   *  ça, `game3d.js` garde `state.throwing = true` pour TOUTE la session :
+   *  les touches B (lancer) et T (dirigeable) meurent jusqu'au rechargement.
+   *  `reason` est la valeur à passer au callback s'il n'est pas encore parti
+   *  ('fled' : le lancer n'a pas eu lieu, la Ball doit être rendue). */
+  function abortThrow(reason) {
+    var A = _ballAnim;
+    if (!A) return;
+    var fn = A.cb;
+    A.cb = null;               // le callback ne partira jamais deux fois
+    A.active = false; A.done = true;
+    if (A.resultDone) {
+      // Le verdict est déjà tombé : on termine le lancer comme l'aurait fait
+      // updateBallAnim, sans rejouer le résultat.
+      if (A.result === 'caught') _ballAnim = null;   // le roamer est déjà retiré
+      else finishThrow();                            // libère / retire le roamer
+    } else {
+      // Rien n'est décidé : la créature n'a rien demandé, on la dégèle telle
+      // qu'elle était (`_ball` à false, taille et visibilité rétablies).
+      var ro = A.roamer;
+      if (ro) {
+        ro._ball = false;
+        if (ro.group) { ro.group.scale.setScalar(1); ro.group.visible = true; }
+      }
+      _ballAnim = null;
+    }
+    if (_ball) _ball.visible = false;
+    if (fn) { try { fn(reason || 'fled'); } catch (e) { warn('callback throwBall (abandon)', e); } }
   }
 
   function updateBallAnim(dt) {
@@ -748,7 +793,11 @@
         } else {
           fxSparkle(A.to, '#e8eef4', 10);
         }
-        if (A.cb) { try { A.cb(A.result); } catch (e) { warn('callback throwBall', e); } }
+        // Le callback part ICI, et on l'oublie aussitôt : c'est ce qui garantit
+        // qu'il ne partira pas deux fois si le lancer est ensuite écrasé ou
+        // interrompu (voir abortThrow).
+        var fin = A.cb; A.cb = null;
+        if (fin) { try { fin(A.result); } catch (e) { warn('callback throwBall', e); } }
       }
       var rt = (A.t - T_RESULT) / 1000;
       if (A.result === 'caught') {
@@ -778,12 +827,16 @@
     // On repart de zéro visuellement, mais on GARDE les cooldowns de
     // légendaires : sinon quitter puis revenir dans la même région ferait
     // réapparaître instantanément celui qui vient de fuir ou d'être capturé.
+    // ⚠️ D'ABORD le lancer en cours, AVANT de vider `_roamers` : abortThrow
+    // touche encore au roamer visé, et surtout il prévient game3d.js. Effacer
+    // l'animation en silence laissait `state.throwing = true` à vie (touches B
+    // et T mortes pour toute la session) — c'était le pire bug du jeu.
+    if (_ballAnim) abortThrow('fled');
     for (var i = 0; i < _roamers.length; i++) disposeGroup(_roamers[i].group);
     _roamers.length = 0;
     _legendary = null;
     _spawnClock = 0;
-    if (_ballAnim && _ball) _ball.visible = false;
-    _ballAnim = null;
+    if (_ball) _ball.visible = false;
     while (_fx.length) {
       var e = _fx.pop();
       if (e.group && e.group.parent) e.group.parent.remove(e.group);

@@ -1666,6 +1666,14 @@
    *  dépendent. Utilisé aussi bien par les portails que par le dirigeable
    *  (appelé alors au milieu du vol, quand l'écran est noyé de nuages). */
   function loadRegionData(id) {
+    // Ceinture-bretelles : on change de région, plus aucune Ball n'est en vol.
+    // `roamers.setRegion` prévient maintenant son appelant (donc ce drapeau
+    // retombe déjà tout seul), mais s'il venait à manquer, `state.throwing`
+    // resté à `true` tuerait les touches B et T pour toute la session.
+    // Ce point de passage est le SEUL commun aux portails, au dirigeable
+    // (`arriveAtPort` appelle loadRegionData directement, sans applyRegion) et
+    // à la reprise de sauvegarde.
+    state.throwing = false;
     const R = regions();
     if (R && R.load) safeCall('regions.load', function () { R.load(id); });
     state.regionId = id;
@@ -2100,11 +2108,18 @@
     safeCall('roamers.throwBall', function () {
       ro.throwBall(target, chance, function (result) {
         state.throwing = false;
-        if (result === 'caught') onCaught(target.speciesId, target.level || 5, target);
-        else {
-          sfx('escape');
-          showToast('Oh non… elle s\'est échappée !', '💨');
+        if (result === 'caught') { onCaught(target.speciesId, target.level || 5, target); return; }
+        if (result === 'fled') {
+          // Lancer ABANDONNÉ (changement de région en plein vol, ou second
+          // lancer refusé) : aucune Ball n'a volé, on la rend et on se tait.
+          // Annoncer un échec à un enfant qui n'a rien vu serait injuste.
+          state.items[ballId] = (state.items[ballId] | 0) + 1;
+          ensureActiveBall();
+          refreshHudCounters();
+          return;
         }
+        sfx('escape');
+        showToast('Oh non… elle s\'est échappée !', '💨');
       });
     });
     if (_broken['roamers.throwBall']) state.throwing = false;
