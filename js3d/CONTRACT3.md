@@ -763,6 +763,29 @@ marqueur. Ils n'y figuraient pas, alors que la fonction qui les fournit existait
 lot Bâtiments — personne ne l'appelait. La carte du monde signale en plus d'un 🔮 la seule
 région qui abrite l'Académie (Sylve d'Ambre, porte en **129,80**).
 
+**Amendement 2026-08-01 (correction 2.1) — le sanctuaire et les autels.** La liste des
+repères de `drawRegionMap()` s'allonge de deux entrées, et c'était la même erreur que
+l'Académie : les données existaient (`quest.sanctuary(regionId)` et `region.altars`),
+personne ne les affichait, et la quête demande pourtant « cherche leurs autels » sur
+384 × 224 tuiles.
+
+- **⛩️ Sanctuaire** — marqueur nommé, **toujours visible**, y compris avant l'ouverture ;
+  il porte alors le suffixe « (fermé) » et une opacité réduite. C'est la destination que
+  l'indice de quête annonce, la cacher n'apporterait rien.
+- **✦ Autels** — un par légendaire, **seulement une fois le sanctuaire ouvert**
+  (`sanc.open`, c'est-à-dire le badge gagné). Avant, la légende doit rester un mystère
+  qu'on entend raconter ; après, elle devient une liste de six lieux à visiter. Un autel
+  dont l'espèce figure déjà dans `state.collection` passe en **✅ vert**.
+- **Piège à ne pas « corriger »** : l'autel du légendaire chef est posé sur les
+  coordonnées EXACTES du sanctuaire (c'est voulu, cf. l'en-tête de `quest3d.js`). Le code
+  saute donc l'autel dont `(x, y)` coïncide avec le sanctuaire, sinon deux marqueurs se
+  superposent parfaitement et le nom du sanctuaire devient illisible.
+- Le bloc est dans son propre `try/catch`, comme ses voisins : la carte doit continuer de
+  s'afficher si `quest3d` manque. L'accès se fait par le nouvel accesseur `QUEST()` de
+  `hud3d.js`, au même endroit que `CITIES()`, `AIRSHIP()` et les autres.
+- Les deux entrées sont ajoutées à la légende sous la carte : un symbole non expliqué ne
+  vaut pas mieux qu'un symbole absent.
+
 ### Ce qui reste à vérifier à l'œil
 
 L'extension Chrome s'est déconnectée avant que le rendu de la carte corrigée ait pu être

@@ -1353,6 +1353,15 @@ html, body {
 .map-marker.academy .mk-label { background: rgba(122, 92, 191, .92); }
 .map-marker.center  .mk-label { background: rgba(255, 107, 157, .92); }
 .map-marker.arena   .mk-label { background: rgba(255, 107, 61, .92); }
+/* Quête des légendes : le sanctuaire (doré) et les autels de ses six gardiens
+   (violet, comme les pastilles de `regions3d.minimap`). Un autel dont la
+   créature est déjà attrapée passe en vert : la carte devient une liste de
+   ce qu'il reste à trouver. */
+.map-marker.sanctuary .mk-label { background: rgba(196, 148, 42, .94); }
+.map-marker.sanctuary.ferme { opacity: .62; }
+.map-marker.altar   .mk-icon  { font-size: 15px; color: #c8b3ff; }
+.map-marker.altar   .mk-label { background: rgba(122, 92, 191, .9); font-size: 10px; }
+.map-marker.altar.pris .mk-label { background: rgba(56, 183, 100, .9); }
 .map-marker.player.blink { opacity: .55; }
 
 .map-legend {

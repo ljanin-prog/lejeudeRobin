@@ -55,6 +55,7 @@
   function AIRSHIP() { return R3ref.get('airship'); }
   function CAMERA() { return R3ref.get('camera'); }
   function CITIES() { return R3ref.get('cities'); }
+  function QUEST() { return R3ref.get('quest'); }
 
   // ---------------------------------------------------------------------------
   // Petits outils DOM
@@ -2386,7 +2387,8 @@
     const legend = el('div', 'map-legend', regionView);
     [['#e74c3c', 'Toi'], ['#f1c40f', 'Porte'], ['#a5aab0', 'Ville'],
      ['#ff6b3d', '⚔️ Arène'], ['#ff6b9d', '➕ Centre Pokémon'],
-     ['#a678f0', '🔮 Académie'], ['#41a6f6', '⚓ Port aérien']]
+     ['#a678f0', '🔮 Académie'], ['#41a6f6', '⚓ Port aérien'],
+     ['#ffd166', '⛩️ Sanctuaire'], ['#7a5cbf', '✦ Autel de légendaire']]
       .forEach(function (item) {
         const s = el('span', null, legend);
         el('i', null, s).style.background = item[0];
@@ -2503,6 +2505,31 @@
       const airship = AIRSHIP();
       const port = airship && typeof airship.portOf === 'function' ? airship.portOf(regionId) : null;
       if (port && typeof port.x === 'number') addMarker(port.x, port.y, 'port', '⚓', port.name || 'Port aérien');
+    } catch (e) { /* dégradation silencieuse */ }
+    // Le sanctuaire et les autels de la quête. La quête dit « cherche leurs
+    // autels » sur une région de 384×224 tuiles : sans repère, c'est une
+    // fouille à l'aveugle, exactement le problème de l'Académie introuvable.
+    // Les autels n'apparaissent QU'UNE FOIS le sanctuaire ouvert (badge gagné) :
+    // avant, la légende doit rester un mystère qu'on entend raconter.
+    try {
+      const quest = QUEST();
+      const sanc = (quest && typeof quest.sanctuary === 'function') ? quest.sanctuary(regionId) : null;
+      if (sanc && typeof sanc.x === 'number') {
+        addMarker(sanc.x, sanc.y, 'sanctuary' + (sanc.open ? '' : ' ferme'), sanc.icon || '⛩️',
+          sanc.name + (sanc.open ? '' : ' (fermé)'), true);
+        if (sanc.open && def && Array.isArray(def.altars)) {
+          const collection = (st && st.collection) || {};
+          def.altars.forEach(function (a) {
+            if (typeof a.x !== 'number' || typeof a.y !== 'number') return;
+            // L'autel du légendaire « chef » PORTE le sanctuaire (même tuile,
+            // cf. quest3d §« LES SIX QUÊTES ») : deux marqueurs s'y
+            // superposeraient exactement.
+            if (a.x === sanc.x && a.y === sanc.y) return;
+            const pris = collection[a.id] > 0;
+            addMarker(a.x, a.y, 'altar' + (pris ? ' pris' : ''), pris ? '✅' : '✦', a.label || 'Autel', true);
+          });
+        }
+      }
     } catch (e) { /* dégradation silencieuse */ }
 
     const px = (st && (st.tileX !== undefined ? st.tileX : (st.player && st.player.tileX)));
