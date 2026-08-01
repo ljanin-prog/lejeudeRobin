@@ -2917,17 +2917,15 @@
         // `r.pending` : des capacités que la nouvelle forme aurait apprises,
         // mais les 4 emplacements sont pleins. Exactement comme `pendingLearn`
         // d'une montée de niveau : on le DIT, on ne remplace rien tout seul.
+        // Même phrase que `pendingLearnLine`, pour ne pas déplacer le mensonge
+        // d'un écran à l'autre (`r.pending` contient des CHAÎNES, `pendingLearn`
+        // des objets : `moveNames` avale les deux).
         const lignes = [];
-        if (r.learned && r.learned.length) {
-          lignes.push((mon.nick || mon.id) + ' apprend ' + r.learned.map(function (id) {
-            return (moveOf(id).name || id);
-          }).join(', ') + ' !');
-        }
-        if (r.pending && r.pending.length) {
-          lignes.push((mon.nick || mon.id) + ' aimerait apprendre ' +
-            (moveOf(r.pending[0]).name || r.pending[0]) +
-            ',\nmais connaît déjà 4 capacités. Ce sera pour plus tard !');
-        }
+        const nom = mon.nick || mon.id;
+        const appris = moveNames(r.learned);
+        if (appris.length) lignes.push(nom + ' apprend ' + appris.join(', ') + ' !');
+        const attente = pendingLearnLine(nom, r.pending);
+        if (attente) lignes.push(attente.replace(/^\n/, ''));
         refreshHudCounters();
         saveGame();
         showMessages(lignes, function () {
@@ -2973,6 +2971,57 @@
 
   // --- Fin d'un camp ----------------------------------------------------------
 
+  /** Noms lisibles d'une liste de capacités, QUELLE QU'EN SOIT LA FORME :
+   *  `team.gainXp` rend des objets `{moveId, level}`, `evolve.evolve` des
+   *  chaînes. Les deux passent ici, personne n'a plus à s'en souvenir. */
+  function moveNames(list) {
+    const out = [];
+    const src = Array.isArray(list) ? list : [];
+    for (let i = 0; i < src.length; i++) {
+      const e = src[i];
+      const id = (typeof e === 'string') ? e : (e && e.moveId);
+      if (id) out.push(moveOf(id).name || id);
+    }
+    return out;
+  }
+
+  /**
+   * Ce qu'on dit quand une créature ne peut PAS apprendre une capacité.
+   *
+   * L'ancien texte promettait « Ce sera pour plus tard ! ». C'était faux :
+   * aucun écran de remplacement n'existe, `mon.moves` n'a même pas de point
+   * d'écriture officiel, et une créature à 4 capacités n'apprend plus jamais
+   * rien. On ne fait pas de promesse qu'on ne tient pas à un enfant de 10 ans :
+   * on dit ce qui se passe, sans en faire un drame — elle garde des capacités
+   * qui sont très bien. (L'écran de remplacement reste à écrire : chantier 3.4.)
+   *
+   * Toutes les capacités en attente sont citées, pas seulement la première :
+   * deux paliers au même niveau en perdaient une en silence.
+   */
+  function pendingLearnLine(nom, pending) {
+    const noms = moveNames(pending);
+    if (!noms.length) return '';
+    return '\n' + nom + ' garde ses 4 capacités : pas de place pour ' + noms.join(', ') + '.';
+  }
+
+  /**
+   * Les lignes à afficher après un gain d'XP. Sert à la créature au combat
+   * COMME à ses équipiers et au bonus de badge : pour eux, la valeur de retour
+   * de `gainXp` était purement jetée, si bien qu'un équipier pouvait franchir
+   * plusieurs niveaux et apprendre une capacité dans le silence complet.
+   */
+  function levelUpLines(mon, res) {
+    if (!res || !res.leveled) return '';
+    const nom = (mon && mon.nick) || 'Ta créature';
+    const appris = moveNames(res.learned);
+    // Une SEULE ligne par créature : le bonus de badge peut faire monter les six
+    // d'un coup, et la boîte de dialogue n'a pas de hauteur maximale.
+    let out = '\n' + nom + ' passe au niveau ' + res.level +
+      (appris.length ? ' et apprend ' + appris.join(', ') : '') + ' ! 🎉';
+    out += pendingLearnLine(nom, res.pendingLearn);
+    return out;
+  }
+
   function onFoeFainted() {
     const b = state.battle;
     if (!b) return;
@@ -2987,24 +3036,17 @@
       }) || 10;
       const res = safeCall('team.gainXp', function () { return team.gainXp(b.player.mon, gain); });
       lignes += '\n' + (b.player.mon.nick || 'Ta créature') + ' gagne ' + gain + ' points d\'expérience !';
-      if (res && res.leveled > 0) {
-        lignes += '\nNiveau ' + res.level + ' ! 🎉';
-        if (res.learned && res.learned.length) {
-          lignes += '\nNouvelle capacité : ' + res.learned.map(function (id) {
-            return (moveOf(id).name || id);
-          }).join(', ') + ' !';
-        }
-        if (res.pendingLearn && res.pendingLearn.length) {
-          lignes += '\n' + (b.player.mon.nick || 'Ta créature') + ' aimerait apprendre ' +
-            (moveOf(res.pendingLearn[0].moveId).name || res.pendingLearn[0].moveId) +
-            ',\nmais connaît déjà 4 capacités. Ce sera pour plus tard !';
-        }
-      }
+      lignes += levelUpLines(b.player.mon, res);
       // Un tiers de l'XP pour les autres membres présents : personne n'est oublié.
+      // Leur montée de niveau se DIT, elle aussi : le résultat de `gainXp` était
+      // jeté ici, un équipier changeait de niveau sans que Robin le sache.
       const list = b.player.team || [];
       for (let i = 0; i < list.length; i++) {
         if (list[i] && list[i] !== b.player.mon && list[i].hp > 0) {
-          safeCall('team.gainXp.reste', function () { team.gainXp(list[i], Math.round(gain / 3)); });
+          const r = safeCall('team.gainXp.reste', function () {
+            return team.gainXp(list[i], Math.round(gain / 3));
+          });
+          lignes += levelUpLines(list[i], r);
         }
       }
     }
@@ -3082,7 +3124,10 @@
       if (team && team.gainXp) {
         const list = b.player.team || [];
         for (let i = 0; i < list.length; i++) {
-          if (list[i]) safeCall('team.gainXp.badge', function () { team.gainXp(list[i], bonus); });
+          if (!list[i]) continue;
+          // 120 XP, c'est parfois plusieurs niveaux d'un coup : on le DIT.
+          const r = safeCall('team.gainXp.badge', function () { return team.gainXp(list[i], bonus); });
+          texte += levelUpLines(list[i], r);
         }
       }
 

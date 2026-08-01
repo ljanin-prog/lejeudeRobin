@@ -574,6 +574,17 @@ soin** d'une créature quand le learnset dépasse 4 emplacements : `dex3d.js` ga
 par espèce, l'oubli premier-entré-premier-sorti le supprimait en premier. Vaut aussi pour les
 équipes des dresseurs et des champions.
 
+**`gainXp` rend en plus `pendingLearn: [{moveId, level}]`** (extension hors contrat) : les
+capacités qu'une créature à 4 emplacements n'a PAS pu apprendre. Rien ne les apprend jamais —
+il n'existe aucun écran de remplacement, ni même de point d'écriture officiel sur `mon.moves`
+(chantier ouvert). Tant que c'est le cas, **les messages ne doivent rien promettre** : ils
+disent que la créature garde ses 4 capacités, jamais « ce sera pour plus tard ». Tout
+consommateur doit citer TOUTE la liste, pas seulement `pendingLearn[0]` — deux paliers au même
+niveau en perdaient une en silence. Attention à la forme : `evolve3d.evolve()` rend le même
+renseignement sous le nom `pending`, et en **chaînes** au lieu d'objets.
+Enfin, la valeur de retour de `gainXp` **s'utilise partout**, y compris pour l'XP partagée aux
+équipiers et le bonus de badge : sans cela une créature monte de plusieurs niveaux en silence.
+
 **Taux de capture** (généreux, c'est un jeu d'enfant) :
 ```
 base = species.catchRate
