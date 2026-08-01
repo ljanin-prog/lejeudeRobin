@@ -2708,14 +2708,25 @@
       const conseil = (typeof p.level === 'number' && p.level > 0) ? p.level : 0;
       const ecart = (conseil && monNiveau) ? (conseil - monNiveau) : 0;
       const alerte = ecart > ECART_ALERTE;
+      // ⚠️ LE SOUS-TITRE S'AJOUTE, IL NE REMPLACE PAS. `airshipOptions()` de
+      // game3d fournit `level` pour LES SIX régions : si le conseil de niveau
+      // était une BRANCHE, il gagnait toujours et il ne restait plus rien —
+      // ni « Région encore inconnue », ni le nom du port. Robin ne distinguait
+      // plus une région déjà vue d'une région jamais visitée qu'à l'icône
+      // (⚓ contre ✨), à 22 px et sans légende. Les deux tiennent sur deux
+      // lignes (`\n` : `.wn-sub` est en `white-space: pre-line`).
       let sub;
       if (p.current) sub = 'Tu y es';
       else if (!p.enabled) sub = p.reason || 'À découvrir à pied';
-      else if (conseil) {
-        sub = 'Conseillé : Nv ' + conseil
-          + (monNiveau ? ' · ton équipe : Nv ' + monNiveau : '')
-          + (alerte ? ' ⚠️' : '');
-      } else sub = vu ? p.name : (p.reason || 'Région à découvrir');
+      else {
+        const ou = vu ? (p.name || 'Déjà visitée') : (p.reason || 'Jamais visitée');
+        const niv = conseil
+          ? ('Nv ' + conseil + ' conseillé'
+             + (monNiveau ? ' · toi Nv ' + monNiveau : '')
+             + (alerte ? ' ⚠️' : ''))
+          : '';
+        sub = niv ? (ou + '\n' + niv) : ou;
+      }
       states[p.regionId] = {
         current: p.current, visited: vu, disabled: !p.enabled && !p.current,
         label: p.region || regionName(p.regionId),
@@ -3719,11 +3730,17 @@
     ui.helpOverlay = ov;
   }
 
+  /** -> true si l'écran s'est VRAIMENT affiché. game3d s'en sert pour savoir
+   *  s'il doit poser `state.screen = 'help'` ou jouer son repli en boîte de
+   *  dialogue : si `buildHelpOverlay()` a échoué, `ui.helpOverlay` est absent
+   *  et Robin se retrouvait sur un écran 'help' invisible dont seules Échap et
+   *  H sortaient — sans jamais voir les commandes. */
   function openHelp() {
-    if (!ui.helpOverlay) return;
+    if (!ui.helpOverlay) return false;
     show(ui.helpOverlay);
     replayAnim(ui.helpOverlay, 'overlay');
     showCompass(false);
+    return true;
   }
 
   function closeHelp() {

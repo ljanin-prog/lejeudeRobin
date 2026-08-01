@@ -1418,8 +1418,11 @@ html, body {
 .wn-dot { font-size: 22px; }
 .wn-label { font-size: clamp(11.5px, 1.2vw, 13.5px); font-weight: 700; }
 /* 10 px, c'était illisible — et c'est ici que s'écrit l'avertissement de
-   niveau du dirigeable, la ligne la plus utile de l'écran. */
-.wn-sub { font-size: 12px; line-height: 1.25; color: var(--gris); }
+   niveau du dirigeable, la ligne la plus utile de l'écran.
+   `pre-line` : le dirigeable écrit DEUX renseignements séparés par un `\n`
+   (« Jamais visitée » puis « Nv 45 conseillé · toi Nv 8 ⚠️ »). Sans lui, les
+   deux se colleraient sur une seule phrase illisible. */
+.wn-sub { font-size: 12px; line-height: 1.25; color: var(--gris); white-space: pre-line; }
 .wn-sub.alerte { color: #ffd166; font-weight: 700; }
 
 .world-node:hover { transform: translate(-50%, -50%) translateY(-3px) !important; border-color: var(--rose) !important; }
@@ -1580,9 +1583,18 @@ html, body {
   font-weight: 700;
   color: var(--nuit);
   background: linear-gradient(180deg, #ffe9a0, var(--jaune-clair));
-  border-radius: 999px;
+  border-radius: 22px;
   box-shadow: var(--ombre);
-  white-space: nowrap;
+  /* ⚠️ PAS DE `nowrap`. `#hud` est en `overflow: hidden` et `.toast-layer` est
+     centré par `translateX(-50%)` : un bandeau plus large que la fenêtre se
+     fait rogner AUX DEUX BOUTS. Le plus long toast du jeu (l'avertissement du
+     dirigeable, 108 caractères) demandait ~850 px ; sur une fenêtre de 800 px,
+     la moitié actionnable (« Reclique pour y aller quand même ! ») n'était
+     jamais lue. On passe donc à la ligne, borné à la largeur de l'écran.
+     `toastDuree()` donne déjà 8 s à ces textes-là. */
+  white-space: normal;
+  max-width: min(560px, 90vw);
+  text-align: center;
   /* Durée de repli seulement : `hud3d.toast()` la remplace par une durée
      proportionnelle à la longueur du texte (`t.style.animationDuration`).
      Les keyframes sont en POURCENTAGES, donc elles suivent toutes seules. */
