@@ -2152,7 +2152,9 @@
     sfx('catch');
     call('buddy', 'reactTo', ['capture']);
     refreshHudCounters();
-    if (roamer) call('roamers', 'remove', [roamer]);
+    // 'caught' : l'autel du légendaire se repose 10 minutes (§16). Sans cette
+    // raison, il repartirait sur le cooldown court des défaites.
+    if (roamer) call('roamers', 'remove', [roamer, 'caught']);
     saveGame();
 
     showMessage('Bravo ! ' + nom + ' est capturé' + (species && species.legendary ? ' !!! ✨' : ' ! ✦') +
@@ -2240,8 +2242,13 @@
     if (!roamer) return;
     const dex = mod('dex');
     const species = (dex && dex.get) ? dex.get(roamer.speciesId) : null;
-    call('roamers', 'remove', [roamer]);
-    startWildBattle(roamer.speciesId, roamer.level || 5, species);
+    // 'battle' : on retire le légendaire de la carte AVANT le combat, alors
+    // qu'on ne sait pas encore si Robin va gagner, perdre, fuir ou capturer.
+    // On part donc sur le cooldown COURT (2 min) — perdre ne doit pas vider
+    // l'autel dix minutes réelles — et `onCaughtInBattle` remontera à 10 min
+    // si la capture aboutit vraiment.
+    call('roamers', 'remove', [roamer, 'battle']);
+    startWildBattle(roamer.speciesId, roamer.level || 5, species, roamer._altarId || null);
   }
 
   // ===========================================================================
@@ -2299,7 +2306,10 @@
     startWildBattle(species.id, level, species);
   }
 
-  function startWildBattle(speciesId, level, species) {
+  /** `legendAltarId` (facultatif) : l'autel d'où vient un légendaire. Mémorisé
+   *  dans l'objet combat parce que `onCaughtInBattle` ne reçoit que le Mon et
+   *  n'aurait sinon aucun moyen de savoir quel autel remettre à 10 min (2.3). */
+  function startWildBattle(speciesId, level, species, legendAltarId) {
     const team = teamApi();
     const mine = activeMon();
     if (!mine) { showMessage('Toute ton équipe est K.O. !\nVa vite au centre de soins.'); return; }
@@ -2335,6 +2345,7 @@
       // shop3d.js (20 × niveau + 200) n'était jamais atteint : un légendaire
       // de niveau 50 rapportait 200 pièces au lieu de 1200.
       legendary: !!(sp && sp.legendary),
+      legendAltarId: legendAltarId || null,
     };
     enterBattle(b, 'Un ' + (foeMon.nick || speciesId) + ' sauvage apparaît !' +
       (sp && sp.description ? '\n' + sp.description : ''));
@@ -2860,6 +2871,11 @@
     state.collection[mon.id] = (state.collection[mon.id] || 0) + 1;
     markSeen(mon.id);
     sfx('catch');
+    // 2.3 : la capture est CONFIRMÉE, l'autel peut se reposer 10 minutes. À
+    // l'entrée en combat on n'avait posé que le cooldown court, pour ne pas
+    // punir une défaite.
+    const b0 = state.battle;
+    if (b0 && b0.legendAltarId) call('roamers', 'setLegendCooldown', [b0.legendAltarId, 'caught']);
     refreshHudCounters();
     saveGame();
     // On empile d'abord le texte de capture, puis celui de la quête : les
@@ -3068,6 +3084,11 @@
       // le barème « légendaire » se choisit sur le drapeau `b.legendary`, posé
       // par `startWildBattle` (correction 1.4).
       lignes += payRewardLine(b.legendary ? 'legendary' : b.kind, vaincu && vaincu.level);
+      // Le gardien est vaincu : l'affaire est classée, son autel se repose 10
+      // minutes comme s'il avait été capturé. Sans ça il reviendrait toutes les
+      // 2 minutes (le cooldown court des défaites) et le barème légendaire à
+      // 1200 pièces deviendrait une machine à sous devant l'autel (2.3 + 1.4).
+      if (b.legendAltarId) call('roamers', 'setLegendCooldown', [b.legendAltarId, 'defeated']);
       finishBattle(['Victoire ! ✦' + lignes]);
       return;
     }

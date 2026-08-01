@@ -68,6 +68,14 @@
   function llibApi() { return R3.get('llib') || null; }
   function questApi() { return R3.get('quest') || null; }
   function actorsApi() { return R3.get('actors') || null; }
+  function hudApi() { return R3.get('hud') || null; }
+
+  /** Petit bandeau d'information. Le HUD peut manquer : on ne bloque jamais. */
+  function toast(text, icon) {
+    var hud = hudApi();
+    if (!hud || typeof hud.toast !== 'function') return;
+    try { hud.toast(text, icon); } catch (e) { warn('toast', e); }
+  }
 
   /**
    * Construit le modèle 3D d'une espèce EN PASSANT PAR `evolve.fallbackModel()`.
@@ -129,7 +137,12 @@
 
   var LEGEND_ACTIVATE_DIST = 42;     // tuiles : distance à laquelle l'autel s'anime
   var LEGEND_FLEE_S = 90;            // fuite si pas affronté (§16, à la lettre)
-  var LEGEND_COOLDOWN_S = 600;       // 10 min de jeu avant de pouvoir réapparaître
+  var LEGEND_WARN_S = 20;            // « il s'apprête à repartir ! » : 20 s avant la fuite
+  var LEGEND_COOLDOWN_S = 600;       // 10 min : il est CAPTURÉ, son autel se repose
+  // Il est reparti, ou le combat s'est mal terminé : on peut retenter vite.
+  // Attendre 10 minutes réelles après une défaite serait une double punition,
+  // et le jeu n'est jamais punitif (correction 2.3).
+  var LEGEND_RETRY_S = 120;
 
   var ENCOUNTER_DIST = 0.62;         // unités monde : « touche » le joueur
 
@@ -420,6 +433,7 @@
       tileX: altar.x, tileY: altar.y,
       _phase: Math.random() * 6.2832,
       _spawnT: t, _altarId: altar.id, _ball: false, _encountered: false,
+      _warned: false,   // l'avertissement « il s'apprête à repartir » est-il déjà passé ?
       // Nom d'espèce mémorisé une fois pour toutes : `signalLegend()` le passe
       // à actors3d à CHAQUE image, il n'a pas le droit d'interroger le Pokédex
       // 60 fois par seconde.
@@ -437,13 +451,23 @@
         if (typeof sfx === 'function') sfx();
       }
     } catch (e) { /* le son est un bonus, jamais bloquant */ }
+
+    // §16 : il ne reste que 90 secondes. Sans un mot, cette limite est
+    // invisible — l'enfant traverse la région, arrive à l'autel vide et ne
+    // comprend pas. On le prévient à l'apparition, puis 20 s avant la fuite.
+    toast(ro._nom + ' est apparu à son autel ! Vite, il ne restera pas longtemps…', '✨');
   }
 
+  /** Le légendaire repart de lui-même : personne ne l'a affronté. Ce n'est PAS
+   *  une capture, l'autel ne se repose donc que `LEGEND_RETRY_S` (2 min) et on
+   *  le dit — un autel vide sans explication, c'est une punition gratuite. */
   function fleeLegendary(t) {
     if (!_legendary) return;
     var altarId = _legendary._altarId;
+    var nom = _legendary._nom;
     removeInternal(_legendary);       // remet déjà les PNJ au calme
-    _legendCooldowns[altarId] = t + LEGEND_COOLDOWN_S;
+    _legendCooldowns[altarId] = t + LEGEND_RETRY_S;
+    toast(nom + ' est reparti… Reviens le voir à son autel dans un moment !', '💨');
   }
 
   function updateLegendary(t, px, pz) {
@@ -453,7 +477,14 @@
     if (!region || !region.altars || !region.altars.length) return;
 
     if (_legendary) {
-      if (t - _legendary._spawnT >= LEGEND_FLEE_S) fleeLegendary(t);
+      var age = t - _legendary._spawnT;
+      // Le compte à rebours se DIT une fois, pas soixante fois par seconde :
+      // d'où le drapeau `_warned`.
+      if (!_legendary._warned && age >= LEGEND_FLEE_S - LEGEND_WARN_S) {
+        _legendary._warned = true;
+        toast(_legendary._nom + ' s\'apprête à repartir ! Dépêche-toi !', '⏳');
+      }
+      if (age >= LEGEND_FLEE_S) fleeLegendary(t);
       return;   // « un seul à la fois » — §16
     }
 
@@ -497,15 +528,51 @@
     }
   }
 
-  function remove(roamer) {
+  function now_() { return (R3.clock && typeof R3.clock.t === 'number') ? R3.clock.t : 0; }
+
+  /** L'affaire est-elle CLASSÉE pour ce légendaire ? Capturé ou mis K.O. : oui,
+   *  son autel se repose 10 minutes. Perdu, fui, parti tout seul : non, on
+   *  retente dans 2 minutes. */
+  function longCooldown(reason) { return reason === 'caught' || reason === 'defeated'; }
+
+  /**
+   * Retire un roamer de la carte.
+   *
+   * `reason` — POUR UN LÉGENDAIRE UNIQUEMENT, décide combien de temps son autel
+   * reste vide (correction 2.3) :
+   *   'caught' / 'defeated' -> LEGEND_COOLDOWN_S (10 min) : l'affaire est
+   *       classée, l'autel se repose.
+   *   tout le reste ('battle', 'fled', omis…) -> LEGEND_RETRY_S (2 min).
+   * Avant, TOUT retrait posait 10 minutes. Or `game3d.startRoamerBattle()`
+   * retire le légendaire AVANT le combat, quand on ne sait encore rien de son
+   * issue : perdre contre lui vidait donc son autel dix minutes réelles. Double
+   * punition — on est déjà K.O. — et rien à l'écran ne l'expliquait. Le jeu
+   * n'est jamais punitif : on repart sur le cooldown court, et `game3d.js`
+   * remonte à 10 minutes via `setLegendCooldown()` SI la capture aboutit.
+   *
+   * ⚠️ Le cooldown court est le DÉFAUT exprès : en monde ouvert, `remove()` est
+   * appelé DEUX FOIS sur la même référence (ici même à la fin du lancer, puis
+   * par `game3d.onCaught`). Le second appel réécrit le cooldown ; il doit donc
+   * passer la même raison que le premier, sans quoi il l'écraserait.
+   */
+  function remove(roamer, reason) {
     if (!roamer) return;
     var wasLegendary = !!roamer.legendary;
     var altarId = roamer._altarId;
     removeInternal(roamer);
     if (wasLegendary && altarId) {
-      var now = (R3.clock && typeof R3.clock.t === 'number') ? R3.clock.t : 0;
-      _legendCooldowns[altarId] = now + LEGEND_COOLDOWN_S;
+      _legendCooldowns[altarId] = now_() + (longCooldown(reason) ? LEGEND_COOLDOWN_S : LEGEND_RETRY_S);
     }
+  }
+
+  /** Règle le temps d'attente d'un autel après coup. Sert à `game3d.js` pour
+   *  rehausser à 10 minutes une fois la capture CONFIRMÉE en combat : à
+   *  l'entrée en combat, personne ne sait encore si Robin va gagner, perdre,
+   *  fuir ou capturer. Même vocabulaire que `remove()` pour que la durée ne
+   *  soit écrite qu'ICI, jamais recopiée ailleurs. */
+  function setLegendCooldown(altarId, reason) {
+    if (!altarId) return;
+    _legendCooldowns[altarId] = now_() + (longCooldown(reason) ? LEGEND_COOLDOWN_S : LEGEND_RETRY_S);
   }
 
   // ===========================================================================
@@ -789,7 +856,7 @@
           // évite qu'un second lancer sur la même référence (avant la fin du
           // flourish) ne se heurte à un roamer « fantôme » encore marqué
           // occupé par une Ball.
-          if (A.roamer) { A.roamer._ball = false; remove(A.roamer); }
+          if (A.roamer) { A.roamer._ball = false; remove(A.roamer, 'caught'); }
         } else {
           fxSparkle(A.to, '#e8eef4', 10);
         }
@@ -975,6 +1042,17 @@
 
   function onEncounter(fn) { if (typeof fn === 'function') _encounterCbs.push(fn); }
 
+  /** Gerbe d'étoiles à un endroit du monde, en coordonnées de tuiles.
+   *  `fxStarsBurst` reste privé (il veut un THREE.Vector3 et la scène) : on
+   *  n'expose que ce dont `game3d.js` a besoin pour fêter une NOUVELLE ESPÈCE
+   *  par-dessus la gerbe ordinaire de la capture (correction 2.2). */
+  function starsAt(x, z, n) {
+    if (!THREE_OK || !_scene) return;
+    try {
+      fxStarsBurst(new THREE.Vector3(x, heightAt(x, z) + 0.45, z), n || 22);
+    } catch (e) { warn('gerbe d\'étoiles', e); }
+  }
+
   R3.register('roamers', {
     build: build,
     setRegion: setRegion,
@@ -984,6 +1062,8 @@
     nearest: nearest,
     throwBall: throwBall,
     remove: remove,
+    setLegendCooldown: setLegendCooldown,
+    starsAt: starsAt,
     onEncounter: onEncounter,
     setRepel: setRepel,
   });

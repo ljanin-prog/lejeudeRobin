@@ -762,7 +762,11 @@ R3.register('roamers', {
                                    // result ∈ 'caught' | 'escaped' | 'fled'
                                    // cb est appelé EXACTEMENT UNE FOIS, même
                                    // si le lancer est refusé ou interrompu
-  remove(roamer),
+  remove(roamer, reason),          // reason: 'caught'|'defeated' (10 min) ou
+                                   // autre chose (2 min) — cooldown de l'autel
+                                   // d'un légendaire
+  setLegendCooldown(altarId, reason),  // même vocabulaire, après coup
+  starsAt(x, z, n),                // gerbe d'étoiles à une position du monde
   onEncounter(fn),                 // appelé si un roamer touche le joueur
 });
 ```
@@ -783,6 +787,27 @@ Règles :
 - Les **légendaires** n'apparaissent qu'à leur autel (`LEGEND_ALTAR`), un seul à la fois,
   avec une aura visible de loin et un son. Ils ne se déplacent pas ; ils fuient au bout de
   90 secondes si on ne les affronte pas.
+- **Les 90 secondes s'annoncent** (correction 2.3) : un toast à l'apparition (« Vite, il ne
+  restera pas longtemps… »), un autre 20 s avant la fuite, un dernier au départ (« Reviens le
+  voir à son autel dans un moment ! »). Une limite de temps invisible n'est pas une règle du
+  jeu, c'est un piège. Le drapeau `_legendary._warned` empêche de répéter l'avertissement
+  soixante fois par seconde, et `_legendary._nom` évite d'interroger le Pokédex à chaque image.
+- **Le temps d'attente d'un autel dépend de ce qui s'est passé** (correction 2.3) :
+  `LEGEND_COOLDOWN_S = 600` (10 min) si l'affaire est **classée** — `reason` vaut `'caught'`
+  (capturé) ou `'defeated'` (mis K.O.) — et `LEGEND_RETRY_S = 120` (2 min) dans tous les
+  autres cas : défaite du joueur, fuite, ou départ du légendaire. `'defeated'` compte comme
+  `'caught'` pour une raison d'économie et non de punition : avec la correction 1.4 un
+  légendaire vaincu rapporte ~1200 pièces, et un retour toutes les 2 minutes en ferait une
+  machine à sous devant l'autel. Avant, tout retrait posait 10 minutes : comme `game3d.js` retire le
+  roamer **au début** du combat, perdre contre le gardien vidait son autel dix minutes
+  réelles. On est déjà K.O. : ajouter une attente subie est une double punition, contraire à
+  la philosophie du jeu. Le cooldown court est donc le **défaut** de `remove()`, et c'est
+  voulu — en monde ouvert, `remove()` est appelé deux fois sur la même référence (fin du
+  lancer, puis `game3d.onCaught`) et le second appel réécrit le cooldown. Comme l'issue du
+  combat n'est pas connue au moment du retrait, `game3d.js` mémorise `battle.legendAltarId`
+  et appelle `setLegendCooldown(altarId, 'caught')` depuis `onCaughtInBattle()` — c'est le
+  seul endroit où la capture est certaine. La durée n'est écrite que dans `roamers3d.js` :
+  ne la recopiez pas ailleurs.
 - `throwBall` : Pokéball 3D lancée en parabole depuis le joueur, atterrissage, aspiration de
   la créature, **3 secousses**, puis gerbe d'étoiles (capture) ou éclat + fuite (échec).
   Reprendre les timings du jeu 2D : lancer 0→600 ms, secousses 600→1800 ms, résultat à 1800 ms.
@@ -855,6 +880,7 @@ state.battle = {
   canFlee,           // false contre un dresseur ou un champion
   canCatch,          // true seulement en combat sauvage
   legendary,         // true si l'adversaire est un légendaire (extension, voir ci-dessous)
+  legendAltarId,     // l'autel d'où il vient, ou null (extension, §16 : cooldown)
 }
 ```
 
