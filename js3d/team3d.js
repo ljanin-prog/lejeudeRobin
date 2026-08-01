@@ -272,10 +272,38 @@
     return { id: id, pp: pp, ppMax: pp };
   }
 
+  /** Vrai si cette capacité rend des PV. Sans le catalogue `moves3d`, le repli
+   *  de `moveDef` n'a pas de champ `heal` : on répond « non », ce qui ramène
+   *  simplement à l'ancien oubli premier-entré-premier-sorti. Jamais d'exception. */
+  function isHealMove(id) {
+    return !!num(moveDef(id).heal, 0);
+  }
+
+  /**
+   * Emplacement à effacer quand une 5ᵉ capacité arrive : la plus ancienne,
+   * SAUF si c'est le dernier soin de la créature — dans ce cas on efface la
+   * plus ancienne des autres.
+   *
+   * `dex3d.js` garantit que CHAQUE espèce possède une capacité de soin (elle en
+   * réécrit une au besoin dans `moveIds`). L'oubli purement premier-entré-
+   * premier-sorti la jetait la première, puisqu'elle occupe un emplacement de
+   * base : 23 espèces sur 62 finissaient sans aucun moyen de se soigner dès
+   * qu'on les créait à un niveau assez haut (Feuillou dès le niveau 27).
+   */
+  function slotToForget(known, incomingId) {
+    let heals = 0;
+    for (let i = 0; i < known.length; i++) if (isHealMove(known[i])) heals++;
+    // Le nouveau venu soigne, ou il reste un autre soin : rien à protéger.
+    if (heals !== 1 || isHealMove(incomingId)) return 0;
+    for (let i = 0; i < known.length; i++) if (!isHealMove(known[i])) return i;
+    return 0;   // que des soins : inatteignable puisque heals === 1
+  }
+
   /**
    * Jeu de capacités d'une créature CRÉÉE au niveau `level` (sauvage, dresseur,
    * champion). On part des 4 capacités de base, puis on applique le `learnset`
-   * dans l'ordre : au-delà de 4, la plus ancienne s'efface.
+   * dans l'ordre : au-delà de 4, la plus ancienne s'efface — mais jamais son
+   * unique soin (voir `slotToForget`).
    *
    * Pourquoi cet oubli automatique ici, alors que `gainXp` ne l'autorise jamais ?
    * Parce qu'ici personne n'a choisi ces capacités : sans cela, un légendaire de
@@ -290,7 +318,7 @@
       if (e.level > level) break;
       if (known.indexOf(e.moveId) >= 0) continue;
       if (known.length < 4) known.push(e.moveId);
-      else { known.shift(); known.push(e.moveId); }
+      else { known.splice(slotToForget(known, e.moveId), 1); known.push(e.moveId); }
     }
     if (!known.length) known.push(FALLBACK_MOVES[0]);
     return known.map(makeMoveSlot);
