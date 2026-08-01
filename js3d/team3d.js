@@ -661,7 +661,8 @@
   // ---------------------------------------------------------------------------
 
   /**
-   * Chance de capture, entre 0.03 et 0.97 (contrat §11).
+   * Chance de capture, entre 0.03 et 0.97 (contrat §11) — SAUF la Ball
+   * Maîtresse, qui rend exactement 1 (voir plus bas).
    * Volontairement GÉNÉREUSE : un enfant de 10 ans ne doit pas rater dix fois
    * de suite. `ballBonus` : Pokéball 1.0 · Super Ball 1.5 · Hyper Ball 2.2 ·
    * Ball Maîtresse 99.
@@ -673,6 +674,13 @@
     const hp = m ? clamp(num(m.hp, maxHp), 0, maxHp) : maxHp;
     const soin = 1 + (1 - hp / maxHp) * 1.6;   // affaiblie = bien plus facile
     const bonus = Math.max(0, num(ballBonus, 1));
+    // LA BALL MAÎTRESSE NE RATE JAMAIS — 1, pas 0.97 (contrat §11 amendé).
+    // La boutique promet « Elle ne rate jamais », la quête aussi, et on n'en
+    // gagne que DEUX dans tout le jeu. Un enfant qui garde la sienne pendant
+    // des heures et la voit rater 3 fois sur 100 vivrait la pire trahison du
+    // jeu. On teste le bonus (>= 99) et pas l'identifiant de la Ball : ce
+    // module ne doit rien savoir de `shop3d.js`.
+    if (bonus >= 99) return 1;
     return clamp(base * soin * bonus, 0.03, 0.97);
   }
 

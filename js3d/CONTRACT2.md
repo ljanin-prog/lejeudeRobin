@@ -589,9 +589,21 @@ Enfin, la valeur de retour de `gainXp` **s'utilise partout**, y compris pour l'X
 ```
 base = species.catchRate
 soin = 1 + (1 - mon.hp / mon.maxHp) * 1.6        // une créature affaiblie se capture mieux
+if (ballBonus >= 99) chance = 1                  // Ball Maîtresse : JAMAIS de clamp à 0.97
 chance = clamp(base * soin * ballBonus, 0.03, 0.97)
 ```
 `ballBonus` : Pokéball 1.0, Super Ball 1.5, Hyper Ball 2.2, Ball Maîtresse 99.
+
+⚠️ **AMENDEMENT (correction 2.4) — la Ball Maîtresse rend exactement `1`, pas `0.97`.**
+La borne haute de 0,97 s'appliquait à TOUTES les Balls, Ball Maîtresse comprise. Or
+`shop3d.js` la décrit « Elle ne rate jamais », `quest3d.js` répète « celle qui ne rate
+jamais », et on n'en gagne que **deux** dans tout le jeu : un enfant qui garde la sienne
+pendant des heures pour son légendaire préféré et la voit rater (3 % du temps) vivrait la
+pire trahison possible. Une promesse écrite dans le jeu se tient. Le test porte sur le
+**bonus** (`>= 99`) et non sur l'identifiant de la Ball, pour que `team3d.js` reste
+indépendant de `shop3d.js` — la signature ne passe qu'un nombre. Le clamp 0,03–0,97 reste
+la règle pour toutes les autres Balls. **Ne « réparez » pas ceci en remettant le clamp
+unique : ce n'est pas une régression, c'est la correction.**
 
 ---
 
