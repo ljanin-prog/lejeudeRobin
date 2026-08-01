@@ -1103,6 +1103,9 @@ livrés. Il assure :
 **Touches** : flèches / ZQSD — Espace parler·valider — **B** lancer une Ball —
 **E** équipe — **C** Pokédex — **N** carte — **V** changer de vue —
 **Shift + ←/→** pivoter (vue RPG) — **M** son — Échap fermer — molette zoom.
+*(Complété depuis : **X** changer de Ball, **F** compagnon, **J** journal,
+**T** dirigeable, **H** écran d'aide. La liste de référence tenue à jour est
+`HELP_SECTIONS` dans `hud3d.js` — voir contrat v3 §19.1.)*
 
 ---
 

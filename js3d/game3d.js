@@ -534,7 +534,11 @@
 
   // ===========================================================================
   //  3. ENTRÉES CLAVIER (§19)
-  //     Flèches/ZQSD · Espace · B · E · C · N · V · Shift+←/→ · M · Échap
+  //     Flèches/ZQSD · Espace · B · X · F · E · C · J · N · T · V · H
+  //     · Shift+←/→ · M · Échap
+  //     H ouvre l'écran d'aide : c'est LA liste de référence des commandes,
+  //     tenue dans `HELP_SECTIONS` de hud3d.js. Toute touche ajoutée ici doit
+  //     y être ajoutée aussi, ainsi que dans #controls-hint (index3d.html).
   // ===========================================================================
 
   function onKeyDown(e) {
@@ -588,10 +592,12 @@
     // --- Boutique / journal / Académie ---------------------------------------
     // Le HUD gère ses propres clics et flèches ; ici on ne retient qu'Échap,
     // pour qu'aucun écran ne puisse retenir Robin prisonnier.
-    if (state.screen === 'shop' || state.screen === 'journal' || state.screen === 'academy') {
+    if (state.screen === 'shop' || state.screen === 'journal' || state.screen === 'academy'
+        || state.screen === 'help') {
       const k = e.key;
       const ferme = (k === 'Escape')
-        || (state.screen === 'journal' && (k === 'j' || k === 'J'));
+        || (state.screen === 'journal' && (k === 'j' || k === 'J'))
+        || (state.screen === 'help' && (k === 'h' || k === 'H'));
       if (ferme) { e.preventDefault(); closeOverlays(); }
       return;
     }
@@ -648,6 +654,12 @@
         e.preventDefault(); callAirship(); break;
       case 'm': case 'M':
         e.preventDefault(); toggleMute(); break;
+      case 'h': case 'H':
+        // Rappel des commandes. Le HUD ouvre l'écran lui-même sur `H` (comme
+        // pour `J`) : on ne prend le relais que s'il n'est pas là.
+        e.preventDefault();
+        if (!hudFait('openHelp')) openHelpScreen();
+        break;
       case 'Escape':
         e.preventDefault(); closeOverlays(); break;
     }
@@ -3534,7 +3546,8 @@
       '🚪 Suis les colonnes de lumière pour changer de région.\n' +
       'F : sortir ton compagnon de sa Ball · J : journal des légendes\n' +
       'T : appeler le dirigeable · V : changer de vue (dont la vue FPS)\n' +
-      'E : équipe · C : Pokédex · N : carte · M : son');
+      'E : équipe · C : Pokédex · N : carte · M : son\n' +
+      '❓ H : revoir toutes les commandes, quand tu veux.');
   }
 
   // ===========================================================================
@@ -3561,6 +3574,30 @@
     safeCall('hud.openDex', function () { hud.openDex(); });
   }
 
+  /** Écran d'aide (touche H) — les commandes, rappelables à tout moment.
+   *  Appelée aussi PAR LE HUD, qui capte `H` avant nous : lui seul sait
+   *  afficher l'écran, nous seuls savons poser `state.screen` et relâcher les
+   *  touches de déplacement — sinon Robin continue de marcher derrière. */
+  function openHelpScreen() {
+    if (state.screen !== 'world' || state.messages.length > 0) return;
+    const hud = mod('hud');
+    if (!hud || !hud.openHelp) {
+      // Repli : les commandes en boîte de dialogue. Robin doit pouvoir les
+      // revoir même si l'écran dédié manque.
+      showMessage('❓ Les commandes\n' +
+        'Flèches ou ZQSD : marcher · Maj + ←/→ : tourner la caméra\n' +
+        'Espace : parler, entrer, valider · Échap : fermer\n' +
+        'B : lancer une Ball · X : changer de Ball · F : compagnon\n' +
+        'E : équipe · C : Pokédex · N : carte · J : journal\n' +
+        'T : dirigeable · V : changer de vue · M : son · H : cette aide');
+      return;
+    }
+    releaseAllKeys();
+    sfx('menu');
+    state.screen = 'help';
+    safeCall('hud.openHelp', function () { hud.openHelp(); });
+  }
+
   function openMapScreen() {
     if (state.screen !== 'world' || state.messages.length > 0) return;
     const hud = mod('hud');
@@ -3583,11 +3620,12 @@
     call('hud', 'closeShop', []);
     call('hud', 'closeJournal', []);
     call('hud', 'closeAcademy', []);
+    call('hud', 'closeHelp', []);
     const ov = document.getElementById('collection-overlay');
     if (ov) ov.classList.add('hidden');
     releaseAllKeys();
     if (etait === 'team' || etait === 'dex' || etait === 'map' || etait === 'airship' ||
-        etait === 'shop' || etait === 'journal' || etait === 'academy') {
+        etait === 'shop' || etait === 'journal' || etait === 'academy' || etait === 'help') {
       sfx('menu');
       state.screen = 'world';
       refreshCompass();
@@ -4213,6 +4251,7 @@
     shop: openShopScreen,
     academy: openAcademyScreen,
     journal: openJournalScreen,
+    help: openHelpScreen,
     buddy: toggleBuddy,
     ball: cycleBall,
     evolutions: runEvolutions,

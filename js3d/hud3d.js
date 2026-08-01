@@ -505,6 +505,7 @@
     buildDexOverlay();
     buildMapOverlay();
     buildAirshipOverlay();
+    buildHelpOverlay();
     buildShopOverlay();
     buildJournalOverlay();
     buildAcademyOverlay();
@@ -2277,6 +2278,10 @@
     renderDexGrid();
     show(ui.dexOverlay);
     replayAnim(ui.dexOverlay, 'overlay');
+    // Après `show()`, et pas avant : `navElements()` écarte tout ce qui est
+    // encore invisible (`offsetParent === null`), donc le reset fait dans
+    // `renderDexGrid()` ne trouvait aucune carte tant que l'écran était caché.
+    navReset(ui.dexOverlay);
     showCompass(false);
   }
 
@@ -2326,7 +2331,13 @@
         showDexDetail(sp);
       });
       card.title = known ? sp.name : 'Créature pas encore rencontrée';
+      // Navigation clavier : c'est le DOM qui porte l'ordre de parcours.
+      card.setAttribute('data-nav', '1');
     });
+    // La grille vient d'être reconstruite (ouverture, changement de filtre) :
+    // on repose le curseur au début. `navCourant` est PARTAGÉ par tous les
+    // écrans — sans ce reset, le Pokédex hériterait du curseur de la Boutique.
+    navReset(ui.dexOverlay);
   }
 
   function showDexDetail(sp) {
@@ -3004,6 +3015,36 @@
     return false;
   }
 
+  /**
+   * Navigation clavier de la grille du Pokédex — le seul grand écran qui en
+   * était privé, alors qu'il compte 62 cartes.
+   * `navEcran` fait tout le travail, mais il raisonne en LISTE : ←/→ y règlent
+   * une quantité (Boutique) et ↑/↓ n'avancent que d'un cran. Une grille se
+   * parcourt mieux en damier, on traduit donc les touches ici : ←/→ passent à
+   * la carte voisine, ↑/↓ sautent une LIGNE entière.
+   * @returns {boolean} true si la touche a été consommée.
+   */
+  function dexNavKey(ev) {
+    const key = ev.key;
+    if (key === 'ArrowLeft' || key === 'ArrowRight') {
+      return navEcran(ui.dexOverlay, { key: (key === 'ArrowLeft') ? 'ArrowUp' : 'ArrowDown' });
+    }
+    if (key === 'ArrowUp' || key === 'ArrowDown') {
+      const liste = navElements(ui.dexOverlay);
+      if (!liste.length) return false;
+      const i = liste.indexOf(navCourant);
+      if (i < 0) { navMarque(liste[0]); return true; }
+      // Nombre de colonnes mesuré sur le vif : la grille est responsive, il
+      // n'y a aucune constante à tenir à jour.
+      let cols = 1;
+      while (cols < liste.length && liste[cols].offsetTop === liste[0].offsetTop) cols++;
+      const j = i + ((key === 'ArrowDown') ? cols : -cols);
+      navMarque(liste[Math.max(0, Math.min(liste.length - 1, j))]);
+      return true;
+    }
+    return navEcran(ui.dexOverlay, ev);
+  }
+
   function renderShopGrid() {
     if (!ui.shopGrid) return;
     ui.shopGrid.innerHTML = '';
@@ -3486,15 +3527,112 @@
   }
 
   // ===========================================================================
+  //  ÉCRAN D'AIDE (touche H)
+  //  Les commandes n'étaient expliquées qu'UNE FOIS, dans le message de
+  //  bienvenue, puis en 11 px tout en bas de l'écran. Un enfant de 10 ans qui
+  //  reprend sa partie trois jours plus tard a oublié la moitié des touches et
+  //  n'a aucun moyen de les revoir. H les rappelle toutes, à toute heure.
+  //  H était libre : aucune autre touche du jeu ne l'utilise (vérifié dans le
+  //  `switch` de game3d.js, dans onBattleKey et dans ce fichier).
+  // ===========================================================================
+
+  const HELP_SECTIONS = [
+    ['🚶 Se déplacer', [
+      ['↑ ↓ ← →', 'marcher (ZQSD ou WASD marchent aussi)'],
+      ['Maj + ← →', 'faire tourner la caméra autour de toi'],
+      ['Molette', 'zoomer et dézoomer'],
+    ]],
+    ['✨ Agir', [
+      ['Espace', 'parler, entrer, valider'],
+      ['Échap', "fermer l'écran ouvert"],
+    ]],
+    ['🔴 Attraper', [
+      ['B', 'lancer une Ball sur la créature en vue'],
+      ['X', 'changer de Ball'],
+      ['F', 'sortir ton compagnon de sa Ball'],
+    ]],
+    ['📖 Tes écrans', [
+      ['E', 'ton équipe : soigner, réorganiser'],
+      ['C', 'le Pokédex'],
+      ['N', 'la carte de la région et du monde'],
+      ['J', 'le journal des légendes'],
+    ]],
+    ['🎈 Voyager et régler', [
+      ['T', "appeler le dirigeable, d'où que tu sois"],
+      ['V', 'changer de vue (dont la vue subjective)'],
+      ['M', 'couper ou remettre le son'],
+      ['H', 'revoir cet écran quand tu veux'],
+    ]],
+  ];
+
+  function buildHelpOverlay() {
+    const ov = el('div', 'overlay hidden', hudRoot);
+    ov.id = 'help-overlay';
+    const frame = el('div', 'help-frame', ov);
+    el('h2', null, frame, '❓ Les commandes');
+    const grid = el('div', 'help-grid', frame);
+    HELP_SECTIONS.forEach(function (sec) {
+      const bloc = el('div', 'help-sec', grid);
+      el('h3', null, bloc, sec[0]);
+      sec[1].forEach(function (row) {
+        const line = el('div', 'help-row', bloc);
+        el('span', 'help-key', line, row[0]);
+        el('span', 'help-txt', line, row[1]);
+      });
+    });
+    el('p', 'help-note', frame,
+      'En vue subjective, ← et → font tourner ton regard, ↑ et ↓ te font avancer et reculer.');
+    el('p', 'hint', frame, 'H · Échap : fermer');
+    const close = el('button', null, frame, 'Fermer');
+    close.type = 'button';
+    close.addEventListener('click', function () { closeHelp(); fakeKey('Escape'); });
+    ov.addEventListener('click', function (ev) {
+      if (ev.target === ov) { closeHelp(); fakeKey('Escape'); }
+    });
+    ui.helpOverlay = ov;
+  }
+
+  function openHelp() {
+    if (!ui.helpOverlay) return;
+    show(ui.helpOverlay);
+    replayAnim(ui.helpOverlay, 'overlay');
+    showCompass(false);
+  }
+
+  function closeHelp() {
+    if (!ui.helpOverlay) return;
+    hide(ui.helpOverlay);
+    showCompass(true);
+  }
+
+  // ===========================================================================
   //  DIVERS : FPS, toasts, bouton muet, astuce de commandes
   // ===========================================================================
+
+  /**
+   * Durée d'affichage d'un toast, en millisecondes.
+   * 2700 ms fixes, c'était réglé pour un adulte qui survole. Robin a 10 ans et
+   * lit lentement : « Il faut y être allé à pied avant ! » disparaissait avant
+   * la fin de la phrase. On compte donc environ 14 caractères par seconde,
+   * avec une base pour l'apparition et la disparition.
+   */
+  function toastDuree(text) {
+    const n = String(text || '').length;
+    return Math.max(2600, Math.min(8000, 1800 + n * 70));
+  }
 
   function toast(text, icon) {
     if (!ui.toasts) return;
     const t = el('div', 'toast', ui.toasts);
     if (icon) el('span', 'toast-icon', t, icon);
     t.appendChild(document.createTextNode(String(text)));
-    setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, 2700);
+    // ⚠️ La durée est écrite DEUX FOIS : ici et dans l'animation CSS
+    // `toast-vie` (css3d/hud3d.css). Les keyframes sont en pourcentages, donc
+    // piloter `animationDuration` suffit à garder les deux d'accord — allonger
+    // seulement le `setTimeout` laisserait un toast invisible à l'écran.
+    const duree = toastDuree(text);
+    t.style.animationDuration = duree + 'ms';
+    setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, duree + 60);
     while (ui.toasts.children.length > 3) ui.toasts.removeChild(ui.toasts.firstChild);
   }
 
@@ -3545,7 +3683,7 @@
   /** Un écran plein est-il ouvert ? (on n'y lance pas de Ball, par exemple) */
   function anyOverlayOpen() {
     const l = [ui.teamOverlay, ui.dexOverlay, ui.mapOverlay, ui.airshipOverlay,
-      ui.shopOverlay, ui.journalOverlay, ui.academyOverlay];
+      ui.shopOverlay, ui.journalOverlay, ui.academyOverlay, ui.helpOverlay];
     for (let i = 0; i < l.length; i++) {
       if (l[i] && !l[i].classList.contains('hidden')) return true;
     }
@@ -3596,6 +3734,29 @@
       }
     }
 
+    // --- la touche H : l'écran d'aide ---------------------------------------
+    // Même schéma que J : le HUD sait l'ouvrir tout seul, mais laisse la main
+    // à game3d quand il est là — lui seul peut poser `state.screen = 'help'`
+    // et relâcher les touches de déplacement, sinon Robin marche derrière.
+    if ((key === 'h' || key === 'H') && !ev.ctrlKey && !ev.altKey && !ev.metaKey) {
+      const cible3 = ev.target;
+      const saisie3 = cible3 && (cible3.tagName === 'INPUT' || cible3.tagName === 'TEXTAREA');
+      const aideOuverte = ui.helpOverlay && !ui.helpOverlay.classList.contains('hidden');
+      if (!saisie3 && (aideOuverte || (!anyOverlayOpen() && !liveBattle))) {
+        if (aideOuverte) { closeHelp(); fakeKey('Escape'); }
+        else if (window.GAME3D && typeof window.GAME3D.help === 'function') {
+          try { window.GAME3D.help(); } catch (e) { openHelp(); }
+        } else { openHelp(); }
+        ev.preventDefault();
+        ev.stopPropagation();
+        return;
+      }
+    }
+
+    if (ui.helpOverlay && !ui.helpOverlay.classList.contains('hidden')) {
+      if (key === 'Escape') { closeHelp(); fakeKey('Escape'); ev.preventDefault(); ev.stopPropagation(); }
+      return;
+    }
     if (ui.shopOverlay && !ui.shopOverlay.classList.contains('hidden')) {
       if (key === 'Escape') { closeShop(); ev.preventDefault(); ev.stopPropagation(); return; }
       // Tab bascule Acheter / Vendre, comme les onglets à la souris.
@@ -3640,7 +3801,8 @@
       return;
     }
     if (ui.dexOverlay && !ui.dexOverlay.classList.contains('hidden')) {
-      if (key === 'Escape') { closeDex(); fakeKey('Escape'); }
+      if (key === 'Escape') { closeDex(); fakeKey('Escape'); return; }
+      if (dexNavKey(ev)) { ev.preventDefault(); ev.stopPropagation(); }
       return;
     }
     if (ui.mapOverlay && !ui.mapOverlay.classList.contains('hidden')) {
@@ -3718,6 +3880,10 @@
 
     openJournal: openJournal,
     closeJournal: closeJournal,
+
+    // écran d'aide (touche H)
+    openHelp: openHelp,
+    closeHelp: closeHelp,
 
     showEvolution: showEvolution,
     evolutionBusy: evolutionBusy,

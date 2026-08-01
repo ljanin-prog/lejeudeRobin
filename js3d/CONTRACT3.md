@@ -793,3 +793,66 @@ constaté. Les **données** sont vérifiées pour les 6 régions (chaque repère
 tuile `HEAL_DOOR` / `ARENA_DOOR` / `ACADEMY_DOOR`, toutes marchables, et les bâtiments sont
 posés sur le terrain : 19 tuiles de décor `healCenter` à Ambrelune, 48 pour son arène, 119
 pour l'Académie). Le placement visuel des marqueurs, lui, reste à confirmer en jeu.
+
+---
+
+## 19. CONFORT D'USAGE — 2026-08-01 (correction 2.7)
+
+### 19.1 La touche `H` et l'écran d'aide
+
+Les commandes n'étaient dites qu'**une seule fois**, dans le message de bienvenue, puis
+rappelées en 11 px tout en bas de l'écran. Un enfant qui reprend sa partie trois jours plus
+tard n'avait aucun moyen de les revoir. `H` ouvre désormais un overlay qui les liste toutes.
+
+- **`H` était libre** : vérifié dans le `switch` de `game3d.js`, dans `onBattleKey`, dans
+  `hud3d.onGlobalKeydown` et dans le gestionnaire de vol d'`airship3d.js`.
+- **`HELP_SECTIONS` (hud3d.js) est la LISTE DE RÉFÉRENCE des commandes.** Toute touche
+  ajoutée au jeu doit y être ajoutée, ainsi que dans `#controls-hint` (index3d.html) et dans
+  le commentaire d'en-tête du §3 de `game3d.js`. Trois endroits, pas quatre.
+- Circuit identique à celui de `J` : le HUD capte la touche mais passe la main à
+  `window.GAME3D.help()` quand game3d est là — **lui seul** peut poser
+  `state.screen = 'help'` et appeler `releaseAllKeys()`. Sans ça, l'écran s'ouvre et Robin
+  continue de marcher derrière. `'help'` est ajouté aux deux listes de `closeOverlays()` et
+  au garde d'Échap de `onKeyDown`. `state.screen` n'est pas sauvegardé : rien à migrer.
+- L'overlay est ajouté à `anyOverlayOpen()`, sinon `B`, `X` et `J` resteraient actifs
+  par-dessus.
+- Repli sans HUD : `openHelpScreen()` affiche les commandes en boîte de dialogue.
+
+### 19.2 Le Pokédex se pilote au clavier
+
+C'était le seul grand écran à n'accepter que la souris. Les cartes portent maintenant
+`data-nav`, et `navReset(ui.dexOverlay)` est appelé à chaque reconstruction de la grille
+(ouverture, changement de filtre) — **`navCourant` est une variable globale partagée par
+tous les écrans**, sans ce reset le Pokédex héritait du curseur de la Boutique.
+
+Attention à l'ordre dans `openDex()` : `navElements()` écarte tout ce qui est invisible
+(`offsetParent === null`), donc le reset doit venir **après** `show()`.
+
+`dexNavKey(ev)` traduit les touches avant de les passer à `navEcran` : le Pokédex est une
+grille, pas une liste. `←/→` passent à la carte voisine, `↑/↓` sautent une **ligne**
+entière (nombre de colonnes mesuré sur le vif d'après `offsetTop`, la grille étant
+responsive). Sans cette traduction, `navEcran` aurait cherché `navCourant._moins/._plus`
+— la mécanique de quantité de la Boutique — et les flèches horizontales auraient été
+consommées sans rien faire.
+
+### 19.3 Les toasts durent le temps qu'on met à les lire
+
+2700 ms fixes, c'était réglé pour un adulte qui survole. `toastDuree(text)` rend
+`1800 + 70 ms par caractère`, borné à [2600, 8000] ms.
+
+**PIÈGE, à ne pas défaire** : la durée est écrite **deux fois**, dans le `setTimeout` de
+`toast()` et dans l'animation CSS `toast-vie`. Les keyframes étant en pourcentages, on
+pilote `t.style.animationDuration` en JS et le CSS ne porte plus qu'une durée de repli.
+Allonger seulement le `setTimeout` laisserait un toast **invisible** (opacité 0) pendant
+tout le temps ajouté.
+
+Au passage : le bloc `prefers-reduced-motion` écrasait la durée à `.01 ms`, ce qui, avec un
+`animation-fill-mode: both` finissant à `opacity: 0`, rendait les toasts **totalement
+invisibles** pour qui a désactivé les animations. `.toast` y est désormais exclu
+(`animation: none`), et c'est le `setTimeout` qui le retire.
+
+### 19.4 Planchers de police
+
+Relevés pour un lecteur de 10 ans : `#controls-hint` 11 → 13 px, `.wn-sub` (sous-titre des
+régions, où s'écrit l'avertissement de niveau du dirigeable) 10 → 12 px, `.map-legend`
+11 → 12 px, `.mk-label` 10,5 → 11,5 px. Tout l'écran d'aide est à 13 px minimum.
