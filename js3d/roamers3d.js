@@ -25,19 +25,31 @@
 //      étant chargée à la fois).
 //    - Le légendaire s'active quand le joueur s'approche à moins de 42 tuiles
 //      de son autel (assez loin pour qu'on le voie venir grâce à son aura).
-//    - S'il n'est ni capturé ni vaincu (remove() jamais appelé) dans les 90
-//      secondes qui suivent, il fuit tout seul : il disparaît de list() et son
-//      autel entre en repos pendant 10 minutes de jeu (LEGEND_COOLDOWN_S)
-//      avant de pouvoir proposer un nouveau légendaire — le sien ou un autre.
-//    - Capturé ou vaincu (remove() appelé par game3d après un combat gagné ou
-//      une capture), même cooldown : on ne fait pas réapparaître un légendaire
-//      qu'on vient d'attraper sous le nez du joueur.
+//    - Il s'annonce, et il prévient qu'il s'en va : TROIS toasts jalonnent sa
+//      visite — « X est apparu à son autel ! » (activateLegendary), « X
+//      s'apprête à repartir ! » 20 s avant la fin, « X est reparti… » (fuite).
+//      Sans eux, la limite de 90 secondes était invisible.
+//    - DEUX DURÉES DE REPOS, et une seule règle pour les départager : le
+//      cooldown court ne sert qu'à ne pas PUNIR une issue de combat.
+//        · LEGEND_COOLDOWN_S (600 s) — l'affaire est classée. Trois cas :
+//          'caught' et 'defeated' (remove() appelé par game3d après une capture
+//          ou un combat gagné : on ne le fait pas réapparaître sous le nez du
+//          joueur), et la fuite spontanée de fleeLegendary() (personne n'est
+//          venu au bout de 90 s : rien à adoucir, et un cooldown court y
+//          rejouerait les trois toasts en boucle toutes les 3 min 30).
+//        · LEGEND_RETRY_S (120 s) — le combat s'est mal terminé : défaite,
+//          fuite du combat, lancer abandonné ('battle', 'fled', raison omise).
+//          `startRoamerBattle()` retire le légendaire AVANT le combat, quand on
+//          ne sait encore rien de son issue : c'est le DÉFAUT de remove(), et
+//          game3d remonte à 600 s via setLegendCooldown() si ça finit bien.
+//      Voir aussi CONTRACT2 §16, et `remove()` plus bas pour le détail.
 //
 //  DÉPENDANCES — TOUTES FACULTATIVES (dégradation gracieuse obligatoire) :
 //    R3.get('regions')  -> tuiles, marchabilité, biomes, autels de légendaire.
 //                          Absent : aucun roamer n'est posé, le monde reste
 //                          jouable (list() renvoie toujours [], throwBall()
-//                          répond 'escaped' proprement).
+//                          répond 'fled' proprement — le lancer n'a pas eu
+//                          lieu, game3d rend la Ball au sac).
 //    R3.get('dex')      -> quelles espèces vivent sur quel biome / région.
 //    R3.get('llib')     -> aura des légendaires (sinon : pas d'aura, juste un
 //                          modèle un peu plus grand si c'est un repli).
@@ -161,10 +173,14 @@
   var LEGEND_ACTIVATE_DIST = 42;     // tuiles : distance à laquelle l'autel s'anime
   var LEGEND_FLEE_S = 90;            // fuite si pas affronté (§16, à la lettre)
   var LEGEND_WARN_S = 20;            // « il s'apprête à repartir ! » : 20 s avant la fuite
-  var LEGEND_COOLDOWN_S = 600;       // 10 min : il est CAPTURÉ, son autel se repose
-  // Il est reparti, ou le combat s'est mal terminé : on peut retenter vite.
-  // Attendre 10 minutes réelles après une défaite serait une double punition,
-  // et le jeu n'est jamais punitif (correction 2.3).
+  var LEGEND_COOLDOWN_S = 600;       // 10 min : l'affaire est classée (capturé,
+                                     // vaincu, ou reparti sans que personne vienne)
+  // LE COMBAT s'est mal terminé (défaite, fuite, abandon du lancer) : on peut
+  // retenter vite. Attendre 10 minutes réelles après une défaite serait une
+  // double punition, et le jeu n'est jamais punitif (correction 2.3).
+  // ⚠️ NE PAS l'appliquer à `fleeLegendary()` : là personne n'est venu, il n'y
+  // a rien à adoucir, et 2 min transformaient les trois toasts du gardien en
+  // boucle de notifications toutes les trois minutes et demie.
   var LEGEND_RETRY_S = 120;
 
   var ENCOUNTER_DIST = 0.62;         // unités monde : « touche » le joueur
@@ -479,16 +495,21 @@
     toast(ro._nom + ' est apparu à son autel ! Vite, il ne restera pas longtemps…', '✨');
   }
 
-  /** Le légendaire repart de lui-même : personne ne l'a affronté. Ce n'est PAS
-   *  une capture, l'autel ne se repose donc que `LEGEND_RETRY_S` (2 min) et on
-   *  le dit — un autel vide sans explication, c'est une punition gratuite. */
+  /** Le légendaire repart de lui-même : PERSONNE n'est venu le voir.
+   *  Ici l'autel se repose `LEGEND_COOLDOWN_S` (10 min), pas le cooldown court :
+   *  il n'y a aucune punition à ne pas adoucir, Robin n'a rien perdu. À 2 min,
+   *  la boucle « apparu → s'apprête à repartir → reparti » se rejouait toutes
+   *  les trois minutes et demie tant qu'il traînait à 42 tuiles de l'autel :
+   *  trois bandeaux en rafale, en boucle, sans que personne l'ait demandé.
+   *  Le cooldown court reste réservé aux issues de COMBAT (voir `remove()`).
+   *  On le dit quand même — un autel vide sans explication, c'est déroutant. */
   function fleeLegendary(t) {
     if (!_legendary) return;
     var altarId = _legendary._altarId;
     var nom = _legendary._nom;
     removeInternal(_legendary);       // remet déjà les PNJ au calme
-    _legendCooldowns[altarId] = t + LEGEND_RETRY_S;
-    toast(nom + ' est reparti… Reviens le voir à son autel dans un moment !', '💨');
+    _legendCooldowns[altarId] = t + LEGEND_COOLDOWN_S;
+    toast(nom + ' est reparti… Reviens le voir à son autel plus tard !', '💨');
   }
 
   function updateLegendary(t, px, pz) {
@@ -736,7 +757,11 @@
 
   function throwBall(roamer, chance, cb) {
     if (!_scene || !THREE_OK || !_ball || !roamer || roamer._ball) {
-      if (cb) { try { cb('escaped'); } catch (e) { warn('callback throwBall (repli)', e); } }
+      // 'fled', PAS 'escaped' : aucune Ball n'a volé. `escaped` fait dire à
+      // game3d « Oh non… elle s'est échappée ! » et lui fait GARDER la Ball,
+      // alors que Robin n'a rien vu partir — il perdait un objet parce qu'un
+      // module manquait. 'fled' = le lancer n'a pas eu lieu, on rend la Ball.
+      if (cb) { try { cb('fled'); } catch (e) { warn('callback throwBall (repli)', e); } }
       return;
     }
     if (_ballAnim && _ballAnim.active) {
