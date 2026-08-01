@@ -2104,25 +2104,31 @@
     sfx('throwBall');
     markSeen(target.speciesId);
 
-    if (!ro || !ro.throwBall) { state.throwing = false; return; }
+    // Aucune Ball n'a volé : on la remet dans le sac. Un enfant ne doit jamais
+    // perdre un objet parce qu'un module manque ou qu'un lancer a été annulé.
+    const rendreBall = function () {
+      state.items[ballId] = (state.items[ballId] | 0) + 1;
+      ensureActiveBall();
+      refreshHudCounters();
+    };
+
+    if (!ro || !ro.throwBall) { state.throwing = false; rendreBall(); return; }
     safeCall('roamers.throwBall', function () {
       ro.throwBall(target, chance, function (result) {
         state.throwing = false;
         if (result === 'caught') { onCaught(target.speciesId, target.level || 5, target); return; }
         if (result === 'fled') {
           // Lancer ABANDONNÉ (changement de région en plein vol, ou second
-          // lancer refusé) : aucune Ball n'a volé, on la rend et on se tait.
-          // Annoncer un échec à un enfant qui n'a rien vu serait injuste.
-          state.items[ballId] = (state.items[ballId] | 0) + 1;
-          ensureActiveBall();
-          refreshHudCounters();
+          // lancer refusé) : on rend la Ball et on se tait. Annoncer un échec
+          // à un enfant qui n'a rien vu serait injuste.
+          rendreBall();
           return;
         }
         sfx('escape');
         showToast('Oh non… elle s\'est échappée !', '💨');
       });
     });
-    if (_broken['roamers.throwBall']) state.throwing = false;
+    if (_broken['roamers.throwBall']) { state.throwing = false; rendreBall(); }
   }
 
   /** Capture réussie (monde ouvert OU combat) : équipe, collection, sauvegarde. */
