@@ -685,6 +685,11 @@ html, body {
   left: 12px;
   padding: 4px 10px;
   font-size: 12px;
+  /* Trois lignes depuis le chantier 2.9 (images, dessins, triangles) : `pre`
+     respecte les retours à la ligne du texte ET empêche « 94 300 triangles »
+     de se couper en deux au milieu du nombre. */
+  white-space: pre;
+  line-height: 1.35;
   font-variant-numeric: tabular-nums;
   color: var(--vert-clair);
   background: rgba(13, 16, 32, .72);

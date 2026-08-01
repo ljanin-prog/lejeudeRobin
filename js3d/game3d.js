@@ -547,7 +547,7 @@
 
   // ===========================================================================
   //  3. ENTRÉES CLAVIER (§19)
-  //     Flèches/ZQSD · Espace · B · X · F · E · C · J · N · T · V · H
+  //     Flèches/ZQSD · Espace · B · X · F · E · C · J · N · T · V · H · P
   //     · Shift+←/→ · M · Échap
   //     H ouvre l'écran d'aide : c'est LA liste de référence des commandes,
   //     tenue dans `HELP_SECTIONS` de hud3d.js. Toute touche ajoutée ici doit
@@ -667,6 +667,11 @@
         e.preventDefault(); callAirship(); break;
       case 'm': case 'M':
         e.preventDefault(); toggleMute(); break;
+      case 'p': case 'P':
+        // Le compteur de performance. Il existait mais n'avait AUCUNE porte
+        // d'entrée : il fallait taper `index3d.html#fps` dans la barre
+        // d'adresse. Un clic dessus le referme aussi.
+        e.preventDefault(); call('hud', 'toggleFps', []); break;
       case 'h': case 'H':
         // Rappel des commandes. Le HUD ouvre l'écran lui-même sur `H` (comme
         // pour `J`) : on ne prend le relais que s'il n'est pas là.
@@ -3943,11 +3948,34 @@
       fpsDisplayTimer = 0;
       const hud = mod('hud');
       if (hud && hud.setFps) {
-        safeCall('hud.setFps', function () {
-          hud.setFps(Math.round(fpsAvg) + ' fps · ' + workAvg.toFixed(1) + ' ms');
-        });
+        safeCall('hud.setFps', function () { hud.setFps(perfText()); });
       }
     }
+  }
+
+  /** 94300 -> « 94 300 » : à trois chiffres près, un enfant ne lit plus rien. */
+  function milliers(n) {
+    return String(Math.round(n) || 0).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  }
+
+  /**
+   * Le texte du compteur de performance (touche P) — TROIS lignes :
+   *    60 fps · 4.2 ms
+   *    128 dessins
+   *    94 300 triangles
+   * Les deux dernières viennent de `renderer.info.render`, que Three.js remet à
+   * zéro au début de chaque `render()`. Comme `measurePerf()` est appelé APRÈS
+   * le rendu de l'image (frame -> tickGame -> render, puis measurePerf), les
+   * chiffres décrivent bien l'image qu'on vient de voir — y compris en combat,
+   * où battle3d dessine sur le MÊME renderer.
+   * Sans ces deux nombres, « ça rame » n'a aucune cause visible : c'est ce qui
+   * permet à Robin de mesurer lui-même l'effet d'un réglage.
+   */
+  function perfText() {
+    const ligne1 = Math.round(fpsAvg) + ' fps · ' + workAvg.toFixed(1) + ' ms';
+    const r = (renderer && renderer.info) ? renderer.info.render : null;
+    if (!r) return ligne1;
+    return ligne1 + '\n' + milliers(r.calls) + ' dessins\n' + milliers(r.triangles) + ' triangles';
   }
 
   function applyQuality(level, choixManuel) {

@@ -3661,6 +3661,7 @@
       ['T', "appeler le dirigeable, d'où que tu sois"],
       ['V', 'changer de vue (dont la vue subjective)'],
       ['M', 'couper ou remettre le son'],
+      ['P', 'le compteur de vitesse (images, dessins, triangles)'],
       ['H', 'revoir cet écran quand tu veux'],
     ]],
   ];

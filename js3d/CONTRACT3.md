@@ -943,3 +943,55 @@ tomberait sur l'atterrissage, et les trois blips se colleraient au son du lancer
   absent, c'est-à-dire si le jeu est déjà cassé.
 - `levelUp` et `catch_`, cités par l'ancienne chaîne de repli de roamers3d, n'ont pas été
   créés : plus personne ne les demande. Une montée de niveau reste sans bruitage propre.
+
+---
+
+## 21. LE COMPTEUR DE PERFORMANCE — touche `P` *(2026-08-01, correction 2.9)*
+
+Le compteur n'affichait que `60 fps · 4.2 ms`, et n'était atteignable qu'en tapant
+`index3d.html#fps` dans la barre d'adresse. Autant dire qu'il n'existait pas : « ça rame »
+n'avait aucune cause visible, et aucune optimisation future n'était mesurable.
+
+### 21.1 Trois lignes, et une porte d'entrée
+
+`perfText()` (game3d.js, à côté de `measurePerf`) compose :
+
+```
+60 fps · 4.2 ms
+128 dessins
+94 300 triangles
+```
+
+- Les deux dernières lignes viennent de **`renderer.info.render.calls` et `.triangles`**,
+  l'API standard de `THREE.WebGLRenderer`. Three.js les remet à zéro au début de chaque
+  `render()`. **L'ordre joue en notre faveur** : `frame()` appelle `tickGame()`, qui rend,
+  PUIS `measurePerf()` — les chiffres décrivent donc l'image qu'on vient de voir. En
+  combat c'est `battle.render(renderer)` qui dessine, sur le MÊME renderer : toujours bon.
+- **Touche `P`** en monde ouvert : `hud.toggleFps()`. La fonction existait déjà et
+  n'était branchée à rien. Un clic sur le badge le referme (comportement d'origine).
+- Le texte contient des `\n` : `.fps-counter` est passé en `white-space: pre`. Ne pas
+  revenir à `normal`, « 94 300 triangles » se couperait au milieu du nombre.
+- Repère utile à Robin : le budget du contrat v1 est de **moins de 200 dessins** avec
+  tout le monde visible.
+
+### 21.2 Le cache des couleurs de sol de `world3d.js`
+
+`sampleGroundColor()` faisait `_sampleColor.set(st.ground)` — décoder une chaîne
+`'#63b846'` — à chaque sommet. Un chunk fait 65×65 sommets et en échantillonne 1, 2 ou 4
+chacun : **~9 500 analyses de chaîne par chunk**, et le monde en construit jusqu'à deux
+par image, pour un budget total de 14 ms. Mesuré sous Node sur le vrai `three.min.js` :
+**6,3 ms par chunk avant, 0,07 ms après** — soit jusqu'à 12 ms par image rendus au
+streaming, la moitié du budget.
+
+- Le cache est un objet `type → THREE.Color` (`_groundColors`), rempli à la demande. Même
+  motif que `water3d.js`, qui pré-calcule `_deep` / `_shallow` au chargement.
+- **La `THREE.Color` renvoyée est PARTAGÉE : on la LIT, on ne la mute JAMAIS.**
+  `out[0] = c.r * v` est sûr ; un `c.multiplyScalar(v)` teindrait toutes les tuiles du
+  même type. C'est pour cela que le scratch `_sampleColor` a été supprimé plutôt que
+  gardé : il invitait à la faute.
+- Clé = le TYPE de tuile, pas la chaîne : sans danger, car personne ne remplace le style
+  d'un type déjà connu (`cities3d` et `regions3d` n'ajoutent que des clés absentes,
+  `tiles3d` réécrit la table au chargement, avant toute construction de chunk).
+- Restent non mis en cache, volontairement, parce qu'ils sont froids : le
+  `new THREE.Color('#1b2c62')` de la jupe d'océan (une fois par région) et les
+  `new THREE.Color(roofColor)` des prototypes de maison (une fois par prototype).
