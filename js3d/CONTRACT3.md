@@ -924,6 +924,18 @@ En oublier une, c'est un jeu qu'on croit muet et qui continue de faire du bruit.
 `Audio_.isMuted()` reste **la vérité unique** de l'état muet (le HUD et le bouton la
 lisent) ; les deux autres modules ne font que suivre.
 
+### 20.4 Les secousses de la Pokéball ne sont plus muettes
+
+Le moment le plus tendu du jeu — les trois balancements de la Ball, entre 600 et 1800 ms —
+ne faisait aucun bruit, alors que le jeu 2D le sonorise (`js/game.js` l.558). Corrigé des
+**deux** côtés, `battle3d.js` (combat) et `roamers3d.js` (monde ouvert), avec exactement la
+règle du 2D : un `sfx('shake')` quand l'indice de secousse change **et qu'il est > 0**.
+
+`idx === 0`, c'est l'atterrissage : il est déjà occupé par le son du lancer et par
+l'aspiration. On entend donc **deux** « clac » avant le verdict, aux mêmes instants que les
+deux gerbes d'étincelles. Ne pas « corriger » cela en passant à `idx >= 0` : le son
+tomberait sur l'atterrissage, et les trois blips se colleraient au son du lancer.
+
 ### 20.5 Ce qui reste muet, volontairement
 
 - Le repli de `hud3d.js` (~l.1826) qui appelle `shop.useFrom()` directement quand

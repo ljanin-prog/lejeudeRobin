@@ -116,6 +116,26 @@
   };
   function arena(b) { return ARENA[b] || ARENA.plain; }
 
+  /**
+   * Un bruitage, jamais bloquant. Deux catalogues dans cet ordre : l'extension
+   * `js3d/sfx3d.js` (sons propres à la 3D), puis les neuf sons de `js/audio.js`,
+   * que le contrat gèle. Même helper que dans game3d.js et roamers3d.js.
+   *
+   * Ce module n'avait AUCUN accès à l'audio : toute la mise en scène du combat
+   * était sonorisée depuis game3d.js, qui ne connaît pas le détail des
+   * animations. C'est pour ça que les secousses de la Pokéball, dont lui seul
+   * ici connaît le rythme, étaient muettes.
+   */
+  function sfx(name) {
+    try {
+      const s = R3.get('sfx');
+      if (s && s.play && s.play(name)) return;
+    } catch (e) { /* extension indisponible : on tente le catalogue d'origine */ }
+    try {
+      if (typeof Audio_ !== 'undefined' && Audio_.sfx && Audio_.sfx[name]) Audio_.sfx[name]();
+    } catch (e) { /* audio indisponible : le jeu continue */ }
+  }
+
   // ---------------------------------------------------------------------------
   //  Cache de géométries propres à ce module.
   //  Elles sont marquées `shared` pour que R3.disposeTree() ne les libère pas :
@@ -2991,6 +3011,10 @@
         if (idx > 0) {
           fxSparks(new THREE.Vector3(ballRest.x, ballRest.y + 0.12, ballRest.z), 5, '#ffe27a', 0.9);
           setBallLit(ball, true);
+          // Le moment le plus tendu du jeu était MUET. Un « clac » par secousse,
+          // comme dans le jeu 2D. Sur `idx > 0` seulement, comme les étincelles :
+          // `idx === 0` est l'atterrissage, déjà occupé par le son du lancer.
+          sfx('shake');
         }
       }
       // Secousse : 300 ms de balancement, 100 ms de repos, direction alternée.

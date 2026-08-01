@@ -854,7 +854,11 @@
       var sp = st % 400;
       if (idx !== A.lastShakeIdx) {
         A.lastShakeIdx = idx;
-        if (idx > 0) fxSparkle(A.to, '#ffe27a', 6);
+        // Le moment le plus tendu du jeu était MUET. Un « clac » par secousse,
+        // comme dans le jeu 2D : la Ball qui remue sans un bruit ne fait
+        // attendre personne. Sur `idx > 0` seulement, comme les étincelles —
+        // `idx === 0` est l'atterrissage, déjà occupé par le son du lancer.
+        if (idx > 0) { fxSparkle(A.to, '#ffe27a', 6); sfx('shake'); }
       }
       var tilt = 0, hop = 0;
       if (sp < 300) {
