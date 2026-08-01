@@ -1,0 +1,726 @@
+[
+ {
+  "domaine": "Game design jeunesse — fun, boucle de jeu, rythme des récompenses et jouabilité (version 3D)",
+  "constats": [
+   "La boucle de jeu est complète et lisible : créatures visibles sur la carte (roamers3d.js) → capture à la touche B ou combat à Espace → XP/argent → badge d'arène → ouverture du sanctuaire → 6 légendaires par région, avec un journal (touche J) qui donne toujours l'indice suivant (quest3d.js, hint()).",
+   "La philosophie « jamais punitif » est appliquée partout et c'est une vraie force : défaite = équipe soignée gratuitement sans perte d'argent (game3d.js onPlayerFainted, shop3d.js penaltyFor=0), évolution = PV remplis (evolve3d.js), taux de capture généreux bornés 3–97 % (team3d.js catchChance), niveaux des créatures sauvages bornés par région (roamers3d.js roamerLevel, correctif REGION_LEVELS).",
+   "La courbe de difficulté des arènes est soignée : caps 12/20/28/36/45/55, dresseurs toujours sous le champion, légendaires dans les 3 dernières équipes, et des dialogues de défaite qui donnent un conseil concret (arenas3d.js, dialogLose de chaque champion) — écriture remarquable pour un enfant.",
+   "La carte de région (hud3d.js drawRegionMap, ~l.2478) affiche portes, ville, arène, Centre, Académie et port aérien, mais NI les sanctuaires NI les autels de légendaires — alors que quest3d.js expose déjà sanctuaries() avec icône ⛩️ et couleur, et que regions3d fournit region.altars. Trouver 6 autels sur une carte de 384×224 tuiles repose uniquement sur des indices textuels.",
+   "Un légendaire engagé en combat est retiré de la carte (game3d.js startRoamerBattle → roamers.remove), et remove() applique TOUJOURS un cooldown de 10 minutes réelles (roamers3d.js LEGEND_COOLDOWN_S=600), même si Robin PERD le combat ou fuit. Il fuit aussi après 90 s (LEGEND_FLEE_S) sans aucun signal visible du temps restant.",
+   "La capture — pourtant la boucle préférée de Robin, les rencontres surprises ayant été volontairement coupées (ENCOUNTER_CHANCE=0) — ne rapporte ni XP ni argent (game3d.js onCaught/onCaughtInBattle), et le message est identique pour la 1re capture d'une espèce et pour le 15e doublon : aucun moment « Nouvelle espèce ! » dans tout le code.",
+   "La Ball Maîtresse est plafonnée à 97 % de réussite (team3d.js catchChance, clamp 0.03–0.97 avec bonus 99) alors que sa description promet « Elle ne rate jamais » (shop3d.js) et qu'on n'en gagne que deux dans tout le jeu (quêtes 1 et 6).",
+   "Les 24 dresseurs et les 6 champions ne sont affrontables qu'une seule fois (state.defeatedTrainers, state.badges) : une fois les 6 quêtes finies, il ne reste que la collection ; le dirigeable (touche T) ouvre les 6 régions dès la première minute, avec seulement la mention « Région encore inconnue » en sous-titre."
+  ],
+  "recommandations": [
+   {
+    "titre": "Afficher les sanctuaires et les autels de légendaires sur la carte de région",
+    "detail": "C'est le plus gros mur de frustration du jeu actuel : la quête dit « cherche leurs autels » mais la carte (hud3d.js, drawRegionMap ~l.2463-2506) ne les montre pas, sur une région de 384×224 tuiles. Tout existe déjà côté données : quest3d.js expose sanctuaries() ({x, y, name, open, icon:'⛩️', color}) et regions3d fournit region.altars. Ajouter dans drawRegionMap : si quest.sanctuary(regionId).open, un marqueur ⛩️ nommé (classe 'nomme', comme les repères de cities.beacons()), et un petit marqueur ✦ par autel une fois le sanctuaire ouvert. Les afficher seulement après ouverture préserve le mystère de la légende tout en supprimant l'errance. C'est exactement le bug d'expérience déjà vécu avec l'Académie que Robin ne trouvait pas (CONTRACT3 §18.3).",
+    "impact": "fort",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/hud3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/quest3d.js"
+    ]
+   },
+   {
+    "titre": "Ne pas punir une défaite contre un légendaire par 10 minutes d'absence",
+    "detail": "game3d.js (startRoamerBattle, ~l.2218) appelle roamers.remove(roamer) dès le DÉBUT du combat, et roamers3d.js remove() (~l.500) pose systématiquement _legendCooldowns = t + 600 s. Résultat : Robin perd contre le dragon de glace → l'autel reste vide 10 minutes réelles, sans explication. Pour un enfant, c'est une double punition (défaite + attente) qui contredit la philosophie du jeu. Correctif : passer une raison à remove() (ou exposer roamers.releaseLegend(altarId)) — cooldown long seulement si 'caught', cooldown court (~20 s) ou nul si le combat s'est terminé par 'lose', 'fled' ou si le joueur a fui. Le légendaire « t'attend, reprends des forces » : c'est une histoire bien plus encourageante.",
+    "impact": "fort",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/roamers3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/game3d.js"
+    ]
+   },
+   {
+    "titre": "Fêter la première capture d'une espèce (« Nouvelle espèce ! »)",
+    "detail": "Dans onCaught() et onCaughtInBattle() (game3d.js ~l.2114 et ~l.2804), le message est le même que l'espèce soit nouvelle ou déjà capturée 15 fois. Or state.collection[speciesId] permet de le savoir en une ligne (valeur absente = première fois). Ajouter : un texte distinct « ✨ Nouvelle espèce ! Feuillou rejoint ton Pokédex (12/62) », un son 'rare' au lieu de 'catch', et idéalement une petite pluie d'étoiles supplémentaire (fxStarsBurst existe déjà dans roamers3d.js). Le compteur x/62 affiché à chaque nouveauté transforme la collection en objectif vivant — c'est le moteur n°1 de rejouabilité d'un jeu de capture, et il est aujourd'hui silencieux.",
+    "impact": "fort",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/game3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/hud3d.js"
+    ]
+   },
+   {
+    "titre": "Récompenser la capture par un peu d'XP (et quelques pièces)",
+    "detail": "La capture en monde ouvert est LA boucle voulue par Robin (les rencontres surprises ont été coupées exprès, ENCOUNTER_CHANCE=0), mais elle ne fait rien progresser : ni XP ni argent (onCaught, game3d.js). Un enfant qui joue « attrapeur » plutôt que « bagarreur » arrive donc à l'arène avec une équipe trop faible — mur invisible. Ajouter dans onCaught() un gain modeste : team.gainXp(activeMon(), Math.round(team.xpFor(fauxMon)/2)) et ~2×niveau pièces (shop.addMoney existe). La ligne « +34 XP pour Miaouche ! » dans le message de capture suffit. Le combat reste plus rentable (il donne le plein tarif), mais capturer ne laisse plus l'équipe sur place.",
+    "impact": "fort",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/game3d.js"
+    ]
+   },
+   {
+    "titre": "Tenir la promesse de la Ball Maîtresse : 100 %, vraiment",
+    "detail": "shop3d.js la décrit comme « Elle ne rate jamais » et quest3d.js la présente comme récompense d'exception (« Garde-la pour une légende qui te tient vraiment à cœur »), mais team3d.js catchChance (~l.611) borne toute capture à 0.97 : avec le bonus 99 de la Ball Maîtresse, il reste 3 % d'échec. Un enfant qui garde sa Ball unique pendant des heures pour SON légendaire et la voit rater (puis, cumulé avec le point 2, voit le légendaire disparaître 10 minutes) vivrait la pire trahison du jeu. Correctif d'une ligne : if (bonus >= 99) return 1; avant le clamp. Le mensonge à un enfant est explicitement ce que le projet s'interdit (commentaire de shop3d.js sur les pierres).",
+    "impact": "moyen",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/team3d.js"
+    ]
+   },
+   {
+    "titre": "Rendre visible le compte à rebours de fuite du légendaire (90 s)",
+    "detail": "roamers3d.js : LEGEND_FLEE_S = 90 fait fuir le légendaire sans aucun avertissement — pour le joueur, il disparaît « par magie » pendant qu'il fouille son sac ou lit un toast. Deux ajouts simples : (1) un toast au moment de l'activation (« ✨ Sylvaros est apparu au Sanctuaire ! Il ne restera pas longtemps… ») via R3.get('hud').toast — le hook existe déjà pour le son ; (2) à ~20 s de la fin, un second toast « Il s'apprête à repartir ! » et/ou faire pulser son aura plus vite (LL.animateAura est appelée chaque frame, _spawnT est connu). L'urgence devient un moment d'excitation au lieu d'une déception incompréhensible.",
+    "impact": "moyen",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/roamers3d.js"
+    ]
+   },
+   {
+    "titre": "Afficher un « objectif du moment » permanent sur le HUD",
+    "detail": "Le journal (J) est excellent mais il faut penser à l'ouvrir. quest3d.js hint(regionId) renvoie déjà LA phrase d'objectif de la région courante, dans le bon état (« Bats Sylvain à l'arène… », « Le sanctuaire t'attend au sud… »). Ajouter une ligne discrète sous la boussole du HUD (hud3d.js setCompass est rafraîchi à chaque pas via refreshCompass, game3d.js ~l.746) : icône du badge + hint tronqué, cliquable pour ouvrir le journal. Un enfant de 10 ans qui reprend sa partie après 3 jours sait immédiatement quoi faire — c'est le critère « l'enfant sait-il toujours quoi faire ensuite », aujourd'hui dépendant de sa mémoire.",
+    "impact": "moyen",
+    "effort": "moyen",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/hud3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/game3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/quest3d.js"
+    ]
+   },
+   {
+    "titre": "Revanche à l'arène : un combat spécial rejouable après le badge",
+    "detail": "Aujourd'hui, retourner à l'arène après victoire affiche seulement « Tu as déjà gagné ce badge ! » (game3d.js challengeChampion, ~l.2343), et les 24 dresseurs sont épuisables (state.defeatedTrainers). Après les 6 quêtes, il ne reste plus aucun combat scénarisé — la rejouabilité retombe sur la seule collection. La demande n°6 de Robin parlait pourtant d'arènes « pour les combats spéciaux ». Proposition contenue : quand le badge est gagné, ARENA_DOOR propose « Revanche amicale ? » — même équipe du champion à +6 niveaux (team3d.create accepte n'importe quel niveau, il suffit de mapper ch.team dans makeBattle avec un offset), récompense d'argent normale, pas de nouveau badge. Les dialogues de revanche peuvent être courts (2 lignes par champion). Cela recycle 100 % de l'existant et donne un « endgame » aux enfants qui aiment se battre.",
+    "impact": "moyen",
+    "effort": "moyen",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/arenas3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/game3d.js"
+    ]
+   },
+   {
+    "titre": "Avertir gentiment avant un voyage vers une région trop forte",
+    "detail": "Le dirigeable ouvre volontairement les 6 régions dès le début (airshipOptions, game3d.js ~l.1875 — bon choix contre le blocage), mais un enfant de niveau 8 peut débarquer au Plateau d'Aurore où les créatures sauvages sont niveau ~44 et les dresseurs 44-48 sans possibilité de fuite (canFlee:false). La défaite n'est pas punitive, mais enchaîner des K.O. incompréhensibles est décourageant. Les données existent déjà : chaque option porte level (recommendedLevel) et le niveau max de l'équipe est trivial à calculer. Dans le menu du dirigeable (hud3d.js openAirshipMenu), colorer la destination et ajouter une ligne « Conseillé : Nv 45 — ton équipe : Nv 12 ⚠️ », plus une confirmation « Tu es sûr ? Les créatures y sont très fortes ! » quand l'écart dépasse ~10 niveaux. On informe, on ne bloque jamais.",
+    "impact": "moyen",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/hud3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/game3d.js"
+    ]
+   },
+   {
+    "titre": "Donner un petit rôle de jeu au compagnon qui suit (touche F)",
+    "detail": "buddy3d.js est très soigné visuellement (trace en breadcrumbs, réactions reactTo) mais purement cosmétique : après l'avoir sorti deux fois, un enfant n'a plus de raison d'y revenir. Deux mécaniques minuscules suffiraient : (1) le compagnon « trouve » de temps en temps un objet en marchant (1 chance sur ~300 pas, tiré parmi baiedouce/pokeball — un toast « 🐾 Miaouche a trouvé une Baie Douce ! », hook naturel dans onStepFinished de game3d.js quand buddy.isOut()) ; (2) un mini-bonus d'XP (+10 %) pour la créature qui marche dehors, affiché à la montée de niveau. C'est le modèle « Copain » de Pokémon Go/Let's Go, qui transforme une décoration en rituel affectif — exactement l'esprit de la demande n°2 de Robin.",
+    "impact": "moyen",
+    "effort": "moyen",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/game3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/buddy3d.js"
+    ]
+   }
+  ]
+ },
+ {
+  "domaine": "Bugs et robustesse — version 3D (js3d/)",
+  "constats": [
+   "Le code est globalement d'une robustesse remarquable pour un projet familial : safeCall/_broken isole les modules cassés, la sauvegarde v1→v2 est migrée sans perte (game3d.js loadGame), les entrées sont normalisées partout (team3d.num, normTypes), et les timers du HUD sont presque tous nettoyés (clearTimeout systématique).",
+   "Trois vrais bugs démontrables subsistent, tous autour des ANIMATIONS ASYNCHRONES à callback : la capture en combat (battle3d.throwBall), la capture en monde ouvert (roamers3d.throwBall + changement de région), et le filet de sécurité Téra à la relecture d'une sauvegarde écrite en plein combat.",
+   "Le pattern à risque est toujours le même : un module lance une animation avec callback, et un chemin de code peut faire que ce callback ne soit JAMAIS appelé — or game3d attend ce callback pour rendre la main (phase 'ball', state.throwing).",
+   "La promesse « Ce sera pour plus tard ! » faite à Robin quand une créature à 4 capacités veut en apprendre une 5e n'est tenue nulle part : aucun écran de remplacement de capacité n'existe (grep pendingLearn/oublier/remplacer : aucune UI).",
+   "La « sauvegarde partagée » 2D/3D est en réalité une migration à sens unique et une seule fois : importOldSave() ne lit robinGame_v2 que si la clé 3D n'existe pas encore. C'est documenté et volontaire, mais peut surprendre si Robin rejoue en 2D."
+  ],
+  "recommandations": [
+   {
+    "titre": "Soft-lock en combat : relancer une Ball pendant l'animation précédente gèle le jeu",
+    "detail": "Dans battle3d.js, throwBall() (ligne ~2906) contient `if (ballAnim && ballAnim.active) return;` — retour silencieux SANS appeler le callback. Or l'animation reste active ~1,1 s APRÈS que le résultat 'escaped' a été annoncé (le résultat tombe à 1800 ms, l'animation d'échec se termine à ~2900 ms). Côté game3d.js, throwBallInBattle() (~2758) a déjà décrémenté la Ball, mis b.phase='ball' et fait confiance au callback pour continuer ; le safeCall enveloppant renvoie true même quand throwBall n'a rien fait. Scénario concret : la créature se libère → Robin martèle Espace pour passer les 2 messages → retourne au Sac → relance une Ball en moins d'1,1 s → phase 'ball' pour toujours, onBattleKey n'accepte plus aucune touche, la Ball est perdue, il faut recharger la page. Un enfant qui spamme les touches est exactement le profil qui déclenche ça. Correctif minimal : dans throwBall(), remplacer le return silencieux par `if (cb) cb(null)` + retour de false, et dans throwBallInBattle() traiter ce cas (rendre la Ball, revenir en phase 'choose') ; ou plus simple, dans useBagItem(), refuser le lancer si `b.ball && b.ball.active`.",
+    "impact": "fort",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/battle3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/game3d.js"
+    ]
+   },
+   {
+    "titre": "state.throwing reste bloqué si la région change pendant un lancer en monde ouvert : touches B et T mortes pour la session",
+    "detail": "game3d.js throwBallInWorld() (~2074) met state.throwing=true et ne le remet à false QUE dans le callback de roamers.throwBall (~2101). Or roamers3d.js setRegion() (~777) fait `_ballAnim = null` sans jamais appeler le callback. Scénario : Robin lance une Ball (B) sur une créature proche d'un portail, puis marche sur le portail (le déplacement n'est pas bloqué pendant le vol de la Ball) ou sur une tuile AIRSHIP_DOCK (openAirshipMenu n'a pas le garde state.throwing, seul callAirship/touche T l'a) → applyRegion → roamers.setRegion → callback perdu → state.throwing=true à vie → throwBallInWorld() et callAirship() refusent tout jusqu'au rechargement. Correctif : dans setRegion(), si `_ballAnim && _ballAnim.active && _ballAnim.cb`, appeler le cb('escaped') avant de l'effacer ; en ceinture-bretelles, remettre state.throwing=false dans applyRegion() côté game3d.",
+    "impact": "fort",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/roamers3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/game3d.js"
+    ]
+   },
+   {
+    "titre": "Le filet de sécurité Téra à la relecture est du code mort : une créature peut rester mono-type définitivement",
+    "detail": "Si le jeu est sauvegardé en plein combat avec une créature téracristallisée — cas réel : onCaughtInBattle() (game3d.js:2815) et onTrainerDefeated() (:3063) appellent saveGame() AVANT endBattle() — alors team3d.packMon() écrit `types: [typeTéra]`. tera3d.serialize() stocke bien les vrais types dans `base[uid]` pour réparer au chargement, MAIS repair() (tera3d.js ~523) fait `if (!m.tera) continue;` : or le drapeau `tera` n'est jamais persisté (packMon ne l'écrit pas, unpackMon ne le relit pas), donc après rechargement m.tera est toujours undefined et la réparation ne s'applique JAMAIS. Si Robin ferme l'onglet pendant les messages de victoire (avant le saveGame de endBattle), sa créature perd ses types d'origine pour toujours (plus de double type, plus de STAB d'origine). Correctif d'une ligne : dans repair(), tester `base && base[m.uid]` au lieu de `m.tera` — la présence de l'uid dans `base` signifie exactement « était cristallisée au moment de la sauvegarde ».",
+    "impact": "fort",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/tera3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/team3d.js"
+    ]
+   },
+   {
+    "titre": "pendingLearn : la promesse « Ce sera pour plus tard ! » n'est jamais tenue — aucune UI de remplacement de capacité",
+    "detail": "team3d.gainXp() et evolve3d.applyStep() renvoient proprement pendingLearn/pending quand les 4 emplacements sont pleins, et les commentaires disent « game3d.js / hud3d.js lui poseront la question ». En réalité, game3d.js (onFoeFainted ~2956, runEvolutions ~2885) affiche seulement le message et JETTE l'information : aucun écran « oublier une capacité pour apprendre X » n'existe dans hud3d.js (vérifié par recherche : pendingLearn n'apparaît que dans team3d/game3d, jamais dans le HUD). Conséquence de gameplay : dès qu'une créature a 4 capacités, elle ne peut plus JAMAIS rien apprendre — y compris sa capacité signature de haut niveau. Aggravant : l'XP partagée aux équipiers (onFoeFainted ~2963) ignore complètement le résultat de gainXp, donc leurs pendingLearn ne sont même pas annoncés. Recommandation : un petit écran à 5 boutons (les 4 capacités + « ne rien apprendre ») déclenché en fin de combat, sur le modèle de l'écran d'évolution existant — c'est un chouette mini-projet à coder avec Robin.",
+    "impact": "moyen",
+    "effort": "moyen",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/game3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/hud3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/team3d.js"
+    ]
+   },
+   {
+    "titre": "Le Rappel est inutilisable en combat : le sac ne cible que la créature active, forcément vivante",
+    "detail": "En combat, useBagItem() (game3d.js ~2698) applique TOUJOURS l'objet sur `b.player.mon` — la créature actuellement sur le terrain, donc vivante. shop3d.useItem() (effet 'revive', ~660) répond alors « est déjà debout ! Garde ton Rappel » : il est donc IMPOSSIBLE de réanimer un K.O. pendant un combat, alors que c'est précisément le moment où on en a besoin (et c'est l'usage canonique de l'objet). Même problème pour soigner un équipier sur le banc avec une Potion. Le refus est poli mais Robin peut croire son objet cassé. Correctif : quand l'objet choisi a l'effet 'revive' (ou 'heal'), enchaîner sur la phase 'choose_mon' existante en autorisant les K.O. comme cibles, puis appliquer shop.useFrom(id, cible, state) — la mécanique de sélection existe déjà, il n'y a qu'à la réutiliser.",
+    "impact": "moyen",
+    "effort": "moyen",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/game3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/shop3d.js"
+    ]
+   },
+   {
+    "titre": "team3d : activeIndex dérive quand on retire/range une créature d'indice inférieur",
+    "detail": "Dans team3d.js, remove() (~363) et toBox() (~407) ne corrigent activeIndex que s'il sort des bornes (`if (activeIndex >= team.length) activeIndex = 0`). Si Robin a choisi la créature n°3 comme active puis range la n°1 à la Boîte depuis l'écran Équipe, activeIndex=3 pointe silencieusement sur une AUTRE créature : au prochain combat, ce n'est pas celle qu'il avait choisie qui entre en scène. Le bug est sans crash (active() vérifie qu'elle est vivante) mais déroutant pour un enfant qui a soigneusement choisi son champion. Correctif : dans remove()/toBox(), décrémenter activeIndex quand l'indice retiré lui est strictement inférieur.",
+    "impact": "moyen",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/team3d.js"
+    ]
+   },
+   {
+    "titre": "Récompense des légendaires sauvages : le barème 'legendary' de shop3d n'est jamais utilisé",
+    "detail": "shop3d.js définit REWARD_RULES.legendary (20×niveau+200, ~791) avec le commentaire « le souvenir vaut cher », mais game3d.js onFoeFainted (~2977) appelle payRewardLine(b.kind, …) où b.kind vaut toujours 'wild' pour un combat sauvage — battre un légendaire de niveau 50 rapporte donc ~200 pièces (règle wild) au lieu de ~1200. Le code de battle sait pourtant si l'espèce est légendaire (team.xpFor le recalcule via speciesOf). Correctif : dans onFoeFainted, passer 'legendary' à payRewardLine quand `speciesOf(vaincu.id).legendary` — trois lignes, et la cohérence promise par le catalogue de shop3d est rétablie.",
+    "impact": "moyen",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/game3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/shop3d.js"
+    ]
+   },
+   {
+    "titre": "Clarifier (ou combler) la migration 2D→3D à sens unique",
+    "detail": "La 3D ne lit robinGame_v2 qu'au tout premier lancement (importOldSave() dans game3d.js ~3891, appelée seulement si aucune clé robinGame3d n'existe), et ne l'écrit jamais — c'est propre et documenté. Mais la 2D reste jouable et continue d'écrire robinGame_v2 (js/game.js saveGame ~1349) : si Robin capture des créatures en 2D APRÈS avoir commencé la 3D, elles n'apparaîtront jamais en 3D, sans aucun message. Ce n'est pas un bug de code, c'est un piège d'incompréhension pour l'utilisateur principal (10 ans). Deux options peu coûteuses : (a) au chargement 3D, fusionner de façon NON destructive la collection 2D (union des espèces vues/capturées, sans toucher à l'équipe) ; ou (b) afficher une fois un petit message « ta partie 2D a avancé, mais la 3D vit sa propre vie maintenant » quand le timestamp de robinGame_v2 est plus récent que l'import.",
+    "impact": "faible",
+    "effort": "moyen",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/game3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js/game.js"
+    ]
+   }
+  ]
+ },
+ {
+  "domaine": "Performance et rendu Three.js (version 3D, js3d/)",
+  "constats": [
+   "L'architecture est déjà très saine : streaming par chunks de 32×32 avec budget de 2 chunks/frame et hystérésis (world3d.js), décors fusionnés par bake() puis InstancedMesh par catégorie et par chunk, monuments « cuits » en 2-4 draw calls (citybuild3d.js), un seul uniform uTime partagé pour toute l'eau (water3d.js), 3 lumières fixes + 1 InstancedMesh pour tous les nuages (sky3d.js), zéro Raycaster dans tout le code, et un auto-ajusteur de qualité basé sur le temps de travail réel (game3d.js measurePerf).",
+   "Les 36 légendaires et ~70 créatures ne sont PAS construits d'avance : registerCreature() n'enregistre qu'une fonction de construction, les modèles sont bâtis à la demande (core3d.js, roamers3d.js spawnOne) — c'est le bon choix.",
+   "Le point faible principal en draw calls : les créatures qui se baladent (roamers3d.js). Chaque roamer est un Group de ~25-35 meshes non fusionnés, presque tous castShadow=true (défaut de _place() dans core3d.js), et en qualité haute les 14 roamers ordinaires ne sont JAMAIS cullés (despawn à 36 tuiles < viewDistance 46, donc le test `dist <= vd` est toujours vrai) : ~400 meshes dessinés en permanence, plus la passe d'ombre.",
+   "Le second point chaud : la construction d'un chunk parse des couleurs hexadécimales en chaîne (~9 500 appels à THREE.Color.set('#…') par chunk via sampleGroundColor/tileColorInto dans world3d.js), jusqu'à 2 chunks dans la même frame en marchant — source probable des micro à-coups de streaming.",
+   "Une fuite mémoire douce confirmée : water3d.js pousse chaque surface d'eau dans le tableau `surfaces` (ligne 486) mais rien ne l'en retire quand world3d.js décharge le chunk — après une longue session, des milliers de meshes morts restent retenus en mémoire JS.",
+   "Pendant un combat, battle3d.render() remplace tout l'écran (autoClear=true), mais game3d.js continue de simuler le monde entier chaque frame : nuages (132 matrices d'instance), 260 particules CPU, recentrage d'ombre, balancement de la végétation, fontaines, bannières de ville — du CPU dépensé pour un décor invisible.",
+   "Aucune instrumentation des draw calls : le compteur de debug affiche FPS et ms/frame mais jamais renderer.info.render.calls/triangles — impossible de vérifier le budget de 250 draw calls mentionné dans les commentaires sans outil."
+  ],
+  "recommandations": [
+   {
+    "titre": "Afficher les draw calls et triangles dans le compteur de debug existant",
+    "detail": "Le HUD affiche déjà « X fps · Y ms » toutes les 0,25 s (game3d.js, measurePerf, lignes ~3665-3674). Ajouter `renderer.info.render.calls` et `renderer.info.render.triangles` à cette même chaîne (ex. « 58 fps · 9.2 ms · 210 dc · 480k tri »). C'est 3 lignes de code, ça ne coûte rien, et ça rend MESURABLES toutes les autres recommandations : Robin pourra voir lui-même le compteur baisser quand une optimisation marche — très motivant pour un enfant qui code. Le budget de « 250 draw calls » cité dans world3d.js (ligne ~1225) devient enfin vérifiable en jouant.",
+    "impact": "fort",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/game3d.js"
+    ]
+   },
+   {
+    "titre": "Réduire le coût des roamers : couper leurs ombres à distance",
+    "detail": "Dans roamers3d.js (update, lignes ~815-838), chaque roamer est un Group de ~25-35 meshes dont presque tous projettent une ombre (castShadow=true posé par défaut par _place() dans core3d.js, ligne ~184). Avec 14 roamers en qualité haute, c'est ~400 draw calls permanents + la passe d'ombre, et le culling `dist <= vd` ne se déclenche jamais pour les ordinaires (ils sont recyclés à 36 tuiles, la vue porte à 46). Correctif simple et mesurable : dans la boucle update, quand dist > ~14 tuiles (au-delà du frustum d'ombre de 17 demi-tuiles de sky3d.js, elles sont de toute façon coupées côté caméra d'ombre mais toujours soumises au tri), faire un `group.traverse` UNE FOIS au franchissement du seuil pour poser castShadow=false, et le rétablir en dessous. Bonus : baisser desiredCount() de 14 à 10 en 'high' se voit à peine à l'écran mais retire ~120 meshes.",
+    "impact": "fort",
+    "effort": "moyen",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/roamers3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/core3d.js"
+    ]
+   },
+   {
+    "titre": "Supprimer le parsing de couleurs hex dans la construction des chunks",
+    "detail": "world3d.js, sampleGroundColor (lignes ~1390-1403) : `_sampleColor.set(st.ground)` parse une chaîne '#rrggbb' par échantillon, et tileColorInto en fait 1 à 4 par sommet. Un chunk = 65×65 sommets ≈ 9 500 parses regex, ×2 chunks dans la même frame pendant la marche : c'est la portion la plus évitable du coût de streaming (buildSkirt y passe aussi pour tout le pourtour de la région). Correctif : un petit cache `Map type -> [r,g,b]` rempli au premier accès (ou pré-calculé dans buildHeightField, qui parcourt déjà toutes les tuiles). Même astuce que les couleurs pré-calculées `P._deep/_shallow` déjà présentes dans water3d.js lignes 80-84 — le motif existe déjà dans le projet, facile à expliquer à Robin.",
+    "impact": "moyen",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/world3d.js"
+    ]
+   },
+   {
+    "titre": "Purger le tableau `surfaces` de water3d quand un chunk d'eau est déchargé",
+    "detail": "water3d.js ligne 486 : chaque makeSurface() pousse le mesh dans `surfaces` (utilisé par onQualityChange pour échanger les matériaux), mais RIEN ne l'en retire — world3d.js disposeChunk() détruit la géométrie et détache le mesh, qui reste pourtant référencé pour toujours. Sur une longue session (6 régions, beaucoup de va-et-vient), le tableau accumule des milliers de meshes morts : fuite de mémoire JS et boucle de changement de qualité qui grossit sans borne. Correctif au choix : (a) dans onQualityChange et une fois toutes les ~3 s, filtrer les meshes dont `!m.parent` (même motif que le balayage ANIM de citybuild3d.js lignes 2269-2278) ; (b) ou exposer une fonction `release(mesh)` appelée par disposeChunk.",
+    "impact": "moyen",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/water3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/world3d.js"
+    ]
+   },
+   {
+    "titre": "Ne plus simuler le monde ouvert pendant les combats",
+    "detail": "game3d.js, tickGame/updateSceneModules (lignes ~794-860) : en écran 'battle', battle3d.render() (battle3d.js ligne 3259, autoClear=true) recouvre tout — la scène du monde n'est pas dessinée — mais on continue chaque frame à mettre à jour les nuages (132 setMatrixAt + upload de l'instanceMatrix), 260 particules CPU, le recentrage du frustum d'ombre, l'eau, les fontaines, les bannières, les portes et le dirigeable. Ajouter en tête d'updateSceneModules : `if (state.screen === 'battle') { call('airship','update',[t,dt]); return; }` (garder le dirigeable qui peut voler pendant la transition, et surtout GARDER les mises à jour pour 'title'/'starter' où le monde sert réellement de décor). Gain direct de CPU là où le jeu en a le plus besoin : pendant les combats, qui ont leur propre scène et leurs propres effets.",
+    "impact": "moyen",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/game3d.js"
+    ]
+   },
+   {
+    "titre": "Adapter le budget de construction de chunks au temps réellement disponible",
+    "detail": "world3d.js, BUILD_BUDGET = 2 (ligne 74) : deux buildChunk() dans la même frame peuvent coûter cher ensemble (terrain 65×65 sommets + transformée de distance de l'eau + instanciation + monuments). Le jeu mesure déjà workAvg (game3d.js) mais world3d n'en profite pas. Correctif simple : dans update(), chronométrer le premier buildChunk avec performance.now() et ne construire le second QUE s'il reste du budget (ex. si le premier a pris < 4 ms). Résultat mesurable : les à-coups en marchant vers une ville (chunks les plus lourds : monuments + remparts instanciés) deviennent deux petits à-coups au lieu d'un gros. À combiner avec la recommandation sur le parsing de couleurs, qui allège chaque chunk.",
+    "impact": "moyen",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/world3d.js"
+    ]
+   },
+   {
+    "titre": "Marquer les géométries du cache R3.geo comme partagées à la création",
+    "detail": "core3d.js, disposeTree (lignes ~308-318) : pour chaque mesh à détruire dont la géométrie n'est pas marquée `userData.shared`, il balaie TOUT le cache _geos (`_geos.forEach`) pour vérifier qu'elle n'y est pas. Les géométries des créatures viennent justement de ce cache (geo.sphere, geo.box…) sans être marquées : chaque despawn de roamer (~30 meshes) déclenche ~30 balayages complets d'un cache qui grossit avec le nombre de modèles construits. Correctif d'une ligne par fabrique : poser `g.userData.shared = true` à la création dans geo.box/sphere/cyl/cone/torus/plane et dans star() — le test devient O(1) et la boucle forEach peut disparaître. C'est aussi une jolie leçon de code : « on étiquette à la naissance plutôt que de chercher dans toute la boîte à chaque fois ».",
+    "impact": "faible",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/core3d.js"
+    ]
+   },
+   {
+    "titre": "Culler par distance les pièces animées des villes (bannières, jets, flammes)",
+    "detail": "citybuild3d.js, update(t) (lignes 2177-2278) : toutes les entrées ANIM des chunks chargés sont animées chaque frame, même celles à 80 tuiles derrière le brouillard (rayon de déchargement ≈ 86 tuiles alors que la vue porte à 46). Une grande ville enregistre des dizaines de bannières multi-segments, jets, flammes, portails. game3d.js appelle déjà `call('citybuild','update',[t])` : passer aussi px/pz (`[t, px, pz]`), stocker une position approximative dans chaque entrée reg() (la plupart ont déjà a.g.position ou a.mesh.position en coordonnées monde via le monument parent — sinon mémoriser x/z au moment du reg), et sauter l'animation si dx²+dz² > viewDistance². Le même patron « visible = distance < seuil » existe déjà pour les fontaines de world3d.js (ligne ~1911) : c'est un copier-coller conceptuel.",
+    "impact": "faible",
+    "effort": "moyen",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/citybuild3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/game3d.js"
+    ]
+   },
+   {
+    "titre": "Libérer le second contexte WebGL des vignettes une fois le cache rempli",
+    "detail": "hud3d.js, ensureThumbRenderer (lignes 365-387) : un deuxième WebGLRenderer (96×96, preserveDrawingBuffer:true) est créé pour dessiner les vignettes 3D des légendaires/évolutions, puis conservé pour toujours. Les résultats sont pourtant copiés dans des canvas 2D et mis en cache (thumb3DCache) : le contexte GL ne sert plus à rien entre deux ouvertures du Pokédex. Après un délai d'inactivité (~10 s sans render3DThumb), appeler `thumbRenderer.dispose(); thumbRenderer.forceContextLoss(); thumbRenderer = null; thumbReady = false;` — il se recréera au besoin. Gain : mémoire GPU rendue au monde principal, et un risque en moins de perdre le contexte principal sur machines modestes (les navigateurs limitent le nombre de contextes WebGL actifs).",
+    "impact": "faible",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/hud3d.js"
+    ]
+   }
+  ]
+ },
+ {
+  "constats": [
+   "Les contrôles clavier sont soignés : double mappage AZERTY/QWERTY partout (game3d.js l.608-666), Échap ferme tous les écrans (règle explicite l.588-597 « qu'aucun écran ne puisse retenir Robin prisonnier »), et les écrans Équipe/Boutique/Journal/Académie/dirigeable se pilotent aux flèches via un système générique data-nav (hud3d.js l.2890-2978).",
+   "L'onboarding tient en UN seul message de bienvenue de 7 lignes listant ~10 touches d'un coup (game3d.js l.3318-3324), puis un bandeau permanent d'une ligne avec 12 raccourcis en 11-14px (index3d.html l.54-67, css3d/hud3d.css l.662). Il n'existe AUCUN écran d'aide rappelable : une fois le message fermé, impossible de revoir les touches autrement qu'en plissant les yeux sur le bandeau (grep « aide/help/tutoriel » : aucun résultat dans js3d/).",
+   "Le Pokédex est le seul grand écran SANS navigation clavier : onGlobalKeydown ne traite que Échap pour lui (hud3d.js l.3615-3618) et les cartes de créatures n'ont pas l'attribut data-nav (renderDexGrid l.2311-2328), alors que l'Équipe a une navigation 2D complète (teamHandleKey l.2166-2209).",
+   "En vue FPS, le regard est libre (fpsYaw continu, game3d.js l.1082-1113) mais la visée de capture reste cardinale : aimedRoamer() passe p.dir (la cardinale la plus proche) à roamers.aimed() (game3d.js l.2062-2064 ; roamers3d.js l.891-909). En regardant à 45°, le cône de visée pointe ailleurs que le regard.",
+   "Aucun support souris dans le monde 3D (seule la molette zoome, bindEvents l.486-508), aucune rotation à la souris en FPS, et aucun support tactile ni manette (grep touchstart/gamepad : seul music3d.js utilise touchstart pour débloquer l'audio). Le jeu est injouable sur tablette.",
+   "Les toasts durent 2700 ms fixes quelle que soit la longueur du texte, et au-delà de 3 le plus ancien est supprimé (hud3d.js l.3465-3472) ; or certains toasts sont longs et importants (carte du monde : nom de région + « C'est ici qu'on apprend la Téracristallisation ! », l.2550-2554) — trop court pour un lecteur de 10 ans.",
+   "Plusieurs textes du HUD sont très petits : pastilles de type 10,5-12px (css l.127, 137), coordonnées de la boussole 10,5px (l.591), ligne « prochaine porte » 11px (l.617), bandeau des commandes clamp(11px,…) (l.662).",
+   "Beaucoup de bonnes pratiques déjà en place : focus-visible visible (css l.108), réticule de visée avec nom et niveau de la créature (hud3d.js l.1069-1086), boussole permanente avec flèche vers la porte la plus proche (l.614-760), toast pédagogique à chaque changement de vue (game3d.js l.702-717), messages d'erreur bienveillants (« Ton équipe est pleine ! Clique d'abord… », hud3d.js l.2073)."
+  ],
+  "domaine": "UX, contrôles, lisibilité et onboarding (version 3D)",
+  "recommandations": [
+   {
+    "titre": "Ajouter un écran d'aide rappelable (touche H ou ?)",
+    "detail": "Aujourd'hui les touches ne sont expliquées qu'une fois, dans le message de bienvenue de 7 lignes (game3d.js l.3318-3324), puis résumées dans un bandeau en 11px. Créer un overlay « Aide » sur le modèle des overlays existants de hud3d.js (buildJournalOverlay est un bon gabarit), ouvert par H, listant les touches GROUPÉES par thème (Se déplacer / Attraper / Menus / Voyager) avec de grosses lignes lisibles, fermé par H ou Échap. Ajouter « H aide » au bandeau controls-hint (index3d.html l.54-67) et raccourcir le message de bienvenue à 2-3 lignes (« Flèches pour explorer, Espace pour parler, H pour l'aide »). Tout le mécanisme overlay + fermeture Échap existe déjà : c'est surtout du HTML à écrire, un chantier idéal à faire AVEC Robin.",
+    "impact": "fort",
+    "effort": "petit",
+    "fichiers": [
+     "js3d/hud3d.js",
+     "js3d/game3d.js",
+     "index3d.html",
+     "css3d/hud3d.css"
+    ]
+   },
+   {
+    "titre": "Rendre le Pokédex navigable au clavier",
+    "detail": "C'est le seul grand écran qui oblige à lâcher le clavier pour la souris : onGlobalKeydown ne lui gère que Échap (hud3d.js l.3615-3618). Le système générique data-nav/navEcran (l.2890-2978) fait déjà tout le travail pour la Boutique, le Journal et l'Académie : il suffit de poser card.setAttribute('data-nav','1') sur les cartes dans renderDexGrid (l.2311-2328), d'appeler navEcran(ui.dexOverlay, ev) dans onGlobalKeydown, et navReset() dans openDex(). Bonus : les pilles de filtre (dexTypePills/dexRegionPills) peuvent aussi porter data-nav. Cohérence immédiate avec les autres écrans pour quelques lignes.",
+    "impact": "fort",
+    "effort": "petit",
+    "fichiers": [
+     "js3d/hud3d.js"
+    ]
+   },
+   {
+    "titre": "Faire viser la Ball là où on regarde en vue FPS",
+    "detail": "En vue subjective, le regard est un angle libre (state.player.fpsYaw, game3d.js l.1082-1113) mais aimedRoamer() passe la cardinale p.dir à roamers.aimed() (l.2062-2064). En regardant en diagonale, le cône de visée de ±56° (roamers3d.js l.904) pointe plein nord ou plein est, pas là où sont les yeux : la créature « en face » n'est pas visée, celle sur le côté l'est. Étendre roamers.aimed() pour accepter un angle ou un vecteur (en gardant la signature actuelle en repli), et lui passer sin/cos(fpsYaw) quand isFpsView(). Petit correctif qui rend la capture en FPS fidèle à la promesse « on va exactement là où on regarde » du commentaire l.1130.",
+    "impact": "moyen",
+    "effort": "petit",
+    "fichiers": [
+     "js3d/game3d.js",
+     "js3d/roamers3d.js"
+    ]
+   },
+   {
+    "titre": "Onboarding progressif : des astuces contextuelles à la première occasion",
+    "detail": "Plutôt que 10 touches d'un coup au démarrage, montrer chaque touche au moment où elle sert, une seule fois : premier roamer visé (le réticule showAimReticle existe déjà, hud3d.js l.1069) → toast « B pour lancer une Ball · X pour en changer » ; première approche d'une porte de région → « Espace pour traverser » ; premier passage près du port → « T pour appeler le dirigeable » ; première créature capturée → « E pour voir ton équipe ». Un simple objet state.hintsVus = {} sauvegardé avec la partie, et un helper hintUneFois(id, texte) dans game3d.js qui appelle showToast. Les points d'accroche existent tous déjà dans le code (aimedRoamer, gates, arriveAtPort, onCaught).",
+    "impact": "fort",
+    "effort": "moyen",
+    "fichiers": [
+     "js3d/game3d.js",
+     "js3d/hud3d.js"
+    ]
+   },
+   {
+    "titre": "Adapter la durée des toasts à la longueur du texte",
+    "detail": "toast() supprime chaque message après 2700 ms fixes et jette le plus ancien au-delà de 3 (hud3d.js l.3465-3472). Un enfant de 10 ans lit ~120 mots/minute : le toast de la carte du monde (« Plateau d'Aurore — pas encore explorée + C'est ici qu'on apprend la Téracristallisation ! », l.2550-2554) disparaît avant d'être lu. Calculer la durée : Math.min(7000, 2000 + texte.length * 45), et ne pas compter les toasts en cours de disparition dans la limite de 3. Deux lignes à changer, gain de confort réel.",
+    "impact": "moyen",
+    "effort": "petit",
+    "fichiers": [
+     "js3d/hud3d.js"
+    ]
+   },
+   {
+    "titre": "Relever les tailles de police minimales du HUD",
+    "detail": "Plusieurs textes utiles sont sous les 12px : pastilles de type 10,5px en petit format (css3d/hud3d.css l.137), coordonnées boussole 10,5px (l.591), ligne « prochaine porte » 11px (l.617) — pourtant c'est l'information d'orientation principale — et bandeau des commandes clamp(11px, 1.2vw, 14px) (l.662). Passer les planchers à 12-13px et vérifier à 1280×720 (la media query 720px existe déjà l.625). Pour le bandeau des commandes, le passage à l'écran d'aide (reco n°1) permet de le raccourcir aux 5 touches essentielles et donc de le grossir sans déborder.",
+    "impact": "moyen",
+    "effort": "petit",
+    "fichiers": [
+     "css3d/hud3d.css",
+     "index3d.html"
+    ]
+   },
+   {
+    "titre": "Afficher les raccourcis propres à chaque écran dans son pied de page",
+    "detail": "Le Pokédex a sa ligne d'aide (« Clique une créature… · C ou Échap : fermer », hud3d.js l.2239) et l'écran starter aussi (index3d.html l.36), mais la Boutique n'annonce nulle part que ←/→ règlent la quantité, Entrée achète et Tab bascule Acheter/Vendre (comportements implémentés l.2954-2968 et l.3575-3579) ; l'écran Équipe n'annonce pas U (sac), A (envoyer au combat) ni Backspace (vers la Boîte) (l.3609, l.2175-2183). Ce sont des fonctions invisibles : ajouter une ligne el('p','hint',…) en bas de buildShopOverlay et de l'écran Équipe, comme celle du Pokédex. Attention aussi à la sémantique divergente : dans la Boutique ←/→ = quantité alors que partout ailleurs ←/→ = déplacement — la ligne d'aide est le minimum pour l'assumer.",
+    "impact": "moyen",
+    "effort": "petit",
+    "fichiers": [
+     "js3d/hud3d.js"
+    ]
+   },
+   {
+    "titre": "Rotation à la souris en vue FPS (pointer lock optionnel)",
+    "detail": "La vue FPS ne se tourne qu'aux flèches, à 172°/s (FPS_TURN_SPEED=3.0, game3d.js l.85). Pour un enfant habitué à Minecraft, tourner la tête à la souris est le geste naturel ; le clavier seul rend la vue laborieuse. Brancher requestPointerLock() sur un clic du canvas quand isFpsView(), et dans mousemove faire state.player.fpsYaw -= e.movementX * sensibilité — poseYaw() (l.1059-1066) fait déjà tout le reste (accrochage de la cardinale, boussole). Échap sort du lock nativement. Garder les flèches inchangées en repli. C'est le plus gros chantier de cette liste mais camera3d.js n'a même pas besoin d'être touché : il consomme déjà player.fpsYaw (camera3d.js l.473-476).",
+    "impact": "fort",
+    "effort": "moyen",
+    "fichiers": [
+     "js3d/game3d.js"
+    ]
+   },
+   {
+    "titre": "Support manette en option (Gamepad API, sans dépendance)",
+    "detail": "Aucun support manette ni tactile (grep : rien dans js3d hors déblocage audio). Le tactile demanderait une vraie interface virtuelle, mais la manette est un petit projet parfait parent-enfant : ~40 lignes qui interrogent navigator.getGamepads() dans la boucle de jeu et écrivent dans state.input.up/down/left/right (déjà le seul point d'entrée du déplacement, game3d.js l.531-533) + rejouer les touches Espace/B/E via le pattern fakeKey() déjà utilisé par le HUD (hud3d.js l.98-102). Aucune bibliothèque, dégradation nulle si pas de manette, et un effet « waouh » garanti pour Robin.",
+    "impact": "faible",
+    "effort": "moyen",
+    "fichiers": [
+     "js3d/game3d.js"
+    ]
+   }
+  ]
+ },
+ {
+  "domaine": "Contenu et équilibrage (créatures, types, attaques, économie, XP, évolutions, quêtes, légendaires, arènes, Téra)",
+  "constats": [
+   "La table des types (types3d.js) compte 19 types cohérents et auto-vérifiés (multiplicateurs ×1.6 / ×0.6), mais moves3d.js ne fournit des attaques QUE pour 12 types : psy, fée, acier, dragon, poison, combat et normal n'ont AUCUNE capacité offensive ni soin.",
+   "Le roster commun (dex3d.js BASE_DATA) est très déséquilibré par type : 9 espèces Eau contre 1 seule Feu (Flamdrak, région 5), 1 Glace (Glydrak), 1 Espace, et 0 créature Temps non légendaire — le type Temps n'existe qu'en 3 légendaires.",
+   "Les 6 arènes (arenas3d.js) ont une courbe de niveaux propre (caps 12/20/28/36/45/55) mais tous les champions ET les 24 dresseurs utilisent exclusivement des formes DE BASE : Koronette niv. 47, Cygnik niv. 32, Pandouki niv. 33 — jamais les formes évoluées d'evolve3d.js (~×1.5 stats) que le joueur possède à ce stade.",
+   "Économie (shop3d.js) : combat sauvage = 4×niveau (~20 pièces au Val niv. 3-8) alors qu'une Pokéball coûte 200 — environ 10 victoires sauvages pour une seule Ball en début de partie ; en fin de jeu l'argent abonde (quêtes 2000→8000, champion ~2600) avec peu de choses à acheter.",
+   "Les soins historiques du jeu 2D sont à valeur FIXE (soin1 = 10 PV, soin2/chant/ronron = 16, calin = 14, soinMagie = 18) alors que les PV max atteignent 200-600 en fin de jeu ; les soins récents sont en fraction ({frac: 0.45}) et restent utiles à tout niveau.",
+   "team3d.movesForLevel() éjecte les capacités en FIFO au-delà de 4 : une créature créée à haut niveau peut perdre son unique soin (Feuillou dès le niv. 27, Koronette au niv. 40), ce qui contredit la règle affichée dans dex3d.js (« chaque espèce possède au moins un soin »).",
+   "Légendaires : 36 captures OBLIGATOIRES pour finir les 6 quêtes ; catchRate 0.04-0.12, fuite après 90 s (LEGEND_FLEE_S) et cooldown d'autel de 10 minutes (LEGEND_COOLDOWN_S = 600) en cas d'échec — et leur soin {frac:0.45} avec 10 PP permet à l'IA de régénérer jusqu'à ~4,5 fois ses PV max.",
+   "Les 6 quêtes (quest3d.js) sont soignées côté texte mais structurellement identiques : badge → sanctuaire → capturer 6 légendaires ; aucun autre type d'objectif.",
+   "Courbe XP saine et cohérente : xpNeeded = 20+4L², xpFor ≈ 1/3 (3 combats par niveau), ×1.5 dresseur, ×2.5 légendaire ; évolutions bien étagées (16-24, pierres à 2500 avec règle raccourci/condition claire).",
+   "Petites incohérences de données : FALLBACK_TYPES de team3d.js contredit dex3d.js (lapinou 'plante' vs 'terre', miaouche 'ombre' vs 'lumiere', hibouche, aquadrak) et dex3d.TYPE_IDS liste toujours 12 types."
+  ],
+  "recommandations": [
+   {
+    "titre": "Donner des attaques aux 7 types orphelins (psy, fée, acier, dragon, poison, combat, normal)",
+    "detail": "moves3d.js ne couvre que les 12 types du CONTRAT2 alors que types3d.js en définit 19 et que les évolutions créent des créatures de ces nouveaux types (Feuillix plante/fée, Étincelix électrique/acier, Flamdrakix feu/dragon, Lapinon terre/combat, Méduzion eau/poison...). Conséquences concrètes : ces créatures n'auront JAMAIS de STAB sur leur second type, les relations offensives 'fort' de ces 7 types (ex. fée fort contre dragon) ne se déclenchent jamais en pratique, et le sélecteur Téra (tera3d.typeChoices) propose 19 types dont 7 sont des pièges (choisir Téra-dragon = zéro attaque bénéficiant du bonus ×1.5). Ajouter au minimum 1 faible + 1 moyenne + 1 forte + 1 soin par type dans moves3d.js (sur le modèle des blocs existants, ~15 lignes par type) et compléter MOVE_SPEC dans dex3d.js. Bonus : donner un vrai type 'dragon' aux capacités 'dragon' et 'dragonRage' (aujourd'hui neutres). C'est aussi une belle activité d'écriture avec Robin (noms et descriptions).",
+    "impact": "fort",
+    "effort": "moyen",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/moves3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/dex3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/tera3d.js"
+    ]
+   },
+   {
+    "titre": "Faire jouer les formes évoluées aux champions des arènes 4-6 et aux dresseurs tardifs",
+    "detail": "arenas3d.js n'utilise que des formes de base : Astréa (arène finale, niveau recommandé 50) aligne Koronette 47, Stellini 48, Nuagette 49 non évoluées, alors que le joueur possède depuis longtemps Koronetton/Stellinion avec ~×1.55 de stats. Idem Borée (Cygnik 32, Pandouki 33 — évolutions au niv. 22) et les dresseurs de fin (ligne ~598 : Koronette 45 + Pétalia 46). La difficulté annoncée par la courbe 10/18/26/34/42/50 s'effondre donc en seconde moitié de jeu. Remplacer dans les équipes des arènes givre/braise/aurore et des dresseurs des régions 4-6 les ids de base par les ids évolués (glydrakon, pandoukion, cygnikon, koronetton, stellinion, flamdrakix...) — team3d.create() les résout déjà via la greffe dex d'evolve3d. Vérifier juste que les modèles 3D p5 existent pour chaque id utilisé.",
+    "impact": "fort",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/arenas3d.js"
+    ]
+   },
+   {
+    "titre": "Rendre l'économie de début de partie moins avare (plancher sur les gains sauvages)",
+    "detail": "REWARD_RULES.wild = 4 × niveau (shop3d.js §6) : au Val d'Émeraude (niveaux 3-8), une victoire sauvage rapporte ~20 pièces alors qu'une Pokéball en coûte 200 et une Potion 300. Il faut ~10 victoires pour UNE Ball, ce qui pousse un enfant à ne plus capturer. En fin de jeu au contraire l'argent déborde (quêtes 2000→8000, champions ~2600, charme +20%). Correction minimale sans toucher aux prix imposés par le contrat : ajouter un plancher, par ex. wild: l => 30 + 4*l (négligeable en fin de jeu, triple les gains au Val). Encore mieux pour encourager la collection : une prime « nouvelle espèce capturée » (~100 pièces) versée par game3d à la première capture, qui finance justement la Ball suivante.",
+    "impact": "fort",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/shop3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/game3d.js"
+    ]
+   },
+   {
+    "titre": "Convertir les soins à valeur fixe en fractions des PV max",
+    "detail": "Les soins hérités du 2D ne montent pas en niveau : soin1 rend 10 PV, soin2/ronron/chant 16, calin 14, soinMagie 18 (moves3d.js lignes ~124-127, 301, 396), alors qu'un maxHp de fin de jeu vaut 200-600. Les espèces qui les portent (Fluffly, Miaouche, Cygnik, Nuagette, Koronette, Doudoune, Méduzia...) ont donc un emplacement de capacité mort passé le niveau 15, alors que la règle du jeu est « Robin doit toujours pouvoir se soigner ». Convertir en fractions en gardant une hiérarchie : soin1 {frac:0.15}, calin/soin2/ronron/chant {frac:0.25}, soinMagie {frac:0.30} — les soins thématiques à 0.45 restent les meilleurs. Une ligne à changer par capacité, compute() gère déjà les deux formats.",
+    "impact": "moyen",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/moves3d.js"
+    ]
+   },
+   {
+    "titre": "Protéger le soin dans movesForLevel() : ne jamais l'éjecter du jeu de 4 capacités",
+    "detail": "team3d.movesForLevel() (ligne ~275) applique le learnset en FIFO : au-delà de 4 capacités, la plus ancienne saute. Résultat : un Feuillou créé/capturé au niveau 27+ a [soleil, lianeFouet, petale, pluieDeGraines] — plus aucun soin ; pareil pour Koronette 40+, Fluffly 33+, etc. Cela contredit la règle documentée en tête de dex3d.js (« CHAQUE espèce possède au moins une capacité de soin ») et touche autant les créatures que Robin capture à haut niveau que celles des dresseurs. Correction : dans la boucle de shift, si la capacité qu'on s'apprête à éjecter est le DERNIER soin connu (tester moves.get(id).heal via R3.get('moves')), éjecter la suivante à la place.",
+    "impact": "moyen",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/team3d.js"
+    ]
+   },
+   {
+    "titre": "Adoucir la boucle de capture des 36 légendaires (cooldown de 10 minutes trop punitif)",
+    "detail": "Finir le jeu exige de capturer les 36 légendaires (quest3d : done seulement quand les 6 de la région sont attrapés). Or roamers3d.js combine : fuite après 90 s (LEGEND_FLEE_S), cooldown d'autel de 600 s réels de jeu après échec (LEGEND_COOLDOWN_S), et des catchRate de 0.04-0.07 pour les « chefs » (~3 lancers d'Hyper Ball à 1200 pièces même affaiblis, formule catchChance de team3d). Un échec = 10 minutes d'attente, potentiellement des dizaines de fois sur 36 captures : c'est long pour un enfant de 10 ans. Réduire LEGEND_COOLDOWN_S à 120-180 s, et/ou faire que le légendaire du SANCTUAIRE (le chef de quête) ne fuie pas tant qu'on ne quitte pas la zone.",
+    "impact": "moyen",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/roamers3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/quest3d.js"
+    ]
+   },
+   {
+    "titre": "Limiter la guerre d'usure contre les légendaires IA (soin 45% × 10 PP)",
+    "detail": "Tous les légendaires portent le soin thématique de leur type ({frac:0.45}, 10 PP — TYPE_KIT de dex3d.js) et pickAI (moves3d.js ligne ~665) se soigne à 80% de probabilité sous 30% de PV. Un légendaire à ~630 PV max (Astralis niv. 55) peut donc régénérer ~2800 PV au total, alors que les attaques du joueur plafonnent vers 40-60 dégâts/tour et que SES PP s'épuisent (15 par attaque moyenne) : le combat peut devenir ingagnable ou interminable, précisément sur les combats-événements du jeu. Deux réglages simples au choix : donner 4-5 PP (au lieu de 10) aux soins thématiques quand la créature est un adversaire légendaire, ou dans pickAI baisser la probabilité de soin à ~40% et interdire deux soins consécutifs.",
+    "impact": "moyen",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/moves3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/dex3d.js"
+    ]
+   },
+   {
+    "titre": "Rééquilibrer la répartition des types dans le roster commun (Feu, Glace, Temps quasi absents)",
+    "detail": "Sur les 26 espèces communes de dex3d.js : 9 sont Eau, mais 1 seule est Feu (Flamdrak, uniquement en région 5, catchRate 0.55), 1 seule Glace (Glydrak, 0.40), 1 Espace (Stellini) et AUCUNE n'est de type Temps — ce type n'existe qu'en 3 légendaires de fin de jeu. Impossible de monter une équipe Feu avant la Caldeira, le filtre « Temps » du Pokédex est vide pendant 90% du jeu, et l'arène Feu elle-même n'aligne que 2 créatures Feu sur 5. Ajouter 3-4 espèces communes (une Feu au Val ou en Sylve, une Glace à Givre, une Temps/Espace accessible plus tôt) : c'est l'activité idéale à faire AVEC Robin (il invente la créature, le parent ajoute l'entrée BASE_DATA + le modèle 3D via les primitives de creatures3d.lib.js).",
+    "impact": "moyen",
+    "effort": "gros",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/dex3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/creatures3d.lib.js"
+    ]
+   },
+   {
+    "titre": "Varier les objectifs des 6 quêtes légendaires",
+    "detail": "Les 6 quêtes de quest3d.js sont magnifiquement écrites mais suivent EXACTEMENT le même schéma : entendre la légende → badge → sanctuaire → capturer 6 légendaires. Dès la 2e région, Robin connaît la recette par cœur et les 4 suivantes n'apportent aucune surprise mécanique. Sans refonte, on peut différencier une étape par région en réutilisant l'existant : à Saphir le sanctuaire ne s'ouvre qu'à « marée basse » (une plage horaire du cycle jour/nuit de sky3d), à Givre l'ermite demande d'apporter une Pierre Glace, à Braise il faut avoir capturé les 5 gardiens AVANT que le chef n'apparaisse au sanctuaire (inverser l'ordre). Le champ 'condition' existe déjà dans QUESTS ('badge' partout) : il suffit d'en introduire 2-3 nouvelles valeurs gérées dans game3d.",
+    "impact": "moyen",
+    "effort": "moyen",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/quest3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/game3d.js"
+    ]
+   },
+   {
+    "titre": "Corriger les tables de repli désynchronisées (types) et TYPE_IDS",
+    "detail": "FALLBACK_TYPES dans team3d.js (lignes 55-64) contredit dex3d.js : lapinou y est 'plante' au lieu de 'terre', miaouche 'ombre' au lieu de 'lumiere', hibouche ['air'] au lieu de ['air','ombre'], aquadrak ['eau'] au lieu de ['eau','air'], cygnik inversé. Ces replis ne servent que si dex3d manque, mais le jour où ça arrive (test isolé, régression de chargement), la table d'efficacité renverra des multiplicateurs faux en silence — le pire type de bug à diagnostiquer d'après pieges_3d. Par ailleurs dex3d.TYPE_IDS (ligne 74) annonce encore « les 12 types du §2 (aucun autre n'est autorisé) » alors que le CONTRAT3 en définit 19 et que les évolutions publient des espèces fée/acier/dragon dans ce même dex. Aligner les deux tables sur dex3d/types3d : 10 minutes de copie soigneuse.",
+    "impact": "faible",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/team3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/dex3d.js"
+    ]
+   }
+  ]
+ },
+ {
+  "domaine": "Architecture et maintenabilité (version 3D, js3d/)",
+  "constats": [
+   "L'architecture est étonnamment saine pour le contexte : registre de modules R3.register()/R3.get() (js3d/core3d.js l.484-486), accès tolérant mod() + isolation d'erreur safeCall() avec désactivation définitive de l'appel fautif (js3d/game3d.js l.213-238), aucune exception au chargement exigée par contrat. Le choix « scripts classiques, pas de bundler, jouable en file:// » est adapté à un enfant qui bricole.",
+   "index3d.html charge 41 balises <script> avec au moins 5 contraintes d'ordre IMPÉRATIVES qui ne vivent que dans des commentaires : npcs.js modifie MAP (l.81), evolve3d AVANT team3d (l.99-101), cities3d AVANT regions3d (l.110-111), buddy3d APRÈS roamers3d (l.140), tera3d AVANT hud3d (l.153). Rien ne vérifie ces invariants à l'exécution.",
+   "La sauvegarde est bien conçue : clé versionnée robinGame3d_v2 avec champ version:2 (game3d.js l.3723), migration v1→v2 en lecture seule jamais destructrice (l.3780-3868), import unique de la partie 2D (l.3891), désérialisation ultra-tolérante dans team3d.js (unpackMon borne tout, l.700-736). MAIS tout repose sur le localStorage d'un seul navigateur : aucun export fichier, aucune copie de secours avant écrasement.",
+   "Les 3 gros fichiers (game3d.js 4020 lignes, hud3d.js 3748, battle3d.js 3399) sont déjà découpés en sections numérotées par bandeaux (§1 à §16 dans game3d.js) : le découpage en fichiers est préparé mais pas fait.",
+   "La duplication 2D/3D est maîtrisée et documentée : dex3d.js FUSIONNE la globale CREATURES au lieu de la recopier (l.12-15 : « si Robin retouche js/creatures.js, le Pokédex 3D suit tout seul »). Restent des tables de secours dupliquées à dessein : le bloc fb des 26 créatures (dex3d.js l.160+), MOVE_SPEC (dex3d.js l.96), BALL_BONUS (game3d.js l.138, doublon documenté de shop.ballPower). Risque de dérive silencieuse limité mais réel.",
+   "Les CONTRACT*.md totalisent 2277 lignes et se remplacent partiellement (CONTRACT3 §2 « remplace le §2 de v2 » : 12 types → 19 types) sans index de ce qui fait foi aujourd'hui. Ils sont à jour et de grande qualité, mais un agent IA qui lit CONTRACT2 seul peut suivre une table périmée.",
+   "Il existe déjà un harnais de test Node hors navigateur (.claude/verif_fx.js : sandbox vm qui charge les VRAIS modules js3d avec un faux DOM) — mais il ne teste que les effets de combat, rien sur la sauvegarde, et il vit dans .claude/ où il peut être perdu.",
+   "Aucun window.onerror global : une erreur de syntaxe introduite dans un des 41 fichiers tue silencieusement le module entier (dégradation gracieuse oblige), et l'enfant ne voit qu'un jeu « bizarre » sans explication à l'écran."
+  ],
+  "recommandations": [
+   {
+    "titre": "Ajouter un export/import de sauvegarde en fichier + une copie de secours tournante",
+    "detail": "La partie de Robin n'existe que dans le localStorage d'un navigateur : un « effacer les données de site », un changement de navigateur ou un nettoyage Windows la détruit sans recours. Dans game3d.js §15 (saveGame, l.3717) : (1) avant chaque setItem, recopier l'ancienne valeur sous une clé robinGame3d_v2_backup (rotation à 1 ou 2 crans) ; (2) ajouter dans le menu (ou au moins dans window.GAME3D, l.3931) exportSave() qui déclenche le téléchargement du JSON et importSave() qui lit un fichier. C'est ~40 lignes, et c'est le seul vrai filet hors navigateur. Bonus pédagogique : Robin comprend que sa partie est « un fichier ».",
+    "impact": "fort",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/game3d.js"
+    ]
+   },
+   {
+    "titre": "Créer un test Node de la sauvegarde à partir du harnais verif_fx.js existant",
+    "detail": "Le point le plus précieux à tester automatiquement est le cycle serialize→deserialize et la migration v1→v2 : c'est ce qui protège la partie de Robin quand une session IA retouche team3d/evolve3d/tera3d. Le harnais .claude/verif_fx.js prouve que les vrais modules se chargent dans un vm Node avec un faux DOM — il suffit de le déplacer dans un dossier tests/ et d'écrire tests/verif_save.js : charger dex3d/evolve3d/team3d, créer une équipe, serialize, deserialize, comparer (uid, niveaux, PV, moves) ; puis figer en JSON une vraie sauvegarde v1 et une v2 de référence et vérifier que loadGame-like les relit sans perte. Lancement : node tests/verif_save.js, zéro dépendance.",
+    "impact": "fort",
+    "effort": "moyen",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/.claude/verif_fx.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/team3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/game3d.js"
+    ]
+   },
+   {
+    "titre": "Vérifier au démarrage les invariants d'ordre de chargement (aujourd'hui en commentaires seulement)",
+    "detail": "Les contraintes « evolve3d AVANT team3d » (index3d.html l.99-101), « cities3d AVANT regions3d » (l.110-111), « tera3d AVANT hud3d » (l.153), « npcs.js modifie MAP » (l.81) ne sont gardées par rien : une réorganisation innocente des <script> (par Robin ou par une IA) casse le jeu de façon indirecte et difficile à diagnostiquer. Ajouter en fin de game3d.init() (l.250) un petit checkBoot() qui liste les modules attendus dans R3.modules, vérifie 2-3 symptômes (ex. dex.get() connaît une forme évoluée, la table de marchabilité de regions3d inclut les tuiles Académie) et affiche un console.warn + un message à l'écran via showMessage si quelque chose cloche. ~30 lignes, gros gain de diagnostic.",
+    "impact": "fort",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/index3d.html",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/game3d.js"
+    ]
+   },
+   {
+    "titre": "Ajouter un window.onerror qui rend les pannes visibles pour un enfant",
+    "detail": "safeCall() isole très bien les erreurs d'exécution (game3d.js l.220-229), mais une erreur de SYNTAXE dans un des 41 fichiers <script> supprime le module entier avant même son enregistrement : le jeu « marche mais bizarrement » et seul un adulte qui ouvre la console comprend. Un window.addEventListener('error', ...) posé tôt (dans core3d.js ou un mini boot inline dans index3d.html) qui affiche un bandeau simple (« Oups, le fichier hud3d.js a un problème à la ligne 42 ») transformerait chaque casse de session de code en apprentissage au lieu d'une frustration. ~15 lignes.",
+    "impact": "moyen",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/core3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/index3d.html"
+    ]
+   },
+   {
+    "titre": "Découper game3d.js le long de ses sections numérotées (commencer par la sauvegarde)",
+    "detail": "game3d.js (4020 lignes) est déjà organisé en 16 sections à bandeaux ; deux d'entre elles sont presque autonomes et méritent leur fichier : §15 Sauvegarde (l.3702-3926, ~220 lignes qui ne touchent que state et les serialize des modules) → save3d.js enregistré via R3.register('save', ...) recevant state ; puis §9 Combats (l.2226-2825, ~600 lignes) → un contrôleur de combat séparé. Même patron que les modules existants, donc aucun changement de paradigme. Bénéfice concret pour le duo parent/enfant + IA : les futures sessions ne rechargeront plus 4000 lignes en contexte pour toucher à la sauvegarde. Ne PAS tout découper d'un coup : un fichier par session de code, en vérifiant le jeu entre chaque.",
+    "impact": "moyen",
+    "effort": "moyen",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/game3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/index3d.html"
+    ]
+   },
+   {
+    "titre": "Ajouter une page « ce qui fait foi » en tête des contrats",
+    "detail": "CONTRACT.md, CONTRACT2.md et CONTRACT3.md (2277 lignes cumulées) sont excellents mais se remplacent partiellement : CONTRACT3 §2 remplace CONTRACT2 §2 (12→19 types), CONTRACT2 §15/§17/§18 sont des « refontes » du CONTRACT initial. Un agent (ou le parent dans 6 mois) qui lit le mauvais paragraphe applique une spec périmée. Ajouter au début de CONTRACT3.md (ou dans un court ARCHITECTURE.md) une table de correspondance : sujet → paragraphe qui fait foi → paragraphes remplacés. Une demi-page suffit, pas besoin de fusionner les trois fichiers (leur historique est utile).",
+    "impact": "moyen",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/CONTRACT.md",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/CONTRACT2.md",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/CONTRACT3.md"
+    ]
+   },
+   {
+    "titre": "Détecter la dérive des tables de secours dupliquées (fb, MOVE_SPEC, BALL_BONUS)",
+    "detail": "La duplication restante est volontaire et documentée, mais elle dérive en silence : le bloc fb de dex3d.js (l.160+) recopie nom/couleur/catchRate/description des 26 créatures de js/creatures.js ; MOVE_SPEC (dex3d.js l.96) recopie type/rôle des capacités de moves3d.js ; BALL_BONUS (game3d.js l.138) recopie shop.ballPower. Plutôt que de supprimer ces replis (ils permettent les tests hors navigateur), ajouter au harnais Node un test de cohérence : charger js/creatures.js + dex3d.js et comparer chaque fb à la vraie entrée CREATURES ; idem moves3d/MOVE_SPEC et shop3d/BALL_BONUS. Un écart = un console.error qui fait échouer le script.",
+    "impact": "faible",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/dex3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/game3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js/creatures.js"
+    ]
+   },
+   {
+    "titre": "Ranger l'outillage : sortir verif_fx.js de .claude/ et neutraliser .claude/worktrees",
+    "detail": "Le seul outil de vérification automatique du projet (verif_fx.js) vit dans .claude/, un dossier d'outillage IA que rien ne protège et que personne ne pense à versionner ou consulter ; .claude/worktrees contient une copie obsolète du code qui pollue les recherches plein-texte des futures sessions IA (risque de lire/citer du code périmé). Créer tests/ à la racine, y déplacer verif_fx.js, et mentionner dans le contrat (une ligne au §22 « checklist » de CONTRACT2.md) que node tests/verif_fx.js doit passer avant de rendre son travail.",
+    "impact": "faible",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/.claude/verif_fx.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/.claude/worktrees"
+    ]
+   }
+  ]
+ },
+ {
+  "constats": [
+   "La musique 3D (js3d/music3d.js) est de grande qualité : guitare Karplus-Strong, basse, batterie, réverbe à convolution, 5 ambiances par famille de biomes, ordonnanceur à fenêtre glissante sur l'horloge audio. Nettement supérieure à la boucle mono-voix de js/audio.js.",
+   "En revanche il n'existe AUCUNE ambiance de combat ni de victoire : enterBattle() (js3d/game3d.js ~l.2364) ne touche pas à la musique, donc la pop-rock calme du biome continue pendant les combats, les arènes et les légendaires.",
+   "Tous les bruitages 3D passent par sfx() de game3d.js (l.241) qui délègue à Audio_.sfx du jeu 2D. Le catalogue 2D n'a que 9 sons (footstep, encounter, throwBall, hit, shake, catch, escape, menu, rare).",
+   "Bug silencieux : game3d.js l.3577 appelle sfx('heal') mais SFX.heal n'existe pas dans js/audio.js — le soin est muet sans erreur. De même roamers3d.js l.436 cherche Audio_.sfx.legendary, .levelUp et .catch_ qui n'existent pas (retombe sur encounter).",
+   "Les 18 effets visuels de capacités (battle3d.js, FX_TABLE) partagent UN seul son générique sfx('hit') (game3d.js l.2674), sans variation pour critique/super efficace — alors que le visuel, lui, s'amplifie via fxForce.",
+   "Les 3 secousses de la Pokéball en combat sont visuelles (fxSparks + shakeIndex, battle3d.js l.2953-2961) mais totalement silencieuses, alors que la 2D joue SFX.shake à chaque secousse.",
+   "La juiciness visuelle du combat est déjà excellente : hitstop (~65 ms), zoomPunch, camShake, ombres de contact, intro en 3 actes (battle3d.js l.220-233 et 3225).",
+   "Le ciel (sky3d.js) est soigné (dôme shader, nuages instanciés, particules pollen/sparkle/neige/embruns par biome) mais figé : soleil constant de milieu d'après-midi (SUN_DIR const l.35), aucun cycle jour/nuit, aucune météo (pas de pluie).",
+   "Le monde n'a aucun son d'ambiance : pas de vagues (water3d.js est purement visuel), pas de vent, pas d'oiseaux. Le seul tapis sonore est la musique.",
+   "La vie du monde est bien servie côté acteurs : 18 PNJ animés avec squelette de pivots (actors3d.js), 8-14 créatures baladeuses + légendaires avec fuite (roamers3d.js), compagnon qui suit à la trace (buddy3d.js), végétation qui ondule (world3d.js vcMat sway). Mais aucun animal d'ambiance décoratif (oiseaux/papillons n'existent que comme espèces capturables)."
+  ],
+  "domaine": "Audio, ambiance et juiciness (ressenti)",
+  "recommandations": [
+   {
+    "titre": "Musique de combat et fanfare de victoire",
+    "detail": "Ajouter deux ambiances à AMBIANCES dans music3d.js : 'combat' (tempo ~120, mineur, batterie à 1.2, arpège 'pulse') et un petit jingle de victoire (4 accords montants joués une fois avec la guitare Karplus-Strong existante — tout le matériel sonore est déjà là). Exposer setMood('combat')/playVictory() dans l'API, et les appeler depuis enterBattle()/onTrainerDefeated() de game3d.js (~l.2364 et ~l.3017). C'est LE manque le plus audible : pour un enfant, un combat sur fond de musique calme n'a pas d'enjeu, et une victoire sans fanfare n'est pas une victoire. La grille d'accords et l'ordonnanceur savent déjà changer d'ambiance à la volée (setBiome le prouve).",
+    "impact": "fort",
+    "effort": "moyen",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/music3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/game3d.js"
+    ]
+   },
+   {
+    "titre": "Réparer les sons fantômes : heal, levelUp, legendary",
+    "detail": "game3d.js l.3577 appelle sfx('heal') qui n'existe pas dans le catalogue SFX de js/audio.js — utiliser une potion est muet. roamers3d.js l.436 cherche Audio_.sfx.legendary/.levelUp/.catch_ : aucun n'existe, l'apparition d'un légendaire retombe sur le simple son de rencontre. Comme le contrat (§1.2) interdit de toucher js/audio.js, créer un mini module js3d/sfx3d.js qui étend le catalogue (ou définit ses propres sons via le contexte de music3d) : 'heal' (arpège doux descendant), 'levelUp' (montée), 'legendary' (accord grave + scintillement). Ce sont 3 sons de ~10 lignes chacun sur le modèle de sequence()/sweep() de js/audio.js.",
+    "impact": "fort",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/game3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/roamers3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js/audio.js"
+    ]
+   },
+   {
+    "titre": "Sonoriser les 3 secousses de la Pokéball",
+    "detail": "Le moment le plus tendu du jeu — la ball qui tremble 3 fois — est silencieux en 3D, alors que la 2D joue SFX.shake. battle3d.js expose déjà bs.ball.shakeIndex (l.2957) : dans updateBattle() de game3d.js, mémoriser le dernier shakeIndex vu et jouer sfx('shake') à chaque changement (idem pour le lancer en monde ouvert dans roamers3d.js qui a les mêmes timings). Environ 5 lignes, et le suspense de la capture devient audible : tic... tic... tic... 'catch' !",
+    "impact": "fort",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/game3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/battle3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/roamers3d.js"
+    ]
+   },
+   {
+    "titre": "Varier le son des coups selon le type et la force",
+    "detail": "Les 18 effets visuels (FX_TABLE de battle3d.js) partagent un unique blip 'hit'. À l'endroit de l'appel (game3d.js l.2674), `res` (mult, crit) et `move.fx` sont déjà sous la main : jouer 4-5 variantes par famille (feu = sweep grave + bruit, eau = bruit passe-bas, foudre = zap dents de scie, normal = blip actuel) et moduler volume/pitch avec res.mult et res.crit (par ex. +30 % de volume et une octave de percussion en plus sur un critique). Le visuel s'amplifie déjà via fxForce ; l'oreille doit suivre pour que 'super efficace' se SENTE. Réutiliser blip/sweep/sequence comme briques.",
+    "impact": "fort",
+    "effort": "moyen",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/game3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/battle3d.js"
+    ]
+   },
+   {
+    "titre": "Un tapis sonore d'ambiance par biome (vagues, vent, criquets)",
+    "detail": "Le monde 3D est visuellement vivant (eau animée de water3d.js, végétation qui ondule, particules de sky3d.js) mais muet entre deux notes de musique. Ajouter dans music3d.js (le contexte audio et le bus existent déjà) une nappe de bruit filtré par ambiance : passe-bas lent modulé en sinus = vagues (biomes 'lumineuse'), passe-haut faible = vent (montagne/glacier 'cristal'/'grave'), pépiements aléatoires en triangle = oiseaux (forêt 'douce'). Un BufferSource de bruit en boucle + un BiquadFilter dont on anime la fréquence : ~60 lignes, zéro fichier, et setBiome() sait déjà quand changer. C'est ce qui transforme 'un décor' en 'un lieu'.",
+    "impact": "moyen",
+    "effort": "moyen",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/music3d.js"
+    ]
+   },
+   {
+    "titre": "La pluie comme quatrième particule + ciel qui s'assombrit",
+    "detail": "sky3d.js a déjà toute la machinerie : PART_STYLE compte pollen/sparkle/snow/spray avec vitesse verticale, dérive et scintillement paramétrés (l.345-366). Ajouter un style 'rain' (vy très négatif, taille fine, pas d'additif) coûte ~10 lignes, plus un léger assombrissement du mood pendant l'averse (les couleurs se mélangent déjà via applyBlend). Déclencher une averse aléatoire de 1-2 minutes dans certains biomes (forêt, marais). Pour Robin c'est un événement magique ('il pleut !') pour très peu de code, et ça donne une raison de re-visiter les régions. En option : lier un léger bruit de pluie au tapis sonore de la recommandation précédente.",
+    "impact": "moyen",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/sky3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/game3d.js"
+    ]
+   },
+   {
+    "titre": "Des pas qui changent avec le sol",
+    "detail": "sfx('footstep') (game3d.js l.1245) joue le même blip quelle que soit la surface. Dans movePlayer(), tileAt()/biomeAt() sont déjà appelés : passer la surface au bruitage et varier — herbe = blip grave feutré, sable = bruit court, pierre/ville = blip plus sec et aigu, eau peu profonde = petit splash. C'est un détail que les enfants remarquent immédiatement ('écoute, on entend le sable !') et qui renforce la lecture du terrain. Une table de 4 variantes dans le futur sfx3d.js suffit.",
+    "impact": "moyen",
+    "effort": "petit",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/game3d.js"
+    ]
+   },
+   {
+    "titre": "Papillons et oiseaux d'ambiance autour du joueur",
+    "detail": "Le grep confirme qu'oiseaux/papillons n'existent que comme espèces capturables — aucun animal décoratif ne peuple le monde. Ajouter dans sky3d.js (ou un petit ambient3d.js) 4-6 papillons : deux triangles par insecte dans un InstancedMesh, battement d'ailes en sinus, trajectoire en boucle de Lissajous autour du joueur, visibles seulement dans les biomes doux (plaine, fleurs, parc) ; et 2-3 silhouettes d'oiseaux très haut, en croix qui dérive comme les nuages. La technique du champ bouclé autour du joueur existe déjà (updateClouds, l.290). C'est le genre de petit détail vivant qui émerveille à 10 ans, et un chouette chantier à bricoler avec Robin (il peut dessiner les couleurs des papillons).",
+    "impact": "moyen",
+    "effort": "moyen",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/sky3d.js"
+    ]
+   },
+   {
+    "titre": "Jingles dédiés pour évolution, badge et Téra",
+    "detail": "Les grands moments cérémoniels sont sonorement recyclés : évolution, badge d'arène et Téra n'ont aucun son propre (aucun appel audio dans evolve3d.js, tera3d.js, arenas3d.js — tout passe par les sfx génériques 'rare'/'catch' de game3d.js). Composer 3 mini-jingles distincts de 1-2 s avec la corde pincée de music3d.js (l'évolution mérite une montée chromatique qui suit la transformation visuelle, le badge une petite fanfare, le Téra un accord cristallin) et les déclencher aux mêmes endroits que les messages. La signature sonore d'un moment rare est ce qui le grave en mémoire.",
+    "impact": "moyen",
+    "effort": "moyen",
+    "fichiers": [
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/music3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/game3d.js",
+     "C:/Users/Janin/Desktop/Projects/lejeudeRobin/js3d/evolve3d.js"
+    ]
+   }
+  ]
+ }
+]
