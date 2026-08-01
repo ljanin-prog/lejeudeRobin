@@ -313,6 +313,15 @@ unique de **100 pièces** la première fois qu'une espèce entre au Pokédex. Le
 surprises étant coupées (`ENCOUNTER_CHANCE = 0`), un enfant qui joue « attrapeur » ne gagnait
 sinon strictement rien et arrivait à l'arène avec une équipe trop faible.
 
+**Exception : le LÉGENDAIRE capturé touche la moitié du barème `legendary`** (amendement du
+2026-08-01). Les deux barèmes ci-dessus ont été écrits séparément, et mis bout à bout ils
+disaient l'inverse de ce que le jeu veut : Sylvaros Nv 50 assommé rapportait ~1200 pièces,
+le même Sylvaros capturé 100 — **six fois moins pour l'issue que Robin préfère**, dans une
+économie où la Pokéball coûte 200. `catchRewardTexts()` demande donc `shop.rewardFor
+('legendary', niveau)` et en verse la moitié (~600) quand `species.legendary` est vrai.
+Le K.O. reste un peu mieux payé, parce qu'il est plus long et plus dur ; ce qui compte est
+qu'attraper ne soit plus le choix pauvre. Rien n'a été retiré au barème du K.O.
+
 Le **Centre soigne gratuitement** toute l'équipe (`R3.get('team').healAll()`), recharge la
 Téracristallisation (§7) et affiche un petit texte d'accueil.
 

@@ -2340,7 +2340,22 @@
     }
 
     // --- 3. Quelques pièces (la moitié d'un combat sauvage) ---
-    const pieces = Math.max(1, 2 * lvl);
+    // SAUF POUR UN LÉGENDAIRE. Depuis la correction 1.4, l'ASSOMMER verse le
+    // barème `legendary` (20 × niveau + 200, soit ~1200 pièces au Nv 50) ; le
+    // CAPTURER n'en versait que 2 × niveau, soit 100. Mettre le gardien K.O.
+    // était donc SIX FOIS plus payant que l'attraper — l'exact contraire de la
+    // boucle que Robin a demandée (2.2), dans une économie où la Pokéball vaut
+    // 200. On verse ici la moitié du barème : le K.O. reste un peu mieux payé
+    // (c'est plus long et plus dur), mais les deux issues jouent enfin dans la
+    // même cour. On n'a rien retiré à personne : le jeu n'est jamais punitif.
+    const shop = mod('shop');
+    let pieces = Math.max(1, 2 * lvl);
+    if (sp && sp.legendary && shop && shop.rewardFor) {
+      const plein = safeCall('shop.rewardFor.legendaire', function () {
+        return shop.rewardFor('legendary', lvl);
+      }) || 0;
+      if (plein > 0) pieces = Math.max(pieces, Math.round(plein / 2));
+    }
     state.money = Math.max(0, (state.money | 0) + pieces);
     ligne += '\n+' + pieces + ' pièces 🪙';
     textes.push(ligne.replace(/^\n/, ''));
