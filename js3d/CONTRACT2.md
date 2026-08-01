@@ -814,6 +814,13 @@ R3.register('world', {
 - L'eau reste confiée à `R3.get('water').makeSurface(tiles, kind)`, par chunk. Nouveaux
   types à gérer : `'lava'` (émissif, lent), `'swamp'` (trouble, opaque), `'ice'`
   (réfléchissant, immobile).
+  *Amendement du 2026-08-01 (chantier 1.10)* : un chunk se libère par
+  `disposeChunkGroup(grp)`, jamais par un `R3.disposeTree(grp)` direct. Cette fonction
+  rend d'abord chaque mesh `userData.waterKind` à `water.release()` — sans quoi water3d
+  retient la géométrie des nappes disparues (~0,5 Mo par chunk d'eau plein). Les deux
+  appelants sont `disposeChunk()` et `setRegion()`. Détail : les nappes de repli
+  (`fallbackWaterMesh`, types `lava`/`swamp`/`ice`) portent le même marqueur mais ne sont
+  pas connues de water3d — `release()` répond `false` et c'est sans conséquence.
 - Garder la « jupe » qui plonge hors carte et le grand quad d'océan lointain (voir les
   pièges documentés dans `CONTRACT.md` v1) — sans eux, l'horizon est vert et le ciel disparaît.
 - Nouveaux décors à modéliser (instanciés) : `jungletree`, `vinetree`, `fern`, `mangrove`,

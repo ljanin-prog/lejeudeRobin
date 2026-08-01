@@ -1833,10 +1833,31 @@
     chunkMap.set(key, { group: grp, cx: cxw, cz: czw, radius: radius });
   }
 
+  /**
+   * Libère le groupe d'un chunk. On rend d'abord ses nappes d'eau à water3d :
+   * `R3.disposeTree` ne libère que les buffers GPU, et water3d garde une liste
+   * de toutes les surfaces créées (pour rééchanger leurs matériaux au
+   * changement de qualité). Sans ce `release`, traverser une région entière
+   * laissait des centaines de géométries d'eau vivantes en mémoire.
+   * C'est le SEUL point de libération d'un chunk : disposeChunk et setRegion
+   * passent tous les deux par ici.
+   */
+  function disposeChunkGroup(grp) {
+    const w = waterApi();
+    if (w && typeof w.release === 'function') {
+      grp.traverse(function (o) {
+        if (o.userData && o.userData.waterKind) {
+          try { w.release(o); } catch (e) { /* une nappe de repli n'y est pas */ }
+        }
+      });
+    }
+    R3.disposeTree(grp);
+  }
+
   function disposeChunk(key) {
     const c = chunkMap.get(key);
     if (!c) return;
-    try { R3.disposeTree(c.group); } catch (e) { console.warn('[world3d] échec de libération du chunk', key, e); }
+    try { disposeChunkGroup(c.group); } catch (e) { console.warn('[world3d] échec de libération du chunk', key, e); }
     chunkMap.delete(key);
   }
 
@@ -1863,7 +1884,8 @@
 
     // Libère TOUT ce qui existait (contrat §15 : « setRegion : libère tout et
     // repart sur la nouvelle région »).
-    chunkMap.forEach(function (c) { try { R3.disposeTree(c.group); } catch (e) { /* déjà orphelin */ } });
+    // Le pire cas de la fuite d'eau : ici on libère TOUS les chunks d'un coup.
+    chunkMap.forEach(function (c) { try { disposeChunkGroup(c.group); } catch (e) { /* déjà orphelin */ } });
     chunkMap.clear();
     if (skirtMesh) { try { R3.disposeTree(skirtMesh); } catch (e) { /* ignore */ } skirtMesh = null; }
     for (let i = 0; i < farOceanMeshes.length; i++) {

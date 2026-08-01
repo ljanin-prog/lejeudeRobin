@@ -18,7 +18,10 @@
 //    - une transparence plus forte près des berges (on devine le fond).
 //
 //  API — voir CONTRACT.md :
-//    R3.register('water', { makeSurface(tiles, kind), update(t), material(kind) })
+//    R3.register('water', { makeSurface(tiles, kind), release(mesh), update(t),
+//                           material(kind) })
+//  release() est OBLIGATOIRE au déchargement : sans lui, le tableau `surfaces`
+//  retient la géométrie des nappes disparues (voir la fonction, plus bas).
 //
 //  Repère : les sommets sont en coordonnées MONDE ABSOLUES (x = tuile.x,
 //  z = tuile.y) et le mesh reste à l'origine. Les vagues sont donc continues
@@ -487,6 +490,36 @@
     return mesh;
   }
 
+  /**
+   * release(mesh) — oublier une nappe d'eau qu'on vient de décharger.
+   * world3d.js l'appelle pour chaque mesh d'eau d'un chunk AVANT
+   * `R3.disposeTree` (déchargement d'un chunk et changement de région).
+   * Sans cela `surfaces` retenait à vie la géométrie : `geometry.dispose()` ne
+   * libère que les buffers GPU, les Float32Array côté JS restent tant que le
+   * mesh est référencé (~0,5 Mo pour un chunk d'eau plein), et le changement de
+   * qualité réaffectait un matériau à des centaines de meshes morts.
+   * -> true si la surface était bien connue (les meshes de repli de world3d.js
+   *    n'y sont pas : ils ne sont pas passés par makeSurface).
+   */
+  function release(mesh) {
+    if (!mesh) return false;
+    const i = surfaces.indexOf(mesh);
+    if (i < 0) return false;
+    // ⚠️ MUTATION EN PLACE : `surfaces` est exporté PAR RÉFÉRENCE, une
+    // réaffectation casserait le lien avec l'objet enregistré.
+    surfaces.splice(i, 1);
+    return true;
+  }
+
+  /** Une nappe est vivante tant que sa chaîne de parents remonte à la scène.
+   *  `R3.disposeTree` détache le GROUPE du chunk, pas ses enfants : tester
+   *  `mesh.parent` ne suffirait pas, il faut remonter jusqu'à la racine. */
+  function attached(mesh) {
+    let o = mesh;
+    while (o.parent) o = o.parent;
+    return !!o.isScene;
+  }
+
   // ---------------------------------------------------------------------------
   //  ANIMATION
   // ---------------------------------------------------------------------------
@@ -507,10 +540,17 @@
   // Changement de qualité : on échange simplement les matériaux des surfaces
   // déjà construites (la géométrie, elle, reste valable).
   R3.onQualityChange(function () {
+    // On en profite pour compacter : si une nappe déchargée n'a pas été rendue
+    // par `release()`, on la laisse tomber ici plutôt que de lui donner un
+    // matériau tout neuf (ce qui, en prime, ressuscitait la référence).
+    let n = 0;
     for (let i = 0; i < surfaces.length; i++) {
       const m = surfaces[i];
+      if (!attached(m)) continue;
       m.material = currentMaterial(m.userData.waterKind || 'lake');
+      surfaces[n++] = m;
     }
+    surfaces.length = n;   // en place : le tableau est exporté par référence
     // Le jet de fontaine garde son petit shader : il est minuscule et ne coûte rien.
   });
 
@@ -526,6 +566,7 @@
 
   R3.register('water', {
     makeSurface: makeSurface,
+    release: release,
     update: update,
     material: material,
     // Extras utiles à world3d.js (facultatifs, hors contrat) :
