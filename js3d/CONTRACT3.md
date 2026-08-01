@@ -538,6 +538,11 @@ Style inchangé : cartes arrondies, ombres douces, palette du jeu, chaleureux et
 champs absents prennent leur valeur par défaut. Une partie de Robin ne se perd jamais —
 si le chargement échoue, on repart de zéro **en le disant**, jamais en silence.
 
+*Amendement du 2026-08-01 (correction 2.8)* : cette clé n'est plus seule. Trois copies de
+secours tournantes, un repli automatique au chargement, et un export/import en fichier
+l'entourent désormais — **voir le §22**, qui liste toutes les clés du jeu et les règles à
+ne pas enfreindre en y touchant. Le format ci-dessus, lui, n'a pas bougé d'un champ.
+
 ---
 
 ## 13. Assignation des fichiers — qui écrit quoi
@@ -588,6 +593,12 @@ d'être chargé après `core3d.js`.)
 Règle : un module se charge **après** ceux dont il lit les données au chargement, et
 **avant** ceux qui l'interrogent. En cas de doute, plus tôt — grâce au repli du §1.4,
 un module absent n'a jamais le droit de casser quoi que ce soit.
+
+*Amendement du 2026-08-01 (correction 2.8)* : un petit script **en ligne** ouvre désormais
+la page, **avant** `three.min.js` et tout le reste — c'est le panneau d'erreur du §22.4, et
+il doit rester la toute première balise `<script>` : il ne voit pas les erreurs de ce qui
+est chargé avant lui. Par ailleurs, la liste ci-dessus a maintenant un double exécutable :
+`MODULES_ATTENDUS` dans `game3d.js` (§22.5). Un module ajouté ici s'ajoute là aussi.
 
 ---
 
@@ -995,3 +1006,108 @@ streaming, la moitié du budget.
 - Restent non mis en cache, volontairement, parce qu'ils sont froids : le
   `new THREE.Color('#1b2c62')` de la jupe d'océan (une fois par région) et les
   `new THREE.Color(roofColor)` des prototypes de maison (une fois par prototype).
+
+---
+
+## 22. LES FILETS DE SÉCURITÉ — sauvegarde, erreurs, démarrage *(2026-08-01, correction 2.8)*
+
+La partie de Robin n'existe que dans le `localStorage` d'un navigateur, sans aucune copie
+nulle part : un nettoyage d'historique, un profil recréé, un disque changé, et des mois de
+jeu disparaissent. Ce chantier ajoute trois filets — des copies, un fichier, et de quoi
+comprendre ce qui casse. **C'est le code le plus dangereux du jeu : il est le seul à
+écrire par-dessus la sauvegarde.** Rien de ce qui suit n'a le droit d'abîmer une partie.
+
+### 22.1 Toutes les clés de `localStorage`
+
+| Clé | Rôle | Écrite par |
+|-----|------|------------|
+| `robinGame3d_v2` | **LA partie** (format du §12) | `saveGame()` |
+| `robinGame3d_v1` | ancienne 3D, migration | personne (lecture seule) |
+| `robinGame_v2` | partie du jeu **2D**, reprise au premier lancement | personne (lecture seule) |
+| `robinGame3d_bak1/2/3` | les trois copies de secours tournantes | `rotateBackup()` |
+| `robinGame3d_baks` | `{ slot, at }` : où en est la rotation | `rotateBackup()` |
+
+**RÈGLE** : toute clé ajoutée ici doit l'être aussi dans `GAME3D.reset()`. Sans cela,
+« repartir de zéro » ressuscite l'ancienne partie au rechargement suivant — le piège
+s'est déjà produit une fois avec la clé v1, il se reproduirait avec les copies.
+
+### 22.2 Les copies de secours tournantes
+
+`saveGame()` appelle `rotateBackup(false)` **avant** d'écrire, et ce qui est recopié est la
+sauvegarde **déjà en place** — jamais celle qu'on s'apprête à écrire. C'est tout l'intérêt :
+revenir à un état qu'on savait bon. Trois emplacements en rotation = trois âges différents,
+donc une partie abîmée sauvegardée deux fois de suite laisse encore une copie saine.
+
+Quatre règles, chacune payée par un défaut réel :
+
+1. **Au plus une copie toutes les trois minutes** (`BACKUP_MIN_MS`). `saveGame()` est appelé
+   dix-sept fois (capture, badge, achat, évolution, changement de région, fermeture d'un
+   écran…) : sans le délai, on triplerait les écritures pour trois copies identiques.
+2. **On ne recopie jamais un texte qui n'est pas une partie** (`ressembleAUnePartie()`).
+   Sinon, le jour où la clé principale s'abîme, `loadGame()` reprend une copie saine,
+   appelle `saveGame()` — et la rotation écraserait une bonne copie avec la ruine qu'on
+   vient justement de contourner.
+3. **On ne recopie jamais deux fois le même texte.** `closeOverlays()` sauvegarde à chaque
+   écran refermé, même quand rien n'a changé : sans ce garde-fou, trois copies identiques
+   remplaceraient trois âges différents.
+4. **Une copie ne prend jamais la place de la vraie partie.** Si le `localStorage` est plein,
+   `ecrireSauvegarde()` sacrifie les copies **une par une, la plus vieille d'abord**, et
+   réessaie à chaque fois. Le filet ne doit jamais se retourner contre ce qu'il protège.
+
+**Ordre de lecture de `loadGame()`** : `robinGame3d_v2`, puis les copies **de la plus récente
+à la plus ancienne**, puis la v1. Les copies ne sont **jamais** lues tant que la clé
+principale répond. Quand une copie a servi, on le DIT à Robin (« il te manque peut-être les
+toutes dernières minutes ») et on la réinstalle aussitôt comme sauvegarde principale.
+
+`GAME3D.restoreBackup(n)` (console) remonte plus loin : 0 = la plus récente.
+
+### 22.3 Enregistrer et reprendre une partie en FICHIER
+
+`GAME3D.exportSave()` / `GAME3D.importSave()`, et surtout **deux boutons dans l'écran d'aide
+(touche `H`)** : depuis la console, ces fonctions n'existent pas pour un enfant de 10 ans.
+Un `Blob` et un `<a download>`, un `<input type="file">` et un `FileReader` — rien d'autre,
+ça marche en `file://`. Nom du fichier : `robin-partie-AAAA-MM-JJ.json`.
+
+- L'import **refuse** tout ce qui n'est pas une partie (`ressembleAUnePartie()`), et met la
+  partie en cours à l'abri (`rotateBackup(true)`) **avant** d'écrire : une fausse manœuvre
+  reste rattrapable par `restoreBackup(0)`.
+- **PIÈGE, et il est vicieux** : `installerPartie()` commence par `closeOverlays()`. Deux
+  raisons, les deux indispensables. (a) `#message-box` est déclarée dans `index3d.html`
+  AVANT que le HUD n'ajoute ses overlays : une boîte de dialogue s'affiche donc **sous**
+  l'écran d'aide, et sur l'écran `'help'` ni Espace ni Entrée ne la font avancer — le
+  « Le jeu redémarre… » serait resté invisible ET muet, avec un rechargement qui n'arrive
+  jamais. (b) `closeOverlays()` appelle `saveGame()` : il doit donc avoir lieu **avant**
+  qu'on écrase la clé principale, sinon il réécrirait la partie en cours par-dessus celle
+  qu'on vient d'importer. **Ne déplacez pas cet appel.**
+
+### 22.4 Le panneau d'erreur — `index3d.html`, tout en haut
+
+Une virgule oubliée tuait un fichier ENTIER en silence : plus de boutique, plus de combats,
+et rien à l'écran pour le dire. Un petit script sans dépendance, écrit en `var`/ES5 pour
+survivre à tout, écoute `window.addEventListener('error', …, true)` et affiche un panneau
+lisible qui nomme le fichier et la ligne — et qui dit toujours la seule chose qui compte :
+**« Ta partie est en sécurité : rien n'a été effacé. »**
+
+- **Il doit rester la TOUTE PREMIÈRE balise `<script>` de la page** : il ne voit pas les
+  erreurs des scripts chargés avant lui.
+- `true` en 3ᵉ argument = phase de **capture** : c'est la seule façon d'attraper aussi un
+  `<script src>` introuvable, qui ne remonte pas d'erreur autrement.
+- Un seul panneau par session (une erreur en entraîne dix), et un bouton « Continuer quand
+  même » : on informe, on ne bloque jamais.
+- Il publie `window.ROBIN_OOPS(titre, lignes, detail)`, dont `checkBoot()` se sert.
+
+### 22.5 `checkBoot()` et la liste des modules attendus
+
+Les 45 balises `<script src>` d'`index3d.html` n'étaient gardées que par des commentaires.
+`checkBoot()`, appelé en tête d'`init()`, vérifie que tout le monde a répondu : `THREE`,
+`R3`, les 30 modules de `MODULES_ATTENDUS`, un modèle témoin par lot de créatures
+(`MODELES_ATTENDUS`), et les six fichiers du jeu 2D (`FICHIERS_2D`).
+
+- **`MODULES_ATTENDUS` EST UN CONTRAT : tout nouveau module s'y ajoute**, une ligne
+  `[nom enregistré, fichier]`. C'est le seul endroit du jeu qui sache ce qui est censé
+  être chargé. Idem pour un nouveau lot de modèles dans `MODELES_ATTENDUS`.
+- Les fichiers 2D déclarent des `const` de haut niveau : elles ne sont **pas** sur `window`,
+  d'où les petites fonctions `typeof PALETTE !== 'undefined'` écrites en clair.
+- `checkBoot()` **ne bloque jamais** : il nomme ce qui manque et laisse le jeu démarrer.
+  La plupart des modules sont facultatifs (§1.4), et un enfant privé de son jeu parce
+  qu'un fichier manque serait exactement la punition que ce jeu s'interdit.

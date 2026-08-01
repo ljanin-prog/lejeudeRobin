@@ -4151,9 +4151,33 @@
         tera: serializeOf('tera'),
         buddy: serializeOf('buddy'),
       };
+      const json = JSON.stringify(data);
       rotateBackup(false);     // la copie d'AVANT, mise à l'abri (§2.8)
-      localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+      ecrireSauvegarde(json);
     } catch (e) { /* localStorage indisponible : on ignore */ }
+  }
+
+  /**
+   * Écrit la sauvegarde principale, quoi qu'il en coûte.
+   * Les trois copies de secours du §2.8 occupent de la place, et cette place
+   * pourrait manquer à la VRAIE partie : le filet se retournerait alors contre
+   * ce qu'il protège. Si l'écriture échoue, on sacrifie donc les copies une par
+   * une — la plus vieille d'abord — et on réessaie à chaque fois.
+   * -> false seulement si même une sauvegarde toute seule ne rentre plus.
+   */
+  function ecrireSauvegarde(json) {
+    try { localStorage.setItem(SAVE_KEY, json); return true; }
+    catch (e) { /* plus de place, sans doute : on va en faire */ }
+    const keys = backupKeysRecentes();   // [la plus récente … la plus ancienne]
+    for (let i = keys.length - 1; i >= 0; i--) {
+      try { localStorage.removeItem(keys[i]); } catch (e) { /* rien */ }
+      try { localStorage.setItem(SAVE_KEY, json); return true; }
+      catch (e) { /* toujours pas : on libère la copie suivante */ }
+    }
+    console.warn('[game3d] la sauvegarde n\'a pas pu être écrite : plus de place '
+      + 'dans ce navigateur. Le bouton « Enregistrer ma partie dans un fichier » '
+      + 'de l\'écran d\'aide (H) reste le meilleur recours.');
+    return false;
   }
 
   // ---------------------------------------------------------------------------
@@ -4199,6 +4223,16 @@
     let actuelle = null;
     try { actuelle = localStorage.getItem(SAVE_KEY); } catch (e) { return; }
     if (!actuelle) return;                 // première partie : rien à copier
+    // ⚠️ ON NE RECOPIE JAMAIS UNE SAUVEGARDE ILLISIBLE. Sinon le jour où la clé
+    // principale s'abîme, `loadGame()` reprend une copie saine, appelle
+    // `saveGame()` — et la rotation écraserait une bonne copie avec la ruine
+    // qu'on vient justement de contourner.
+    if (!ressembleAUnePartie(actuelle)) return;
+    // Deux copies identiques, c'est une profondeur d'historique perdue pour
+    // rien (`closeOverlays()` sauvegarde à chaque écran refermé, même quand
+    // rien n'a changé).
+    try { if (localStorage.getItem(BACKUP_KEYS[b.slot]) === actuelle) return; }
+    catch (e) { /* tant pis, on recopiera */ }
     const slot = (b.slot + 1) % BACKUP_KEYS.length;
     try {
       localStorage.setItem(BACKUP_KEYS[slot], actuelle);
@@ -4289,10 +4323,22 @@
   function lireFichierPartie(file) {
     const fr = new FileReader();
     fr.onerror = function () {
+      closeOverlays();   // sinon le message resterait caché derrière l'écran d'aide
       showMessage('Ce fichier n\'a pas pu être lu. 😥\nTa partie actuelle n\'a pas bougé.');
     };
     fr.onload = function () { installerPartie(String(fr.result || '')); };
     try { fr.readAsText(file); } catch (e) { fr.onerror(); }
+  }
+
+  /** Ce texte est-il bien une sauvegarde du jeu ? Un seul critère, employé aux
+   *  DEUX endroits qui manipulent du texte brut (la rotation des copies et
+   *  l'import de fichier) : mieux vaut refuser trop que d'installer n'importe
+   *  quoi par-dessus la partie de Robin. */
+  function ressembleAUnePartie(texte) {
+    try {
+      const o = JSON.parse(texte);
+      return !!(o && typeof o === 'object' && Array.isArray(o.team));
+    } catch (e) { return false; }
   }
 
   /**
@@ -4301,9 +4347,14 @@
    * une fausse manœuvre reste rattrapable (GAME3D.restoreBackup()).
    */
   function installerPartie(texte) {
-    let data = null;
-    try { data = JSON.parse(texte); } catch (e) { data = null; }
-    if (!data || typeof data !== 'object' || !Array.isArray(data.team)) {
+    // D'ABORD refermer l'écran d'aide, d'où viennent les deux boutons : la
+    // boîte de dialogue s'affiche SOUS les overlays (ils sont créés après elle
+    // dans le HUD), et sur l'écran 'help' ni Espace ni Entrée ne la font
+    // avancer — le « Le jeu redémarre… » serait resté invisible et muet.
+    // C'est aussi ce qui garantit l'ordre : le `saveGame()` de closeOverlays
+    // a lieu AVANT qu'on écrase la clé principale, jamais après.
+    closeOverlays();
+    if (!ressembleAUnePartie(texte)) {
       showMessage('Ce fichier n\'est pas une partie du jeu de Robin. 🤔\n' +
         'Rien n\'a été changé.');
       return false;
