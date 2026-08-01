@@ -1385,13 +1385,26 @@ html, body {
 
 /* --- Grille des 6 régions (carte du monde + menu du dirigeable) ------------- */
 
-.world-grid-wrap { width: min(680px, 92vw); }
-
+/* Les pastilles sont posées en `position: absolute` avec un `top` en % : il
+   leur faut donc un parent positionné ET qui ait une hauteur. `.world-grid-wrap`
+   n'avait ni l'un ni l'autre — le parent s'effondrait à zéro, les six pastilles
+   se calaient toutes sur la même bande et se recouvraient. Le défaut existait
+   déjà, discrètement (23 à 40 px de recouvrement) ; le niveau conseillé du
+   dirigeable, en allongeant les pastilles, l'a rendu franchement visible.
+   La hauteur vient de `.world-grid` ci-dessous, qui portait la bonne règle
+   depuis le début mais que personne n'appliquait. */
+.world-grid-wrap,
 .world-grid {
   position: relative;
-  width: 100%;
+  width: min(680px, 92vw);
   aspect-ratio: 3 / 2;
+  /* Deux rangées à 25 % et 75 % : leurs centres sont écartés de la moitié de
+     la hauteur. Il faut 2 × la plus haute pastille (~155 px) pour qu'elles ne
+     se touchent pas, même sur une fenêtre étroite. */
+  min-height: 330px;
 }
+
+.world-grid { width: 100%; }
 
 .world-links { position: absolute; inset: 0; width: 100%; height: 100%; }
 .world-link { stroke: rgba(168, 186, 207, .35); stroke-width: 1.4; stroke-dasharray: 3 2.4; }
@@ -1404,8 +1417,14 @@ html, body {
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  width: clamp(80px, 14vw, 118px);
-  padding: 10px 6px 8px;
+  /* 118 px suffisaient tant que le sous-titre tenait en deux lignes. Depuis
+     que le dirigeable y écrit aussi le niveau conseillé, une pastille de
+     118 px montait à 205 px de haut et mordait sur celle du dessous (les
+     pastilles sont posées à des coordonnées fixes sur la carte du monde).
+     Élargir la pastille est ce qui coûte le moins : le texte reste entier et
+     les colonnes, distantes de 250 px, ne se touchent toujours pas. */
+  width: clamp(96px, 16vw, 152px);
+  padding: 10px 8px 8px;
   background: rgba(18, 20, 42, .92) !important;
   border: 3px solid rgba(61, 94, 140, .8) !important;
   border-radius: 16px !important;
