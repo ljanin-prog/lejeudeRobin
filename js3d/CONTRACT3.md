@@ -299,8 +299,19 @@ La **Ball Maîtresse ne se vend pas** : elle se gagne en accomplissant une quêt
 
 Monnaie : `state.money`, **500 pièces au départ**, gagnées en combat
 (`rewardFor` : ~`12 × niveau` pour un dresseur, ~`4 × niveau` pour une créature sauvage,
-`500 + 40 × niveau` pour un champion). Jamais de perte d'argent à la défaite — le jeu
-n'est pas punitif.
+`20 × niveau + 200` pour un **légendaire**, `500 + 40 × niveau` pour un champion). Jamais de
+perte d'argent à la défaite — le jeu n'est pas punitif.
+
+Le barème `legendary` se demande par le drapeau `state.battle.legendary`, **pas** par un
+`kind: 'legendary'` (voir CONTRACT2 §17 : `kind` pilote la mécanique du combat, pas la
+récompense). Il est resté du code mort pendant longtemps parce que `game3d.js` passait
+`b.kind`, qui vaut `'wild'` pour un légendaire.
+
+**Capturer rapporte aussi** (correction 2.2), et volontairement **moins que combattre** :
+~`2 × niveau` pièces et la moitié de l'XP de combat pour la créature active, plus une prime
+unique de **100 pièces** la première fois qu'une espèce entre au Pokédex. Les rencontres
+surprises étant coupées (`ENCOUNTER_CHANCE = 0`), un enfant qui joue « attrapeur » ne gagnait
+sinon strictement rien et arrivait à l'arène avec une équipe trop faible.
 
 Le **Centre soigne gratuitement** toute l'équipe (`R3.get('team').healAll()`), recharge la
 Téracristallisation (§7) et affiche un petit texte d'accueil.

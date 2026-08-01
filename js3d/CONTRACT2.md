@@ -854,8 +854,18 @@ state.battle = {
   ball: { active, progress, shakeIndex, result },
   canFlee,           // false contre un dresseur ou un champion
   canCatch,          // true seulement en combat sauvage
+  legendary,         // true si l'adversaire est un légendaire (extension, voir ci-dessous)
 }
 ```
+
+**`kind` NE PREND JAMAIS la valeur `'legendary'`** (correction 1.4). Un combat de légendaire
+est un combat `'wild'` : c'est `kind === 'wild'` qui fait s'arrêter le combat après une seule
+créature adverse, et `kind !== 'wild'` qui applique le ×1,5 « dresseur » à l'XP. Inventer un
+quatrième `kind` ferait chercher un adversaire suivant qui n'existe pas, puis afficher « Ton
+adversaire est battu ! » à la place de la fin de combat sauvage. Le drapeau **`legendary`**
+(booléen, posé par `startWildBattle` d'après `species.legendary`) porte donc l'information à
+côté : il sert à choisir le barème d'argent `shop.payReward('legendary', …)`, qui n'était
+jamais atteint — un légendaire de niveau 50 rapportait 200 pièces au lieu de 1200.
 
 Rendu :
 - **Scène Three.js séparée**, plateforme circulaire pour chaque camp, décor de fond accordé

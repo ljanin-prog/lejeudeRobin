@@ -2327,6 +2327,14 @@
       ball: { active: false, progress: 0, shakeIndex: 0, result: null },
       canFlee: true,
       canCatch: true,
+      // §6 / correction 1.4 : un légendaire reste un combat de `kind: 'wild'`
+      // — c'est ce `kind` qui décide qu'un combat sauvage s'arrête après une
+      // seule créature, et qui règle le multiplicateur d'XP « dresseur ». On
+      // ne le change SURTOUT pas ; on pose un drapeau à côté, et c'est lui
+      // qui choisit le barème d'argent. Sans ça, le barème `legendary` de
+      // shop3d.js (20 × niveau + 200) n'était jamais atteint : un légendaire
+      // de niveau 50 rapportait 200 pièces au lieu de 1200.
+      legendary: !!(sp && sp.legendary),
     };
     enterBattle(b, 'Un ' + (foeMon.nick || speciesId) + ' sauvage apparaît !' +
       (sp && sp.description ? '\n' + sp.description : ''));
@@ -3056,8 +3064,10 @@
     if (b.kind === 'wild') {
       b.result = 'win';
       setBattlePhase('result');
-      // §6 : l'argent gagné. `b.kind` vaut déjà 'wild' | 'trainer' | 'champion'.
-      lignes += payRewardLine(b.kind, vaincu && vaincu.level);
+      // §6 : l'argent gagné. `b.kind` vaut 'wild' | 'trainer' | 'champion' ;
+      // le barème « légendaire » se choisit sur le drapeau `b.legendary`, posé
+      // par `startWildBattle` (correction 1.4).
+      lignes += payRewardLine(b.legendary ? 'legendary' : b.kind, vaincu && vaincu.level);
       finishBattle(['Victoire ! ✦' + lignes]);
       return;
     }
