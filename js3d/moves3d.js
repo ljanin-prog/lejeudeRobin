@@ -121,10 +121,22 @@
     "Le souffle ancien des dragons, chaud et grondant.");
   M('dragonRage', 'Colère du dragon', null, [25, 34], 0.90, 8,  'burst',
     "Le dragon se fâche pour de bon : mieux vaut s'écarter.");
-  H('soin1',   'Repos léger',    null, 10, 20, "Une petite pause qui rend 10 PV.");
-  H('soin2',   'Soin',           null, 16, 15, "Se soigne tranquillement et rend 16 PV.");
-  H('calin',   'Câlin soin',     null, 14, 15, "Un gros câlin qui fait beaucoup de bien.");
-  H('ronron',  'Ronron soignant',null, 16, 15, "Un ronronnement doux qui referme les bobos.");
+  // Les six soins hérités du jeu 2D rendaient un nombre FIXE de PV. C'était
+  // juste au niveau 6 (10 PV sur 67), ridicule au niveau 50 (10 PV sur 400) :
+  // la capacité devenait une case perdue au moment où on en a le plus besoin.
+  // Ils rendent maintenant une FRACTION des PV maximum, calée pour rendre à peu
+  // près la même chose qu'avant au niveau où on les apprend, et rester utile
+  // ensuite. Aucun ne dépasse 25 % : ils restent volontairement plus faibles
+  // que `repos` (40 %) et que les soins typés (45 %), qui coûtent, eux, deux
+  // fois moins de PP. Voir CONTRACT2 §9.
+  H('soin1',   'Repos léger',    null, { frac: 0.15 }, 20,
+    "Une petite pause : rend 15 % des PV maximum.");
+  H('soin2',   'Soin',           null, { frac: 0.22 }, 15,
+    "Se soigne tranquillement : rend 22 % des PV maximum.");
+  H('calin',   'Câlin soin',     null, { frac: 0.20 }, 15,
+    "Un gros câlin qui fait beaucoup de bien : rend 20 % des PV maximum.");
+  H('ronron',  'Ronron soignant',null, { frac: 0.22 }, 15,
+    "Un ronronnement doux qui referme les bobos : rend 22 % des PV maximum.");
 
   // ===========================================================================
   //  FEU 🔥
@@ -298,8 +310,8 @@
     { legendary: true });
   M('souffleCimes','Souffle des Cimes','air', [38, 50], 0.85, 5,  'wind',
     "Bourrasca appelle le vent des plus hauts sommets.", { legendary: true });
-  H('chant',      'Chant apaisant',    'air', 16, 15,
-    "Une mélodie douce portée par le vent, qui rend 16 PV.");
+  H('chant',      'Chant apaisant',    'air', { frac: 0.22 }, 15,
+    "Une mélodie douce portée par le vent : rend 22 % des PV maximum.");
   H('brisePaisible','Brise paisible',  'air', { frac: 0.45 }, 10,
     "Une brise tiède fait le tour de la créature et la remet d'aplomb.");
 
@@ -393,8 +405,8 @@
     { legendary: true });
   M('couronneAurore','Couronne d\'Aurore','lumiere', [38, 50], 0.85, 5, 'beam',
     "Auréol déploie son auréole : le jour se lève d'un seul coup.", { legendary: true });
-  H('soinMagie',  'Soin magique',      'lumiere', 18, 15,
-    "Un sort tout doux qui rend 18 PV.");
+  H('soinMagie',  'Soin magique',      'lumiere', { frac: 0.25 }, 15,
+    "Un sort tout doux : rend 25 % des PV maximum.");
   H('lueurBienfaisante','Lueur bienfaisante','lumiere', { frac: 0.45 }, 10,
     "Une lumière tiède se pose sur les blessures et les efface une à une.");
 

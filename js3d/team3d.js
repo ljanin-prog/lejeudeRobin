@@ -274,9 +274,14 @@
 
   /** Vrai si cette capacité rend des PV. Sans le catalogue `moves3d`, le repli
    *  de `moveDef` n'a pas de champ `heal` : on répond « non », ce qui ramène
-   *  simplement à l'ancien oubli premier-entré-premier-sorti. Jamais d'exception. */
+   *  simplement à l'ancien oubli premier-entré-premier-sorti. Jamais d'exception.
+   *
+   *  ATTENTION : `heal` a DEUX formes (CONTRACT2 §9), un nombre de PV ou
+   *  `{ frac }`. Ne tester que `num(...)` renvoyait « non » sur toutes les
+   *  fractions — c'est-à-dire sur la quasi-totalité du catalogue typé. */
   function isHealMove(id) {
-    return !!num(moveDef(id).heal, 0);
+    const h = moveDef(id).heal;
+    return !!(num(h, 0) || (h && num(h.frac, 0)));
   }
 
   /**

@@ -360,6 +360,45 @@ donnant un type et un `fx` — **les noms français existants doivent être cons
 pas dérouter Robin. Les nouvelles capacités portent des noms **français, imagés, lisibles
 par un enfant** (« Griffe de braise », « Vague déferlante », « Fissure du temps »).
 
+### Les soins sont TOUJOURS des fractions — amendement du 2026-08-01 (chantier 2.5)
+
+`heal` accepte toujours les deux formes (le nombre de PV existe encore dans `compute()` pour
+les vieilles sauvegardes et les modules tiers), mais **plus aucune capacité du catalogue n'y
+recourt, et aucune nouvelle ne le doit.** Un nombre fixe est juste une fois dans la partie et
+faux partout ailleurs : les six soins hérités du jeu 2D rendaient 10 à 18 PV, c'est-à-dire
+15 % des PV d'une créature de niveau 6 et **2,5 % de ceux d'un Auréol niveau 53**. La case
+devenait inutile au moment précis où l'enfant en avait besoin.
+
+Barème en vigueur, du plus faible au plus fort :
+
+| capacité | frac | PP | budget (frac × PP) |
+|---|---|---|---|
+| `soin1` Repos léger | 0,15 | 20 | 3,00 |
+| `calin` Câlin soin | 0,20 | 15 | 3,00 |
+| `soin2` · `ronron` · `chant` | 0,22 | 15 | 3,30 |
+| `concentration` | 0,25 | 10 | 2,50 |
+| `soinMagie` | 0,25 | 15 | 3,75 |
+| `repos` | 0,40 | 10 | 4,00 |
+| soins **typés** (un par type) | 0,45 | 10 | 4,50 |
+| `remonterLeTemps` | 0,50 | 10 | 5,00 |
+
+Deux règles à respecter en ajoutant un soin :
+
+1. **La fraction est calée pour rendre à peu près l'ancien nombre de PV au niveau où la
+   capacité s'apprend.** Un Feuillou niveau 6 récupère toujours 9-10 PV avec Repos léger ;
+   c'est plus haut que la conversion se voit. Vérifié espèce par espèce : aucun adversaire
+   des trois premières régions ne varie de plus de 6 PV.
+2. **Le budget `frac × PP` est le vrai bouton d'équilibrage**, parce que `pickAI` se soigne à
+   80 % dès que l'adversaire passe sous 30 % de PV : c'est lui qui décide combien de PV
+   l'IA peut régénérer dans un combat. Aucun des soins convertis ne dépasse 3,75, donc aucun
+   ne dépasse les soins typés (4,50) déjà en jeu — la conversion n'a créé aucun nouveau
+   record. La guerre d'usure contre les légendaires (Pyrathos : 7,00) est un problème
+   antérieur et distinct, traité par le chantier 3.9 de l'audit ; **ne pas la « corriger »
+   en rabaissant ces fractions**, la bonne cible est la probabilité de soin de `pickAI`.
+
+Piège : `move.heal` étant un objet, tout test de la forme `Number(m.heal)` ou
+`num(m.heal, 0)` répond **faux** sur une fraction. Voir §11, `isHealMove`.
+
 ---
 
 ## 8. `dex3d.js` — le Pokédex complet (26 + 36)
@@ -573,6 +612,14 @@ la remplaçante hérite du rôle, puisque le joueur vient de la choisir pour cet
 soin** d'une créature quand le learnset dépasse 4 emplacements : `dex3d.js` garantit un soin
 par espèce, l'oubli premier-entré-premier-sorti le supprimait en premier. Vaut aussi pour les
 équipes des dresseurs et des champions.
+
+> **Amendement du 2026-08-01 (chantier 2.5).** Cette protection s'appuie sur `isHealMove(id)`,
+> qui testait `num(moveDef(id).heal, 0)`. Or `heal` a **deux formes** (§9) et `num()` répond
+> `0` sur un objet : la règle ne voyait donc que les soins en PV absolus et **ratait toutes
+> les fractions**, c'est-à-dire tout le catalogue typé. Mesuré : 387 couples (espèce, niveau)
+> étaient déjà créés sans le moindre soin, et la conversion des six soins hérités du 2D en
+> fractions serait montée à 1132. `isHealMove` teste maintenant les deux formes. **Ne jamais
+> revenir à un test numérique unique sur `heal`** — c'est silencieux et invisible en jeu.
 
 **`gainXp` rend en plus `pendingLearn: [{moveId, level}]`** (extension hors contrat) : les
 capacités qu'une créature à 4 emplacements n'a PAS pu apprendre. Rien ne les apprend jamais —
