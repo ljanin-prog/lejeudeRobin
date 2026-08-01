@@ -773,10 +773,13 @@
         // d'adresse. Un clic dessus le referme aussi.
         e.preventDefault(); call('hud', 'toggleFps', []); break;
       case 'h': case 'H':
-        // Rappel des commandes. Le HUD ouvre l'écran lui-même sur `H` (comme
-        // pour `J`) : on ne prend le relais que s'il n'est pas là.
+        // Rappel des commandes. En pratique le HUD capte `H` en phase de
+        // CAPTURE et nous rappelle via `GAME3D.help()` : on n'arrive ici que
+        // s'il n'est pas chargé. `openHelpScreen()` sait déjà se replier tout
+        // seul en boîte de dialogue — inutile de tester le HUD ici, et le
+        // faire masquait justement ce repli.
         e.preventDefault();
-        if (!hudFait('openHelp')) openHelpScreen();
+        openHelpScreen();
         break;
       case 'Escape':
         e.preventDefault(); closeOverlays(); break;
@@ -3711,21 +3714,28 @@
   function openHelpScreen() {
     if (state.screen !== 'world' || state.messages.length > 0) return;
     const hud = mod('hud');
-    if (!hud || !hud.openHelp) {
-      // Repli : les commandes en boîte de dialogue. Robin doit pouvoir les
-      // revoir même si l'écran dédié manque.
-      showMessage('❓ Les commandes\n' +
-        'Flèches ou ZQSD : marcher · Maj + ←/→ : tourner la caméra\n' +
-        'Espace : parler, entrer, valider · Échap : fermer\n' +
-        'B : lancer une Ball · X : changer de Ball · F : compagnon\n' +
-        'E : équipe · C : Pokédex · N : carte · J : journal\n' +
-        'T : dirigeable · V : changer de vue · M : son · H : cette aide');
-      return;
+    // ⚠️ On ne pose `state.screen = 'help'` QUE si l'écran s'est réellement
+    // affiché. `hud.openHelp()` renvoie false quand son overlay n'a pas pu
+    // être construit : sans ce test, Robin restait bloqué sur un écran 'help'
+    // invisible dont seules Échap et H sortaient, et le repli ci-dessous ne
+    // s'affichait jamais (il ne testait que l'EXISTENCE de la fonction).
+    if (hud && hud.openHelp) {
+      releaseAllKeys();
+      const ouvert = safeCall('hud.openHelp', function () { return hud.openHelp() !== false; });
+      if (ouvert) {
+        sfx('menu');
+        state.screen = 'help';
+        return;
+      }
     }
-    releaseAllKeys();
-    sfx('menu');
-    state.screen = 'help';
-    safeCall('hud.openHelp', function () { hud.openHelp(); });
+    // Repli : les commandes en boîte de dialogue. Robin doit pouvoir les
+    // revoir même si l'écran dédié manque.
+    showMessage('❓ Les commandes\n' +
+      'Flèches ou ZQSD : marcher · Maj + ←/→ : tourner la caméra\n' +
+      'Espace : parler, entrer, valider · Échap : fermer\n' +
+      'B : lancer une Ball · X : changer de Ball · F : compagnon\n' +
+      'E : équipe · C : Pokédex · N : carte · J : journal\n' +
+      'T : dirigeable · V : changer de vue · M : son · H : cette aide');
   }
 
   function openMapScreen() {
