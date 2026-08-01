@@ -643,6 +643,35 @@ Les équipes de champions montent en puissance selon l'ordre de progression du �
 (niveaux ~10, ~18, ~26, ~34, ~42, ~50) et comportent **3 à 5 créatures**, dont au moins
 un légendaire pour les trois dernières arènes.
 
+### À armes égales — amendement du 2026-08-01 (chantier 2.5)
+
+Les arènes **4 à 6** et les dresseurs des **trois dernières régions** (givre, braise, aurore)
+alignent des **formes ÉVOLUÉES**, pas des formes de base. Les évolutions d'`evolve3d.js`
+tombent entre les niveaux 16 et 36 : à partir de Cimefroide, le joueur n'a plus une seule
+forme de base dans son équipe, et un champion qui en opposait encore offrait un examen que
+l'enfant avait déjà passé. Astréa envoyait une Koronette 47 contre un Koronetton — ×1,55 en
+statistiques, en sa défaveur.
+
+- **Les niveaux et les plafonds ne bougent pas.** `levelCap` reste 12 · 20 · 28 · 36 · 45 · 55.
+  C'est l'espèce qui change, jamais la courbe. Mesuré, puissance totale (PV + atq + déf + vit)
+  des six équipes : 945 → 1527 → 2058 → **3900** → **5426** → **5691** ; l'ordre reste
+  strictement croissant, et chaque dresseur reste plus faible que le champion de sa région.
+- **Les trois premières arènes gardent leurs formes de base**, et c'est volontaire : jusqu'au
+  niveau 24, c'est aussi ce que le joueur a dans son équipe.
+- **PIÈGE DES IDENTIFIANTS, à relire avant toute retouche.** `evolve3d.js` fabrique l'id par
+  concaténation **stricte** `base + suffixe` : Koronette → `koronetteon` (le NOM affiché est
+  « Koronetton », l'id ne l'est pas), Crabilino → `crabilinoon`, Miaouche → `miaouchear` puis
+  `miaoucheix`, Flamdrak → `flamdrakon` puis `flamdrakix`. Un id inexistant **ne lève aucune
+  erreur** : `makeMon()` retombe sur `fallbackMon()` et le champion devient une créature
+  générique de 48 PV de type plante, sans un mot dans la console. Vérifier chaque id contre
+  `CHAIN_DATA` d'evolve3d.js — et surtout pas contre `idsCanoniques()` de
+  `creatures3d.p5.js`, qui liste des variantes de modèle 3D qui ne sont pas toutes des ids.
+- `nuagette` (Astréa) et `papillon` (dresseurs) restent en forme de base : elles sont dans
+  `NO_EVOLUTION`, elles n'ont pas de forme évoluée. Ce n'est pas un oubli.
+- Effet de bord assumé : les formes évoluées portent les soins **typés** (`{frac: 0.45}`) là
+  où les formes de base avaient `soin1`/`soin2`. L'IA de `pickAI` se soigne donc mieux chez
+  les champions 4-6. C'est symétrique — le joueur a exactement les mêmes créatures.
+
 ---
 
 ## 13. `legendlib3d.js` — primitives partagées des légendaires
