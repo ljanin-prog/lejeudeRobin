@@ -4161,10 +4161,35 @@
         tera: serializeOf('tera'),
         buddy: serializeOf('buddy'),
       };
+      // ⚠️ LE FILET DE DERNIÈRE LIGNE. On n'écrase JAMAIS une partie qui a des
+      // créatures par une partie qui n'en a AUCUNE. C'est exactement ce que
+      // produit la ligne `ser` ci-dessus quand `team3d.js` ne s'est pas chargé
+      // (une virgule en trop — le scénario même pour lequel checkBoot existe,
+      // et Robin peut cliquer « Continuer quand même ») : la partie repartait
+      // à zéro dans le stockage au premier changement de biome, en silence.
+      // Ici on refuse d'écrire, ET ON LE DIT : mieux vaut une session non
+      // enregistrée qu'une partie effacée.
+      if (!data.team.length && !data.box.length && nbCreatures(readSave(SAVE_KEY)) > 0) {
+        prevenirSauvegardeSuspendue();
+        return;
+      }
       const json = JSON.stringify(data);
       rotateBackup(false);     // la copie d'AVANT, mise à l'abri (§2.8)
       ecrireSauvegarde(json);
     } catch (e) { /* localStorage indisponible : on ignore */ }
+  }
+
+  /** Le message « je n'enregistre plus », une seule fois par session : répété
+   *  à chaque sauvegarde (dix-sept points d'appel), il deviendrait du bruit. */
+  let _saveSuspendueDit = false;
+  function prevenirSauvegardeSuspendue() {
+    if (_saveSuspendueDit) return;
+    _saveSuspendueDit = true;
+    console.warn('[game3d] sauvegarde SUSPENDUE : l\'équipe est vide alors que la '
+      + 'partie enregistrée a des créatures. Un module manque sans doute '
+      + '(team3d.js ?). Rien n\'a été écrasé — recharge la page.');
+    showToast('Je n\'arrive pas à enregistrer, mais ta partie est intacte. '
+      + 'Recharge la page ! 🔄', '💾');
   }
 
   /**
@@ -4225,34 +4250,62 @@
    * changement de région…) : sans le délai de trois minutes, on triplerait le
    * nombre d'écritures pour trois copies quasi identiques.
    * @param {boolean} force  copier tout de suite (avant un import de fichier)
+   * -> l'emplacement écrit (0..2), ou -1 si rien n'a été copié.
    */
   function rotateBackup(force) {
     const b = backupIndex();
     const now = Date.now();
-    if (!force && (now - b.at) < BACKUP_MIN_MS) return;
+    if (!force && (now - b.at) < BACKUP_MIN_MS) return -1;
     let actuelle = null;
-    try { actuelle = localStorage.getItem(SAVE_KEY); } catch (e) { return; }
-    if (!actuelle) return;                 // première partie : rien à copier
+    try { actuelle = localStorage.getItem(SAVE_KEY); } catch (e) { return -1; }
+    if (!actuelle) return -1;              // première partie : rien à copier
     // ⚠️ ON NE RECOPIE JAMAIS UNE SAUVEGARDE ILLISIBLE. Sinon le jour où la clé
     // principale s'abîme, `loadGame()` reprend une copie saine, appelle
     // `saveGame()` — et la rotation écraserait une bonne copie avec la ruine
     // qu'on vient justement de contourner.
-    if (!ressembleAUnePartie(actuelle)) return;
+    if (!ressembleAUnePartie(actuelle)) return -1;
+    // ⚠️ ET SURTOUT : ON NE RECOPIE JAMAIS UNE PARTIE APPAUVRIE. « Lisible » ne
+    // suffisait pas — `saveGame()` écrit `team: []` dès que `team3d.js` ne se
+    // charge pas (une virgule en trop, exactement le cas de checkBoot), et
+    // cette sauvegarde-là passait le contrôle. Trois rotations plus tard, les
+    // trois copies étaient vides elles aussi : le filet se dissolvait dans le
+    // cas précis pour lequel il a été écrit. Deux gardes désormais :
+    //   1. une partie sans AUCUNE créature n'est jamais recopiée ;
+    //   2. une copie plus riche n'est jamais remplacée par une plus pauvre —
+    //      on saute alors à l'emplacement suivant plutôt que de bloquer la
+    //      rotation (relâcher une créature reste possible un jour).
+    const nb = nbCreatures(actuelle);
+    if (nb <= 0) return -1;
     // Deux copies identiques, c'est une profondeur d'historique perdue pour
     // rien (`closeOverlays()` sauvegarde à chaque écran refermé, même quand
     // rien n'a changé).
-    try { if (localStorage.getItem(BACKUP_KEYS[b.slot]) === actuelle) return; }
+    try { if (localStorage.getItem(BACKUP_KEYS[b.slot]) === actuelle) return -1; }
     catch (e) { /* tant pis, on recopiera */ }
-    const slot = (b.slot + 1) % BACKUP_KEYS.length;
-    try {
-      localStorage.setItem(BACKUP_KEYS[slot], actuelle);
-      b.slot = slot; b.at = now;
-      localStorage.setItem(BACKUP_INDEX, JSON.stringify(b));
-    } catch (e) {
-      // Plus de place ? On efface la copie ratée : LA VRAIE SAUVEGARDE PASSE
-      // AVANT TOUT, elle est écrite juste après nous et doit trouver la place.
-      try { localStorage.removeItem(BACKUP_KEYS[slot]); } catch (e2) { /* rien */ }
+
+    for (let i = 1; i <= BACKUP_KEYS.length; i++) {
+      const slot = (b.slot + i) % BACKUP_KEYS.length;
+      let vieille = null;
+      try { vieille = localStorage.getItem(BACKUP_KEYS[slot]); } catch (e) { vieille = null; }
+      if (vieille && nbCreatures(vieille) > nb) continue;   // elle vaut mieux : on n'y touche pas
+      try {
+        localStorage.setItem(BACKUP_KEYS[slot], actuelle);
+        // ⚠️ L'INDEX D'ABORD, `_bak` ENSUITE. Si `setItem` de l'index échoue
+        // (plausible : on vient justement de remplir le stockage avec la
+        // copie), le `catch` efface la copie — mais un curseur déjà avancé en
+        // mémoire, lui, ne se remettrait pas en arrière : il aurait désigné un
+        // emplacement vide pour toute la session, et le délai de trois minutes
+        // aurait bloqué une copie qui n'a jamais eu lieu.
+        localStorage.setItem(BACKUP_INDEX, JSON.stringify({ slot: slot, at: now }));
+        b.slot = slot; b.at = now;
+        return slot;
+      } catch (e) {
+        // Plus de place ? On efface la copie ratée : LA VRAIE SAUVEGARDE PASSE
+        // AVANT TOUT, elle est écrite juste après nous et doit trouver la place.
+        try { localStorage.removeItem(BACKUP_KEYS[slot]); } catch (e2) { /* rien */ }
+        return -1;
+      }
     }
+    return -1;   // les trois copies valent mieux que la partie en cours
   }
 
   /** Les copies de secours, de la plus récente à la plus ancienne. */
@@ -4352,6 +4405,51 @@
   }
 
   /**
+   * Combien de créatures cette sauvegarde contient-elle (équipe + boîte) ?
+   * -> 0 si elle est vide, illisible, ou si ce n'est pas une partie.
+   * C'est la mesure de RICHESSE de la rotation des copies : « lisible » ne dit
+   * rien de la valeur, et une partie vide est précisément ce que `saveGame()`
+   * écrit quand `team3d.js` manque à l'appel.
+   */
+  function nbCreatures(texteOuObjet) {
+    let o = texteOuObjet;
+    if (typeof o === 'string') {
+      try { o = JSON.parse(o); } catch (e) { return 0; }
+    }
+    if (!o || typeof o !== 'object') return 0;
+    const t = Array.isArray(o.team) ? o.team.length : 0;
+    const b = Array.isArray(o.box) ? o.box.length : 0;
+    return t + b;
+  }
+
+  /**
+   * Écrit la partie importée par-dessus la clé principale, en faisant de la
+   * place au besoin. C'était le SEUL chemin d'écriture qui n'en savait pas
+   * faire (un `setItem` nu), alors que l'import est le dernier recours quand
+   * le stockage a mal tourné : Robin ressortait son fichier et s'entendait
+   * répondre « pas de place » alors qu'effacer les copies aurait suffi.
+   * @param {string} texte   la partie à installer
+   * @param {number} refuge  l'emplacement (0..2) que `rotateBackup(true)` vient
+   *   d'écrire : c'est le point de retour, on ne le sacrifie JAMAIS.
+   * -> false seulement si même une sauvegarde toute seule ne rentre plus.
+   */
+  function ecrireImport(texte, refuge) {
+    try { localStorage.setItem(SAVE_KEY, texte); return true; }
+    catch (e) { /* plus de place, sans doute : on va en faire */ }
+    const keys = backupKeysRecentes();   // [la plus récente … la plus ancienne]
+    const garde = (typeof refuge === 'number' && refuge >= 0) ? BACKUP_KEYS[refuge] : null;
+    for (let i = keys.length - 1; i >= 0; i--) {
+      if (keys[i] === garde) continue;   // surtout pas celle-là
+      try { localStorage.removeItem(keys[i]); } catch (e) { /* rien */ }
+      try { localStorage.setItem(SAVE_KEY, texte); return true; }
+      catch (e) { /* toujours pas : on libère la copie suivante */ }
+    }
+    console.warn('[game3d] la partie importée n\'a pas pu être écrite : plus de '
+      + 'place dans ce navigateur, même après avoir libéré les copies.');
+    return false;
+  }
+
+  /**
    * Installe une partie venue d'un fichier. On refuse tout ce qui ne ressemble
    * pas à une sauvegarde, et on met la partie EN COURS à l'abri avant : même
    * une fausse manœuvre reste rattrapable (GAME3D.restoreBackup()).
@@ -4369,12 +4467,14 @@
         'Rien n\'a été changé.');
       return false;
     }
-    try {
-      rotateBackup(true);                       // la partie en cours devient une copie
-      localStorage.setItem(SAVE_KEY, texte);
-    } catch (e) {
-      console.warn('[game3d] installation de la partie impossible :', e);
-      showMessage('La partie n\'a pas pu être installée. 😥\nRien n\'a été changé.');
+    // La partie en cours devient une copie. On retient QUEL emplacement, pour
+    // ne jamais le sacrifier ensuite : c'est le point de retour qu'on vient de
+    // créer, et `restoreBackup(0)` doit pouvoir y revenir.
+    const refuge = rotateBackup(true);
+    if (!ecrireImport(texte, refuge)) {
+      showMessage('La partie n\'a pas pu être installée. 😥\n' +
+        'Il n\'y a plus de place dans ce navigateur.\n' +
+        'Ta partie précédente est intacte, elle n\'a pas bougé.');
       return false;
     }
     showMessage('Partie chargée ! 🎉\nLe jeu redémarre pour la reprendre…', function () {
@@ -4383,14 +4483,31 @@
     return true;
   }
 
-  /** Remet en place une copie de secours (0 = la plus récente). Console/debug. */
+  /**
+   * Remet en place une copie de secours (0 = la plus récente). Console/debug.
+   * C'est la fonction de DERNIER RECOURS du jeu, celle qu'un parent lancera
+   * dans la console un soir de panique : elle ne s'arrête donc pas sur un
+   * emplacement vide, elle essaie les suivants. Avant, `restoreBackup(0)`
+   * répondait « copie de secours vide » alors que deux copies saines dormaient
+   * dans bak1 et bak3, et il fallait deviner d'essayer (1) puis (2).
+   */
   function restoreBackup(n) {
     const keys = backupKeysRecentes();
-    const k = keys[(n | 0) % keys.length];
-    let raw = null;
-    try { raw = localStorage.getItem(k); } catch (e) { raw = null; }
-    if (!raw) { console.warn('[game3d] copie de secours vide :', k); return false; }
-    return installerPartie(raw);
+    const debut = ((n | 0) % keys.length + keys.length) % keys.length;
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[(debut + i) % keys.length];
+      let raw = null;
+      try { raw = localStorage.getItem(k); } catch (e) { raw = null; }
+      if (!raw || !ressembleAUnePartie(raw)) {
+        console.warn('[game3d] copie de secours inutilisable :', k, '— on essaie la suivante.');
+        continue;
+      }
+      console.log('[game3d] copie de secours reprise :', k,
+        '(' + nbCreatures(raw) + ' créature(s))');
+      return installerPartie(raw);
+    }
+    console.warn('[game3d] aucune copie de secours utilisable.');
+    return false;
   }
 
   /**
@@ -4540,8 +4657,8 @@
       console.warn('[game3d] sauvegarde illisible, on repart de zéro :', e);
       setTimeout(function () {
         showMessage('Oh non… ta sauvegarde n\'a pas pu être relue. 😥\n' +
-          'On repart d\'une nouvelle partie — mais l\'ancienne est toujours\n' +
-          'sur cet ordinateur, rien n\'a été effacé.');
+          'On repart d\'une nouvelle partie — mais l\'ancienne et ses copies\n' +
+          'sont toujours sur cet ordinateur, rien n\'a été effacé.');
       }, 800);
     }
   }

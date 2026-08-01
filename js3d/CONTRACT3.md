@@ -1038,7 +1038,7 @@ sauvegarde **déjà en place** — jamais celle qu'on s'apprête à écrire. C'e
 revenir à un état qu'on savait bon. Trois emplacements en rotation = trois âges différents,
 donc une partie abîmée sauvegardée deux fois de suite laisse encore une copie saine.
 
-Quatre règles, chacune payée par un défaut réel :
+Sept règles, chacune payée par un défaut réel :
 
 1. **Au plus une copie toutes les trois minutes** (`BACKUP_MIN_MS`). `saveGame()` est appelé
    dix-sept fois (capture, badge, achat, évolution, changement de région, fermeture d'un
@@ -1047,19 +1047,45 @@ Quatre règles, chacune payée par un défaut réel :
    Sinon, le jour où la clé principale s'abîme, `loadGame()` reprend une copie saine,
    appelle `saveGame()` — et la rotation écraserait une bonne copie avec la ruine qu'on
    vient justement de contourner.
-3. **On ne recopie jamais deux fois le même texte.** `closeOverlays()` sauvegarde à chaque
+3. **On ne recopie jamais une partie APPAUVRIE** — amendement du 2026-08-01, et c'est la
+   règle la plus importante des sept. « Lisible » ne suffisait pas : `saveGame()` écrit
+   `team: []` dès que `team3d.js` ne se charge pas (une virgule en trop, le scénario même
+   de `checkBoot()`, et Robin peut cliquer « Continuer quand même »), et cette sauvegarde-là
+   passait `ressembleAUnePartie()` sans broncher. Trois rotations plus tard les trois copies
+   étaient vides à leur tour : **le filet se dissolvait dans le cas précis pour lequel il
+   avait été écrit**, en une douzaine de minutes de jeu. Trois gardes désormais :
+   - `rotateBackup()` ne recopie pas une partie à **zéro créature** (`nbCreatures()` compte
+     l'équipe **et** la boîte) ;
+   - il ne remplace pas une copie **plus riche** par une plus pauvre : il saute alors à
+     l'emplacement suivant, il ne bloque pas la rotation ;
+   - `saveGame()` lui-même **refuse d'écraser** une clé principale qui a des créatures par
+     un état qui n'en a aucune, et le DIT une fois (`prevenirSauvegardeSuspendue()` :
+     console + toast « ta partie est intacte, recharge la page »). Mieux vaut une session
+     non enregistrée qu'une partie effacée.
+4. **On ne recopie jamais deux fois le même texte.** `closeOverlays()` sauvegarde à chaque
    écran refermé, même quand rien n'a changé : sans ce garde-fou, trois copies identiques
    remplaceraient trois âges différents.
-4. **Une copie ne prend jamais la place de la vraie partie.** Si le `localStorage` est plein,
+5. **Une copie ne prend jamais la place de la vraie partie.** Si le `localStorage` est plein,
    `ecrireSauvegarde()` sacrifie les copies **une par une, la plus vieille d'abord**, et
    réessaie à chaque fois. Le filet ne doit jamais se retourner contre ce qu'il protège.
+6. **Le curseur de rotation n'avance qu'une fois l'index ÉCRIT.** `localStorage.setItem`
+   de l'index passe **avant** `_bak.slot = …` / `_bak.at = …`. Sinon un échec d'écriture de
+   l'index (plausible : on vient de remplir le stockage avec la copie) laissait un curseur
+   avancé en mémoire désignant un emplacement que le `catch` venait d'effacer — pour toute
+   la session, et le délai de trois minutes bloquait une copie qui n'avait jamais eu lieu.
+7. **`rotateBackup()` renvoie l'emplacement écrit** (`0..2`, ou `-1`). `installerPartie()`
+   s'en sert pour ne jamais sacrifier le point de retour qu'il vient de créer (§22.3).
 
 **Ordre de lecture de `loadGame()`** : `robinGame3d_v2`, puis les copies **de la plus récente
 à la plus ancienne**, puis la v1. Les copies ne sont **jamais** lues tant que la clé
 principale répond. Quand une copie a servi, on le DIT à Robin (« il te manque peut-être les
 toutes dernières minutes ») et on la réinstalle aussitôt comme sauvegarde principale.
 
-`GAME3D.restoreBackup(n)` (console) remonte plus loin : 0 = la plus récente.
+`GAME3D.restoreBackup(n)` (console) remonte plus loin : 0 = la plus récente. **Il ne
+s'arrête pas sur un emplacement vide** : il essaie les suivants, dans l'ordre, et ne renvoie
+`false` qu'après les avoir tous essayés. C'est la fonction de dernier recours du jeu, celle
+qu'un parent lancera un soir de panique — elle ne doit pas répondre « copie de secours vide »
+quand deux copies saines dorment juste à côté.
 
 ### 22.3 Enregistrer et reprendre une partie en FICHIER
 
@@ -1071,6 +1097,14 @@ Un `Blob` et un `<a download>`, un `<input type="file">` et un `FileReader` — 
 - L'import **refuse** tout ce qui n'est pas une partie (`ressembleAUnePartie()`), et met la
   partie en cours à l'abri (`rotateBackup(true)`) **avant** d'écrire : une fausse manœuvre
   reste rattrapable par `restoreBackup(0)`.
+- L'import **sait faire de la place** (`ecrireImport()`, amendement du 2026-08-01). C'était
+  le seul chemin d'écriture qui ne le savait pas — un `setItem` nu — alors que ressortir son
+  fichier est justement ce qu'on fait quand le stockage a mal tourné : Robin s'entendait
+  répondre « pas de place » quand effacer les copies aurait suffi. `ecrireImport()` libère
+  les copies **de la plus vieille à la plus récente**, en **sautant** l'emplacement que
+  `rotateBackup(true)` vient d'écrire : le point de retour survit à l'import. Et le message
+  d'échec ne prétend plus que « rien n'a été changé » — il dit que la partie précédente est
+  intacte, ce qui est vrai, la clé principale n'ayant pas bougé.
 - **PIÈGE, et il est vicieux** : `installerPartie()` commence par `closeOverlays()`. Deux
   raisons, les deux indispensables. (a) `#message-box` est déclarée dans `index3d.html`
   AVANT que le HUD n'ajoute ses overlays : une boîte de dialogue s'affiche donc **sous**
