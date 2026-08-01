@@ -761,9 +761,27 @@ R3.register('battle', {
   notifyMove(side, move),          // side: 'player' | 'foe'
   swapIn(side, mon),               // animation de changement de créature
   playFx(side, move),              // effet visuel selon move.fx
-  throwBall(chance, cb),           // capture PENDANT un combat
+  throwBall(chance, cb),           // capture PENDANT un combat ; cb est appelé
+                                   // EXACTEMENT UNE FOIS, même si le lancer
+                                   // est refusé ou interrompu (voir plus bas)
 });
 ```
+
+⚠️ **`throwBall` appelle TOUJOURS son `cb`, exactement une fois.** `game3d.js` pose
+`b.phase = 'ball'` avant l'appel et n'en sort QUE par le callback ; or aucune touche n'est
+lue en phase `'ball'`. Un `return` sec — comme celui qui gardait « un seul lancer à la
+fois » — gelait donc la partie jusqu'au rechargement, Ball perdue. Deux cas d'abandon :
+le lancer précédent n'a pas encore rendu son verdict → on refuse le nouveau avec
+`cb('fled')` ; il n'en est qu'au scintillement de fin (son `cb` est déjà parti) → on
+l'écrase et on accepte le nouveau. `exit()` en plein vol prévient aussi avec `'fled'`.
+`A.cb` est mis à `null` dès qu'il est parti : c'est ce qui garantit l'appel *unique*.
+
+**`'fled'` en retour de `throwBall` = lancer ABANDONNÉ**, aucune Ball n'a volé :
+`game3d.js` rend la Ball au sac et rouvre le menu `'choose'`, sans faire perdre le tour.
+Jamais punitif : un enfant ne perd pas un objet à cause d'un bug. À ne pas confondre avec
+`state.battle.result === 'fled'`, qui veut dire « le joueur a pris la fuite ».
+Le garde de confort est en amont, dans `useBagItem()` : une Ball est refusée si une autre
+est déjà en vol, **avant** le décompte du sac.
 
 `battleState` (construit par `game3d.js`, lu par `battle3d.js` **et** `hud3d.js`) :
 

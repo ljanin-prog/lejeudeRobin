@@ -2703,6 +2703,9 @@
     // Une Ball : capture PENDANT le combat (uniquement en combat sauvage).
     if (isBallId(id)) {
       if (b.canCatch === false) { showToast('On ne capture pas la créature d\'un dresseur !', '🚫'); return; }
+      // Une Ball est DÉJÀ en vol : on refuse AVANT le décompte, sinon la Ball
+      // serait retirée du sac sans qu'aucune ne parte (soft-lock historique).
+      if (b.phase === 'ball' || (b.ball && b.ball.active)) return;
       // §11.2 : le sélecteur vaut AUSSI ici. Choisir une Ball dans le sac
       // devient donc le choix courant, il n'y a plus deux vérités.
       setActiveBall(id);
@@ -2774,16 +2777,33 @@
     sfx('throwBall');
 
     const bt = mod('battle');
-    if (!bt || !bt.throwBall) { resolveBattleCatch(Math.random() < chance ? 'caught' : 'escaped'); return; }
+    if (!bt || !bt.throwBall) { resolveBattleCatch(Math.random() < chance ? 'caught' : 'escaped', ballId); return; }
     const ok = safeCall('battle.throwBall', function () {
-      bt.throwBall(chance, function (result) { resolveBattleCatch(result); });
+      bt.throwBall(chance, function (result) { resolveBattleCatch(result, ballId); });
       return true;
     });
-    if (!ok) resolveBattleCatch(Math.random() < chance ? 'caught' : 'escaped');
+    if (!ok) resolveBattleCatch(Math.random() < chance ? 'caught' : 'escaped', ballId);
   }
 
-  function resolveBattleCatch(result) {
+  /** `result` vaut 'caught', 'escaped'… ou 'fled' : le lancer a été ABANDONNÉ
+   *  (refusé parce qu'une Ball volait déjà, ou combat quitté en plein vol).
+   *  Aucune Ball n'a volé : on la rend et on rouvre le menu. Jamais punitif —
+   *  un enfant ne doit pas perdre un objet à cause d'un bug. */
+  function resolveBattleCatch(result, ballId) {
     const b = state.battle;
+    if (result === 'fled') {
+      if (ballId) {
+        state.items[ballId] = (state.items[ballId] | 0) + 1;
+        ensureActiveBall();
+        refreshHudCounters();
+      }
+      if (!b) return;
+      if (b.ball) { b.ball.result = null; b.ball.active = false; }
+      // Le combat peut déjà être ailleurs (fin de combat) : on ne rouvre le
+      // menu que si on était bien resté bloqué sur le lancer.
+      if (b.phase === 'ball') setBattlePhase('choose');
+      return;
+    }
     if (!b) return;
     b.ball.result = result;
     b.ball.active = false;
