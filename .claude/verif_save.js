@@ -302,6 +302,83 @@ ko = Math.round(ko / 400); capt = Math.round(capt / 400);
 verifie('l\'écart K.O. / capture est retombé sous ×2,5',
   (ko / capt) < 2.5, 'K.O. ~' + ko + ' pièces, capture ~' + capt + ' pièces (×' + (ko / capt).toFixed(2) + ')');
 
+// ===========================================================================
+//  6. « RECOMMENCER UNE NOUVELLE PARTIE » (le bouton demandé par Robin)
+//  Le piège : effacer les clés 3D ne suffit PAS. Au rechargement suivant,
+//  `importOldSave()` retrouvait la sauvegarde 2D `robinGame_v2` et rendait à
+//  Robin son prénom, sa collection et son équipe — une nouvelle partie qui
+//  n'en était pas une. D'où le drapeau `robinGame3d_neuf`, testé ici.
+// ===========================================================================
+console.log('\n=== 6. Recommencer une nouvelle partie ===');
+const BLOC_NEUF = src.match(/const SAVE_KEY = '[^']+';/)[0] + '\n'
+  + src.match(/const SAVE_KEY_V1 = '[^']+';/)[0] + '\n'
+  + src.match(/const OLD_SAVE_KEY = '[^']+';/)[0] + '\n'
+  + src.match(/const NEW_GAME_KEY = '[^']+';/)[0] + '\n'
+  + src.match(/const BACKUP_KEYS = [^;]+;/)[0] + '\n'
+  + src.match(/const BACKUP_INDEX = '[^']+';/)[0] + '\n'
+  // Le décor minimal dont `importOldSave` a besoin pour tourner hors navigateur.
+  + 'let _partieEffacee = false;\n'
+  + 'const state = { playerName: "", collection: {}, seen: {}, defeatedTrainers: {} };\n'
+  + 'let _importe = false;\n'
+  + 'function teamApi() { return { importFromV2: function () { _importe = true; return { team: 1, box: 0 }; } }; }\n'
+  + 'function safeCall(n, f) { return f(); }\n'
+  + 'function saveGame() { if (_partieEffacee) return; localStorage.setItem(SAVE_KEY, JSON.stringify({ version: 2, playerName: state.playerName, team: [], box: [] })); }\n'
+  + extrait('importOldSave') + '\n'
+  + extrait('restartGame') + '\n'
+  + 'globalThis.NEUF = { importOldSave, restartGame, state,'
+  + ' aImporte: function () { return _importe; },'
+  + ' remise: function () { _importe = false; _partieEffacee = false;'
+  + ' state.playerName = ""; state.collection = {}; state.seen = {}; } };\n';
+vm.runInContext('(function(){' + BLOC_NEUF + '})();', sandbox, { filename: 'bloc-recommencer' });
+const NEUF = sandbox.NEUF;
+const PARTIE_2D = JSON.stringify({ playerName: 'Robin', collection: { miaouche: 3 },
+  team: [{ id: 'miaouche', level: 20 }], defeatedTrainers: { luc: true } });
+
+// -- 6a. Sans le drapeau, la partie 2D est bien reprise (comportement d'origine)
+Object.keys(store._data).forEach(k => store.removeItem(k));
+NEUF.remise();
+store.setItem('robinGame_v2', PARTIE_2D);
+NEUF.importOldSave();
+verifie('au tout premier lancement, la partie 2D est toujours reprise',
+  NEUF.aImporte() === true && NEUF.state.playerName === 'Robin');
+
+// -- 6b. « Recommencer » efface la 3D, garde la 2D, pose le drapeau ----------
+Object.keys(store._data).forEach(k => store.removeItem(k));
+NEUF.remise();
+store.setItem('robinGame3d_v2', partie(6, 'en-cours'));
+store.setItem('robinGame3d_v1', partie(3, 'vieille'));
+store.setItem('robinGame3d_bak1', partie(6, 'copie1'));
+store.setItem('robinGame3d_bak2', partie(5, 'copie2'));
+store.setItem('robinGame3d_baks', JSON.stringify({ slot: 1, at: 1 }));
+store.setItem('robinGame_v2', PARTIE_2D);
+NEUF.restartGame();
+verifie('la partie 3D et ses copies sont effacées',
+  !store.getItem('robinGame3d_v2') && !store.getItem('robinGame3d_v1') &&
+  !store.getItem('robinGame3d_bak1') && !store.getItem('robinGame3d_bak2') &&
+  !store.getItem('robinGame3d_baks'));
+verifie('la sauvegarde 2D n\'est PAS touchée (l\'autre version du jeu s\'en sert)',
+  store.getItem('robinGame_v2') === PARTIE_2D);
+verifie('le drapeau « nouvelle partie » est posé',
+  store.getItem('robinGame3d_neuf') === '1');
+
+// -- 6c. Au rechargement, la 2D ne ressuscite pas ---------------------------
+NEUF.remise();
+NEUF.importOldSave();
+verifie('après « Recommencer », la partie 2D n\'est PAS reprise',
+  NEUF.aImporte() === false, 'prénom repris = « ' + NEUF.state.playerName + ' »');
+verifie('la nouvelle partie ne récupère aucune créature',
+  Object.keys(NEUF.state.collection).length === 0);
+
+// -- 6d. Le verrou d'écriture, lu dans le VRAI game3d.js ---------------------
+// La boucle de jeu tourne encore pendant que la page se recharge : une seule
+// sauvegarde partie d'ici réécrirait ce qu'on vient d'effacer. Le vrai
+// `saveGame()` est trop entouré pour tourner ici — on vérifie donc que son
+// verrou est bien la PREMIÈRE chose qu'il fait, et que `restartGame` le pose.
+verifie('saveGame() refuse d\'écrire dès la première ligne après un effacement',
+  /function saveGame\s*\(\)\s*\{(?:\s*\/\/[^\n]*\n)*\s*if \(_partieEffacee\) return;/.test(src));
+verifie('restartGame() lève ce verrou avant de toucher au stockage',
+  /function restartGame\s*\(\)\s*\{\s*_partieEffacee = true;/.test(src));
+
 console.log(echecs === 0 ? '\nTOUT EST BON — la partie de Robin est en sécurité.'
                          : '\n' + echecs + ' PROBLÈME(S).');
 process.exit(echecs === 0 ? 0 : 1);
