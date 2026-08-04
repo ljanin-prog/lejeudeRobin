@@ -665,19 +665,47 @@
   //  CAPTURE
   // ---------------------------------------------------------------------------
 
+  // --- Les légendaires se méritent (demande de Robin) -------------------------
+  //  Un légendaire se capturait comme une créature ordinaire, à ceci près que
+  //  son `catchRate` était plus bas : trois Hyper Balls sur une bête à PV
+  //  pleins et c'était plié. Robin voulait qu'ils soient DIFFICILES.
+  //
+  //  Deux règles, et deux seulement :
+  //    1. il faut l'AFFAIBLIR — sur un légendaire, les PV comptent presque
+  //       trois fois plus que sur une créature normale (×4 à un cheveu du K.O.
+  //       contre ×2,6) : lui jeter une Ball à PV pleins ne marche quasiment
+  //       jamais, il faut d'abord le combattre ;
+  //    2. même dans les meilleures conditions, la Ball peut rater : le plafond
+  //       tombe de 97 % à 35 %. Il faut donc en lancer plusieurs, et c'est
+  //       exactement ce qui rend la capture mémorable.
+  //
+  //  La Ball Maîtresse, elle, reste une capture garantie : c'est une promesse
+  //  écrite noir sur blanc dans la boutique et dans la quête, et on n'en gagne
+  //  que deux dans tout le jeu. C'est LE joker pour le légendaire qui résiste.
+  //
+  //  Ces trois nombres sont les molettes de réglage : les baisser rend la
+  //  chasse plus douce, les monter la rend impitoyable.
+  const LEGEND_SOIN = 3.0;       // poids des PV manquants (créature normale : 1.6)
+  const LEGEND_MAX = 0.35;       // plafond par lancer  (créature normale : 0.97)
+  const LEGEND_MIN = 0.02;       // plancher par lancer (créature normale : 0.03)
+
   /**
    * Chance de capture, entre 0.03 et 0.97 (contrat §11) — SAUF la Ball
-   * Maîtresse, qui rend exactement 1 (voir plus bas).
-   * Volontairement GÉNÉREUSE : un enfant de 10 ans ne doit pas rater dix fois
-   * de suite. `ballBonus` : Pokéball 1.0 · Super Ball 1.5 · Hyper Ball 2.2 ·
-   * Ball Maîtresse 99.
+   * Maîtresse, qui rend exactement 1 (voir plus bas), et SAUF les légendaires,
+   * bornés à 35 % par lancer (voir juste au-dessus).
+   * Volontairement GÉNÉREUSE pour tout le reste : un enfant de 10 ans ne doit
+   * pas rater dix fois de suite. `ballBonus` : Pokéball 1.0 · Super Ball 1.5 ·
+   * Hyper Ball 2.2 · Ball Maîtresse 99.
    */
   function catchChance(m, species, ballBonus) {
     const sp = species || (m ? speciesOf(m.id) : null) || fallbackSpecies('inconnu');
     const base = clamp(num(sp.catchRate, 0.5), 0.01, 1);
     const maxHp = m ? Math.max(1, num(m.maxHp, 1)) : 1;
     const hp = m ? clamp(num(m.hp, maxHp), 0, maxHp) : maxHp;
-    const soin = 1 + (1 - hp / maxHp) * 1.6;   // affaiblie = bien plus facile
+    // On lit le drapeau sur l'individu ET sur l'espèce : une créature de combat
+    // n'a pas toujours son espèce sous la main (même règle que `xpFor`).
+    const legend = !!(sp && sp.legendary) || !!(m && m.legendary);
+    const soin = 1 + (1 - hp / maxHp) * (legend ? LEGEND_SOIN : 1.6);
     const bonus = Math.max(0, num(ballBonus, 1));
     // LA BALL MAÎTRESSE NE RATE JAMAIS — 1, pas 0.97 (contrat §11 amendé).
     // La boutique promet « Elle ne rate jamais », la quête aussi, et on n'en
@@ -686,6 +714,7 @@
     // jeu. On teste le bonus (>= 99) et pas l'identifiant de la Ball : ce
     // module ne doit rien savoir de `shop3d.js`.
     if (bonus >= 99) return 1;
+    if (legend) return clamp(base * soin * bonus, LEGEND_MIN, LEGEND_MAX);
     return clamp(base * soin * bonus, 0.03, 0.97);
   }
 

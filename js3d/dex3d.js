@@ -451,6 +451,68 @@
              speed: speed, mid: mid, description: description };
   };
 
+  // ===========================================================================
+  //  LE TITRE DE CHAQUE LÉGENDAIRE
+  //  « SYLVAROS, le Cerf Dormant » au lieu de « Sylvaros ». Les noms, eux, ne
+  //  bougent pas : ce sont les ids du contrat, et surtout ils sont écrits dans
+  //  la sauvegarde de Robin (chaque créature capturée garde son `nick`).
+  //  Un titre à part règle donc le problème sans toucher à une seule ligne de
+  //  la table du §4 ni risquer la partie en cours.
+  //  Les mots sont repris des descriptions ci-dessous et des indices de quête
+  //  de quest3d.js (« une fée-fleur, un colosse de racines, un griffon des
+  //  cimes… ») : un enfant qui lit l'indice doit reconnaître la créature.
+  // ===========================================================================
+  var LEGEND_TITLES = {
+    // feu — Caldeira de Braise
+    pyrathos: 'le Dragon de Magma',
+    emberyx: 'le Phénix des Cendres',
+    fournalis: 'le Lion de Lave',
+    // eau — Côte de Saphir
+    abyssalor: 'le Léviathan des Abysses',
+    ondinae: "l'Esprit d'Écume",
+    marea: 'la Reine des Marées',
+    // plante — Val d'Émeraude
+    sylvaros: 'le Cerf Dormant',
+    florabelle: 'la Fée des Pétales',
+    racinor: 'le Colosse de Racines',
+    // foudre
+    fulguron: "l'Oiseau-Tonnerre",
+    voltaris: 'le Félin de Foudre',
+    orageon: "le Nuage d'Orage",
+    // glace — Massif de Givre
+    cryonix: 'le Dragon du Trône de Glace',
+    givrea: 'la Biche de Givre',
+    banquisor: "l'Ours de Banquise",
+    // air
+    bourrasca: 'le Griffon des Cimes',
+    zephyrion: 'le Ruban de Vent',
+    aelune: 'la Raie Céleste',
+    // terre
+    geomastre: 'la Tortue-Montagne',
+    terracor: 'la Taupe-Titan',
+    limonis: 'le Golem de Glaise',
+    // roche
+    monolithe: 'le Gardien des Menhirs',
+    cristallia: 'le Cerf de Cristal',
+    obsidion: "la Panthère d'Obsidienne",
+    // lumière — Plateau d'Aurore
+    aureol: "le Griffon de l'Aube",
+    solaria: 'le Phénix de Lumière',
+    prismee: "le Papillon d'Arc-en-ciel",
+    // ombre
+    nyxaroth: 'le Loup des Ténèbres',
+    penombra: 'le Chat de Brume',
+    eclipsion: "le Corbeau d'Éclipse",
+    // temps
+    chronoss: "la Tortue-Horloge",
+    eternia: 'le Sphinx du Temps',
+    sablion: 'le Serpent de Sable',
+    // espace
+    vortexis: 'la Raie-Galaxie',
+    astralis: 'la Baleine Stellaire',
+    nebulon: 'la Méduse-Nébuleuse',
+  };
+
   // Pour chaque type : [attaque forte, soin, signature] + la liste des 3 mid
   // utilisées à tour de rôle par les 3 légendaires (pour qu'ils ne se
   // ressemblent pas tous en combat).
@@ -681,6 +743,9 @@
       var lo = rl[1] + 4, hi = Math.min(60, rl[1] + 9);
       out.push({
         id: d.id, name: d.name,
+        // Titre honorifique, affiché à côté du nom (combat, Pokédex, journal).
+        // Vide pour une créature ordinaire : seuls les 36 en ont un.
+        title: LEGEND_TITLES[d.id] || '',
         types: [type],
         legendary: true,
         rare: true, dragon: false, kawaii: false,

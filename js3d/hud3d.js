@@ -640,6 +640,11 @@
     ui.compassCanvas.height = CP_H;
     ui.compassCtx = ui.compassCanvas.getContext('2d');
     ui.compassTarget = el('div', 'cp-target', p, '');
+    // L'OBJECTIF DU MOMENT, toujours sous les yeux. `quest3d.hint()` produisait
+    // déjà cette phrase, mais elle ne s'affichait QUE dans le journal (touche J) :
+    // un enfant qui reprend sa partie trois jours plus tard ne savait plus quoi
+    // faire, et ne pensait pas à ouvrir le journal.
+    ui.compassQuest = el('div', 'cp-quest hidden', p, '');
     p.title = 'Ta position dans la région — N pour la grande carte';
     p.addEventListener('click', function () { fakeKey('n'); });
     ui.compass = p;
@@ -758,6 +763,18 @@
       show(ui.compassTarget);
     } else {
       ui.compassTarget.textContent = '';
+    }
+
+    // --- la ligne « ce que je dois faire maintenant » -------------------------
+    if (ui.compassQuest) {
+      const objectif = (typeof info.quest === 'string') ? info.quest.trim() : '';
+      if (objectif) {
+        ui.compassQuest.textContent = '🎯 ' + objectif;
+        show(ui.compassQuest);
+      } else {
+        ui.compassQuest.textContent = '';
+        hide(ui.compassQuest);
+      }
     }
   }
 
@@ -2345,6 +2362,20 @@
     ui.dexDetailThumb.innerHTML = '';
     ui.dexDetailThumb.appendChild(thumbFor(sp, 132));
     ui.dexDetailName.textContent = sp.name + (sp.legendary ? '  ✨' : '');
+    // Le titre des légendaires (« le Cerf Dormant »), sous le nom. Créé à la
+    // volée : le Pokédex existait avant les titres, et une créature ordinaire
+    // n'en a pas.
+    if (!ui.dexDetailTitle) {
+      ui.dexDetailTitle = el('div', 'dd-title hidden', null, '');
+      ui.dexDetailName.parentNode.insertBefore(ui.dexDetailTitle, ui.dexDetailTypes);
+    }
+    if (sp.title) {
+      ui.dexDetailTitle.textContent = sp.title;
+      show(ui.dexDetailTitle);
+    } else {
+      ui.dexDetailTitle.textContent = '';
+      hide(ui.dexDetailTitle);
+    }
     ui.dexDetailTypes.innerHTML = '';
     sp.types.forEach(function (t) { ui.dexDetailTypes.appendChild(typeBadge(t)); });
     ui.dexDetailDesc.textContent = sp.description || '';
