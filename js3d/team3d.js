@@ -665,34 +665,51 @@
   //  CAPTURE
   // ---------------------------------------------------------------------------
 
-  // --- Les légendaires se méritent (demande de Robin) -------------------------
-  //  Un légendaire se capturait comme une créature ordinaire, à ceci près que
-  //  son `catchRate` était plus bas : trois Hyper Balls sur une bête à PV
-  //  pleins et c'était plié. Robin voulait qu'ils soient DIFFICILES.
+  // --- Les légendaires se méritent, mais pas trop (réglage de Robin) ----------
+  //  Première version : « je veux qu'ils soient DIFFICILES ». Deuxième verdict,
+  //  manette en main : « c'est vraiment trop dur ». Il avait raison — le calcul
+  //  partait du `catchRate` de l'espèce, minuscule chez les légendaires (0,05 à
+  //  0,09 selon la créature), et un légendaire à moitié épuisé ne se laissait
+  //  attraper que 12 fois sur 100 à la Pokéball. Impossible à deviner en jouant,
+  //  et invisible dans le code : le nombre affiché nulle part était le produit
+  //  de trois facteurs.
   //
-  //  Deux règles, et deux seulement :
-  //    1. il faut l'AFFAIBLIR — sur un légendaire, les PV comptent presque
-  //       trois fois plus que sur une créature normale (×4 à un cheveu du K.O.
-  //       contre ×2,6) : lui jeter une Ball à PV pleins ne marche quasiment
-  //       jamais, il faut d'abord le combattre ;
-  //    2. même dans les meilleures conditions, la Ball peut rater : le plafond
-  //       tombe de 97 % à 35 %. Il faut donc en lancer plusieurs, et c'est
-  //       exactement ce qui rend la capture mémorable.
+  //  On ANCRE donc les chances sur le cas que Robin a lui-même décrit, et on
+  //  déduit tout le reste de cette ancre :
   //
-  //  La Ball Maîtresse, elle, reste une capture garantie : c'est une promesse
+  //      LÉGENDAIRE FATIGUÉ À MOITIÉ  ->  Pokéball 40 %   ·   Super Ball 50 %
+  //
+  //  Ce qui donne, du plus frais au plus épuisé (Pokéball · Super · Hyper) :
+  //      PV pleins       16 %  ·  20 %  ·  26 %      -> il faut le combattre
+  //      trois quarts    28 %  ·  35 %  ·  45 %
+  //      la moitié       40 %  ·  50 %  ·  64 %      <- l'ancre demandée
+  //      un quart        52 %  ·  65 %  ·  83 %
+  //      à un cheveu     64 %  ·  80 %  ·  90 %      -> plafond
+  //
+  //  Les deux règles du réglage d'origine tiennent toujours : il faut
+  //  l'AFFAIBLIR d'abord, et une Ball peut toujours rater. Seule l'échelle
+  //  change. La Ball Maîtresse reste une capture garantie : c'est une promesse
   //  écrite noir sur blanc dans la boutique et dans la quête, et on n'en gagne
-  //  que deux dans tout le jeu. C'est LE joker pour le légendaire qui résiste.
+  //  que deux dans tout le jeu.
   //
-  //  Ces trois nombres sont les molettes de réglage : les baisser rend la
-  //  chasse plus douce, les monter la rend impitoyable.
+  //  Ces cinq nombres sont les molettes : LEGEND_ANCRE est la seule à toucher
+  //  si Robin redemande « plus facile » ou « plus dur ».
+  const LEGEND_ANCRE = 0.40;     // Pokéball sur un légendaire à mi-PV
   const LEGEND_SOIN = 3.0;       // poids des PV manquants (créature normale : 1.6)
-  const LEGEND_MAX = 0.35;       // plafond par lancer  (créature normale : 0.97)
-  const LEGEND_MIN = 0.02;       // plancher par lancer (créature normale : 0.03)
+  // La fatigue de l'ancre : `soin` vaut exactement ça quand il reste la moitié
+  // des PV. Diviser par cette valeur fait passer la formule par 40 % pile.
+  const LEGEND_FATIGUE_MOITIE = 1 + 0.5 * LEGEND_SOIN;   // = 2.5
+  // Sur un légendaire, l'avantage d'une meilleure Ball compte MOITIÉ : une
+  // Super Ball vaut ×1,5 sur une créature ordinaire, ce qui ferait 60 % ici —
+  // or Robin a demandé 50 %. Avec ce poids, ×1,5 devient ×1,25, soit 50 % pile.
+  const LEGEND_BALL_POIDS = 0.5;
+  const LEGEND_MAX = 0.90;       // plafond par lancer  (créature normale : 0.97)
+  const LEGEND_MIN = 0.05;       // plancher par lancer (créature normale : 0.03)
 
   /**
    * Chance de capture, entre 0.03 et 0.97 (contrat §11) — SAUF la Ball
    * Maîtresse, qui rend exactement 1 (voir plus bas), et SAUF les légendaires,
-   * bornés à 35 % par lancer (voir juste au-dessus).
+   * qui suivent leur propre échelle, ancrée sur 40 % à mi-PV (juste au-dessus).
    * Volontairement GÉNÉREUSE pour tout le reste : un enfant de 10 ans ne doit
    * pas rater dix fois de suite. `ballBonus` : Pokéball 1.0 · Super Ball 1.5 ·
    * Hyper Ball 2.2 · Ball Maîtresse 99.
@@ -714,7 +731,15 @@
     // jeu. On teste le bonus (>= 99) et pas l'identifiant de la Ball : ce
     // module ne doit rien savoir de `shop3d.js`.
     if (bonus >= 99) return 1;
-    if (legend) return clamp(base * soin * bonus, LEGEND_MIN, LEGEND_MAX);
+    if (legend) {
+      // Le `catchRate` de l'espèce ne joue plus ici : il valait 0,05 pour l'un
+      // et 0,09 pour l'autre, un écart que personne ne peut percevoir en jouant
+      // mais qui suffisait à rendre le réglage impossible à énoncer. Tous les
+      // légendaires partagent donc la même échelle, ancrée sur les 40 % de Robin.
+      const ballLegend = 1 + (bonus - 1) * LEGEND_BALL_POIDS;
+      const fatigue = soin / LEGEND_FATIGUE_MOITIE;   // 1 pile à mi-PV
+      return clamp(LEGEND_ANCRE * ballLegend * fatigue, LEGEND_MIN, LEGEND_MAX);
+    }
     return clamp(base * soin * bonus, 0.03, 0.97);
   }
 

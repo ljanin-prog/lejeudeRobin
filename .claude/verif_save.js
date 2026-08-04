@@ -379,6 +379,55 @@ verifie('saveGame() refuse d\'écrire dès la première ligne après un effaceme
 verifie('restartGame() lève ce verrou avant de toucher au stockage',
   /function restartGame\s*\(\)\s*\{\s*_partieEffacee = true;/.test(src));
 
+// ===========================================================================
+//  7. ATTRAPER UN LÉGENDAIRE — l'ancre demandée par Robin
+//  « c'est vraiment trop dur » : les chances sont désormais ancrées sur un
+//  légendaire fatigué à MOITIÉ — 40 % à la Pokéball, 50 % à la Super Ball.
+//  Ces deux nombres viennent de Robin : on les vérifie tels quels.
+// ===========================================================================
+console.log('\n=== 7. Attraper un légendaire fatigué à moitié ===');
+function chanceLegend(id, ratio, ball) {
+  const sp = dex.get(id);
+  const m = team.create(id, 50);
+  m.hp = Math.max(1, Math.round(m.maxHp * ratio));
+  return team.catchChance(m, sp, ball);
+}
+const POKEBALL = 1.0, SUPERBALL = 1.5, HYPERBALL = 2.2, MAITRESSE = 99;
+verifie('à mi-PV, la Pokéball donne 40 %',
+  Math.round(chanceLegend('sylvaros', 0.5, POKEBALL) * 100) === 40,
+  Math.round(chanceLegend('sylvaros', 0.5, POKEBALL) * 100) + ' %');
+verifie('à mi-PV, la Super Ball donne 50 %',
+  Math.round(chanceLegend('sylvaros', 0.5, SUPERBALL) * 100) === 50,
+  Math.round(chanceLegend('sylvaros', 0.5, SUPERBALL) * 100) + ' %');
+
+// Les 36 légendaires doivent donner EXACTEMENT la même chose : leur `catchRate`
+// d'espèce (0,05 à 0,09) ne se perçoit pas en jouant et rendait la promesse
+// « 40 % » fausse pour 35 créatures sur 36.
+const ecarts = dex.ALL.filter(s => s.legendary)
+  .filter(s => Math.round(chanceLegend(s.id, 0.5, POKEBALL) * 100) !== 40)
+  .map(s => s.name);
+verifie('les 36 légendaires suivent la même règle', ecarts.length === 0,
+  ecarts.length ? ecarts.join(', ') : dex.ALL.filter(s => s.legendary).length + ' vérifiés');
+
+// L'esprit du réglage d'origine tient toujours : il faut l'affaiblir d'abord.
+verifie('à PV pleins, ça reste dur (moins de 30 % même à l\'Hyper Ball)',
+  chanceLegend('sylvaros', 1, HYPERBALL) < 0.30,
+  Math.round(chanceLegend('sylvaros', 1, HYPERBALL) * 100) + ' %');
+verifie('plus il est fatigué, mieux ça marche',
+  chanceLegend('sylvaros', 1, POKEBALL) < chanceLegend('sylvaros', 0.5, POKEBALL) &&
+  chanceLegend('sylvaros', 0.5, POKEBALL) < chanceLegend('sylvaros', 0.1, POKEBALL));
+verifie('une meilleure Ball reste toujours meilleure',
+  chanceLegend('sylvaros', 0.5, POKEBALL) < chanceLegend('sylvaros', 0.5, SUPERBALL) &&
+  chanceLegend('sylvaros', 0.5, SUPERBALL) < chanceLegend('sylvaros', 0.5, HYPERBALL));
+verifie('la Ball Maîtresse ne rate JAMAIS, même sur un légendaire en pleine forme',
+  chanceLegend('sylvaros', 1, MAITRESSE) === 1);
+// Les créatures ordinaires ne doivent rien avoir senti passer.
+const miaou = team.create('miaouche', 12);
+miaou.hp = Math.round(miaou.maxHp * 0.5);
+verifie('une créature ordinaire garde ses chances d\'avant',
+  team.catchChance(miaou, dex.get('miaouche'), POKEBALL) > 0.9,
+  Math.round(team.catchChance(miaou, dex.get('miaouche'), POKEBALL) * 100) + ' %');
+
 console.log(echecs === 0 ? '\nTOUT EST BON — la partie de Robin est en sécurité.'
                          : '\n' + echecs + ' PROBLÈME(S).');
 process.exit(echecs === 0 ? 0 : 1);
