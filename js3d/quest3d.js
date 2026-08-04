@@ -661,8 +661,29 @@
     infirmier: 'infirmiere', soigneur: 'infirmiere'
   };
 
-  function roleOf(npcRole) {
+  /**
+   * L'id NU d'un PNJ.
+   * regions3d.js préfixe tous ses PNJ par leur région (`spec.id + '_' + t.id`) :
+   * le Vieux Sage Mathis s'appelle en vrai « val_sage », pas « sage ». Les
+   * tables ci-dessus, elles, sont écrites avec l'id du modèle. Sans ce
+   * décapage, AUCUN id ne correspondait : les 66 PNJ du jeu retombaient tous
+   * sur « villageois », et le Vieux Sage Mathis conseillait d'aller voir le
+   * Vieux Sage Mathis. Personne ne racontait plus sa légende.
+   */
+  function bareId(npcRole) {
     var r = String(npcRole || '').toLowerCase();
+    for (var k = 0; k < ORDER.length; k++) {
+      var p = ORDER[k] + '_';
+      if (r.indexOf(p) === 0) return r.slice(p.length);
+    }
+    return r;
+  }
+
+  function roleOf(npcRole) {
+    var r = bareId(npcRole);
+    // Les champions d'arène viennent d'arenas3d.js et s'appellent
+    // « champion_val », « champion_sylve »… — pas de région en préfixe.
+    if (r.indexOf('champion') === 0) return 'champion';
     if (ROLE_OF_NPC[r]) return ROLE_OF_NPC[r];
     if (ROLE_ALIAS[r]) return ROLE_ALIAS[r];
     if (r === 'ancien' || r === 'savant' || r === 'guide' || r === 'enfant' ||
@@ -671,6 +692,16 @@
     if (r.indexOf('t_') === 0) return 'dresseur';
     if (r.indexOf('enfant') === 0 || r.indexOf('petit') === 0) return 'enfant';
     return 'villageois';
+  }
+
+  /**
+   * Ce PNJ est-il LE conteur de sa région ?
+   * On le demande à la quête elle-même (`q.conteur`) plutôt qu'aux tables de
+   * rôles : quoi qu'il arrive à ces tables, celui qui raconte la légende ne
+   * pourra plus jamais conseiller d'aller se voir lui-même.
+   */
+  function estLeConteur(npcRole, q) {
+    return !!q && !!q.conteur && bareId(npcRole) === String(q.conteur).toLowerCase();
   }
 
   // Répliques génériques, par rôle puis par état de la quête.
@@ -847,7 +878,9 @@
   function dialogFor(npcRole, regionId) {
     var q = BY_REGION[regionId];
     if (!q) return [];
-    var role = roleOf(npcRole);
+    // Le conteur est reconnu par la quête, pas par les tables de rôles : c'est
+    // la seule garantie qu'il ne s'enverra jamais chercher lui-même.
+    var role = estLeConteur(npcRole, q) ? 'ancien' : roleOf(npcRole);
     var st = state(regionId);
 
     // L'ANCIEN est celui qui raconte la légende : lui parler, c'est l'entendre.

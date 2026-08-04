@@ -227,6 +227,7 @@ R3.register('quest', {
   sanctuary(regionId),             // -> { x, y, name, open } — le lieu du sanctuaire
   isLegendAwake(speciesId),        // -> bool — le légendaire peut-il apparaître ?
   dialogFor(npcRole, regionId),    // -> [string] — ce que raconte un PNJ de la région
+  roleOf(npcId),                   // -> 'ancien' | 'savant' | 'guide' | … | 'villageois'
   journal(),                       // -> [{ region, titre, ligne, fait }] pour le HUD
   serialize(), deserialize(o),
 });
@@ -258,6 +259,17 @@ Règles :
 - Textes en **français, chaleureux, courts** — deux ou trois phrases maximum par écran.
   C'est ce que Robin va lire ; c'est le cœur de la demande n° 3.
 - Tout l'état tient dans `serialize()` : `{ regionId: { heard, open, caught: [ids], done } }`.
+
+> ⚠️ **L'id d'un PNJ n'est PAS l'id de son modèle.** `regions3d.js` construit ses PNJ
+> avec `id: spec.id + '_' + t.id` : le Vieux Sage Mathis s'appelle `val_sage`, jamais
+> `sage`. Les champions viennent d'`arenas3d.js` et s'appellent `champion_val`.
+> `game3d.js` passe `npc.id` **tel quel** à `dialogFor()`. Toute table indexée par id de
+> PNJ (rôles, dialogues, repères) doit donc décaper le préfixe de région d'abord —
+> sinon elle ne trouve rien et retombe silencieusement sur son repli. Coût réel de
+> l'oubli : les **66 PNJ du jeu** ont joué le rôle « villageois » pendant une vague
+> entière, plus aucun conteur ne racontait sa légende, et le Vieux Sage Mathis
+> conseillait d'aller voir le Vieux Sage Mathis. Aucune erreur, aucun symptôme visible
+> côté code. Le harnais `.claude/verif_pnj.js` monte la garde.
 
 ---
 
