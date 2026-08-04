@@ -61,6 +61,13 @@
   const SAVE_KEY_V1 = 'robinGame3d_v1';  // sauvegarde 3D d'avant — LECTURE SEULE
   const OLD_SAVE_KEY = 'robinGame_v2';   // sauvegarde du jeu 2D — LECTURE SEULE
 
+  // « J'ai demandé à repartir de zéro. » Ce petit drapeau survit au rechargement
+  // et empêche `importOldSave()` de ressusciter la partie 2D : sans lui, effacer
+  // les clés 3D rendait aussitôt à Robin son nom, sa collection et son équipe
+  // d'origine — une nouvelle partie qui n'en était pas une. La clé 2D, elle,
+  // n'est JAMAIS effacée : la version 2D continue de vivre sa vie.
+  const NEW_GAME_KEY = 'robinGame3d_neuf';
+
   const START_MONEY = 500;               // §6 : de quoi s'offrir deux Potions
   const DEFAULT_BALL = 'pokeball';
 
@@ -4209,6 +4216,10 @@
   }
 
   function saveGame() {
+    // La partie vient d'être effacée et la page se recharge : la boucle de jeu
+    // tourne encore quelques images. Une seule sauvegarde partie d'ici
+    // réécrirait ce que « Recommencer » vient d'effacer.
+    if (_partieEffacee) return;
     try {
       const team = teamApi();
       const ser = (team && team.serialize) ? team.serialize() : { team: [], box: [] };
@@ -4502,6 +4513,62 @@
     return t + b;
   }
 
+  // ---------------------------------------------------------------------------
+  //  RECOMMENCER UNE NOUVELLE PARTIE (demande de Robin)
+  //  Le geste le plus définitif du jeu. Il vit derrière deux clics dans l'écran
+  //  d'aide, et l'interface propose d'abord d'enregistrer la partie dans un
+  //  fichier : effacer par erreur des mois de jeu ne doit JAMAIS être à une
+  //  seule maladresse près.
+  // ---------------------------------------------------------------------------
+
+  /** Vrai dès que « Recommencer » a effacé les clés : plus une seule écriture. */
+  let _partieEffacee = false;
+
+  /**
+   * De quoi est faite la partie en cours, pour que l'écran de confirmation
+   * dise à Robin ce qu'il s'apprête exactement à perdre. Un « tu vas tout
+   * effacer » abstrait ne se soupèse pas ; « 34 créatures et 3 badges », si.
+   * -> { creatures, especes, badges, argent, nom }
+   */
+  function saveSummary() {
+    let creatures = 0;
+    try {
+      const team = teamApi();
+      const ser = (team && team.serialize) ? team.serialize() : null;
+      creatures = ser ? nbCreatures(ser) : nbCreatures(readSave(SAVE_KEY));
+    } catch (e) { creatures = nbCreatures(readSave(SAVE_KEY)); }
+    let badges = 0;
+    for (const rid in state.badges) { if (state.badges[rid]) badges++; }
+    return {
+      creatures: creatures,
+      especes: Object.keys(state.collection || {}).length,
+      badges: badges,
+      argent: state.money | 0,
+      nom: state.playerName || '',
+    };
+  }
+
+  /**
+   * Efface la partie et recharge la page : Robin repart au choix du compagnon.
+   * TOUTES les clés y passent — sans la v1, la vieille partie ressusciterait au
+   * rechargement suivant, et depuis la correction 2.8 les trois copies de
+   * secours feraient exactement la même chose. La clé 2D `robinGame_v2` n'est
+   * pas touchée (elle appartient à l'autre version du jeu) : c'est le drapeau
+   * NEW_GAME_KEY qui empêche `importOldSave()` de la reprendre.
+   */
+  function restartGame() {
+    _partieEffacee = true;      // la boucle tourne encore : plus rien ne s'écrit
+    try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* rien */ }
+    try { localStorage.removeItem(SAVE_KEY_V1); } catch (e) { /* rien */ }
+    for (let i = 0; i < BACKUP_KEYS.length; i++) {
+      try { localStorage.removeItem(BACKUP_KEYS[i]); } catch (e) { /* rien */ }
+    }
+    try { localStorage.removeItem(BACKUP_INDEX); } catch (e) { /* rien */ }
+    try { localStorage.setItem(NEW_GAME_KEY, '1'); } catch (e) { /* rien */ }
+    location.reload();
+    return true;
+  }
+
   /**
    * Écrit la partie importée par-dessus la clé principale, en faisant de la
    * place au besoin. C'était le SEUL chemin d'écriture qui n'en savait pas
@@ -4751,6 +4818,10 @@
    * lue, JAMAIS écrite.
    */
   function importOldSave() {
+    // Robin a cliqué « Recommencer » : une nouvelle partie doit être VRAIMENT
+    // neuve. On ne reprend donc rien de la 2D, même si elle est toujours là.
+    try { if (localStorage.getItem(NEW_GAME_KEY)) return; } catch (e) { /* rien */ }
+
     let old = null;
     try {
       const raw = localStorage.getItem(OLD_SAVE_KEY);
@@ -4807,6 +4878,8 @@
     // d'aide (touche H), et utilisables depuis la console.
     exportSave: exportSave,
     importSave: importSave,
+    // Ce que l'écran « Recommencer » affiche avant d'effacer quoi que ce soit.
+    saveSummary: saveSummary,
     restoreBackup: restoreBackup,
     checkBoot: checkBoot,
     setQuality: applyQuality,
@@ -4842,18 +4915,8 @@
       refreshHudCounters();
       saveGame();
     },
-    reset: function () {
-      // TOUTES les clés : sans la v1, « repartir de zéro » ressusciterait
-      // l'ancienne partie au rechargement suivant — et depuis la correction
-      // 2.8, les trois copies de secours feraient exactement la même chose.
-      try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* rien */ }
-      try { localStorage.removeItem(SAVE_KEY_V1); } catch (e) { /* rien */ }
-      for (let i = 0; i < BACKUP_KEYS.length; i++) {
-        try { localStorage.removeItem(BACKUP_KEYS[i]); } catch (e) { /* rien */ }
-      }
-      try { localStorage.removeItem(BACKUP_INDEX); } catch (e) { /* rien */ }
-      location.reload();
-    },
+    restartGame: restartGame,
+    reset: restartGame,        // l'ancien nom, tapé depuis la console
 
     // --- nouveautés v3, utiles pour tester sans tout rejouer ----------------
     money: function (n) {

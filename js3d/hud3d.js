@@ -3719,6 +3719,16 @@
     return false;
   }
 
+  /** Comme `gameCall`, mais pour une fonction dont on veut la VALEUR, et sans
+   *  toast : l'appelant sait quoi afficher quand elle manque. */
+  function gameValue(nom) {
+    if (window.GAME3D && typeof window.GAME3D[nom] === 'function') {
+      try { return window.GAME3D[nom](); }
+      catch (e) { console.warn('[hud3d] ' + nom + ' a échoué :', e); }
+    }
+    return null;
+  }
+
   function buildHelpOverlay() {
     const ov = el('div', 'overlay hidden', hudRoot);
     ov.id = 'help-overlay';
@@ -3751,6 +3761,8 @@
     bImport.type = 'button';
     bImport.addEventListener('click', function () { gameCall('importSave'); });
 
+    buildRestartBlock(frame);
+
     el('p', 'hint', frame, 'H · Échap : fermer');
     const close = el('button', null, frame, 'Fermer');
     close.type = 'button';
@@ -3761,6 +3773,113 @@
     ui.helpOverlay = ov;
   }
 
+  // ---------------------------------------------------------------------------
+  //  RECOMMENCER UNE NOUVELLE PARTIE (demande de Robin)
+  //  Un bouton qui efface des mois de jeu ne se clique pas comme les autres :
+  //    1. il est en bas de l'écran d'aide, séparé et de la couleur du danger ;
+  //    2. le premier clic n'efface RIEN — il ouvre une confirmation qui dit
+  //       exactement ce qui va disparaître (créatures, badges, pièces) ;
+  //    3. cette confirmation propose d'abord d'enregistrer la partie ;
+  //    4. le bouton « Oui » ne s'arme qu'au bout de deux secondes, pour qu'un
+  //       double-clic un peu rapide ne traverse pas les deux étapes d'un coup ;
+  //    5. « Non, je garde ma partie » est le bouton par défaut, en clair.
+  // ---------------------------------------------------------------------------
+
+  const RESTART_ARME_MS = 2000;
+
+  /** Le panneau (calme ou confirmation) et le compte à rebours en cours. */
+  const restartUi = { calme: null, confirme: null, oui: null, perte: null, timer: 0 };
+
+  /** Phrase de ce que Robin va perdre. Sans chiffres lisibles, « tout effacer »
+   *  reste une abstraction ; avec eux, il pèse vraiment sa décision. */
+  function restartPerteTexte() {
+    const s = gameValue('saveSummary');
+    if (!s) return 'Tu vas perdre ta partie : elle ne pourra pas revenir.';
+    const bouts = [];
+    if (s.creatures) bouts.push(s.creatures + (s.creatures > 1 ? ' créatures' : ' créature'));
+    if (s.badges) bouts.push(s.badges + (s.badges > 1 ? ' badges' : ' badge'));
+    if (s.argent) bouts.push(s.argent + (s.argent > 1 ? ' pièces' : ' pièce'));
+    if (!bouts.length) return 'Ta partie vient de commencer : il n\'y a presque rien à perdre.';
+    const liste = (bouts.length > 1)
+      ? bouts.slice(0, -1).join(', ') + ' et ' + bouts[bouts.length - 1]
+      : bouts[0];
+    return 'Tu vas perdre ' + liste + '. Ça ne pourra pas revenir.';
+  }
+
+  function buildRestartBlock(frame) {
+    const bloc = el('div', 'help-danger', frame);
+
+    // --- 1er temps : le panneau calme ---------------------------------------
+    const calme = el('div', 'help-danger-calme', bloc);
+    el('p', 'help-save-txt', calme, 'Envie de tout refaire depuis le début, avec un autre compagnon ?');
+    const bStart = el('button', 'help-danger-btn', calme, '🔄 Recommencer une nouvelle partie');
+    bStart.type = 'button';
+    bStart.addEventListener('click', function () { ouvrirConfirmationRestart(); });
+
+    // --- 2e temps : la confirmation ------------------------------------------
+    const conf = el('div', 'help-danger-confirme hidden', bloc);
+    el('p', 'help-danger-titre', conf, '⚠️ Tout effacer et repartir de zéro ?');
+    const perte = el('p', 'help-save-txt', conf, '');
+    el('p', 'help-danger-note', conf,
+      'Tu recommenceras au tout début : nouveau prénom, nouveau compagnon de départ.');
+    const bGarder = el('button', 'help-save-btn', conf, '💾 D\'abord enregistrer ma partie dans un fichier');
+    bGarder.type = 'button';
+    bGarder.addEventListener('click', function () { gameCall('exportSave'); });
+    const bOui = el('button', 'help-danger-btn', conf, 'Oui, tout effacer');
+    bOui.type = 'button';
+    bOui.addEventListener('click', function () {
+      if (bOui.disabled) return;
+      gameCall('restartGame');       // efface et recharge la page
+    });
+    const bNon = el('button', 'help-save-btn', conf, '↩️ Non, je garde ma partie');
+    bNon.type = 'button';
+    bNon.addEventListener('click', function () { fermerConfirmationRestart(); });
+
+    restartUi.calme = calme;
+    restartUi.confirme = conf;
+    restartUi.oui = bOui;
+    restartUi.perte = perte;
+  }
+
+  function ouvrirConfirmationRestart() {
+    if (!restartUi.confirme) return;
+    restartUi.perte.textContent = restartPerteTexte();
+    hide(restartUi.calme);
+    show(restartUi.confirme);
+    armerBoutonRestart();
+    // La confirmation naît tout en bas de l'écran d'aide, qui défile : sans ça,
+    // Robin cliquerait un bouton puis ne verrait rien changer.
+    try { restartUi.confirme.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+    catch (e) { /* navigateur trop ancien : tant pis */ }
+  }
+
+  /** Le bouton « Oui » reste éteint deux secondes, en le disant. */
+  function armerBoutonRestart() {
+    const b = restartUi.oui;
+    if (!b) return;
+    if (restartUi.timer) { clearInterval(restartUi.timer); restartUi.timer = 0; }
+    let reste = Math.ceil(RESTART_ARME_MS / 1000);
+    b.disabled = true;
+    b.textContent = 'Oui, tout effacer… (' + reste + ')';
+    restartUi.timer = setInterval(function () {
+      reste--;
+      if (reste > 0) { b.textContent = 'Oui, tout effacer… (' + reste + ')'; return; }
+      clearInterval(restartUi.timer);
+      restartUi.timer = 0;
+      b.disabled = false;
+      b.textContent = 'Oui, tout effacer et recommencer';
+    }, 1000);
+  }
+
+  /** Retour au panneau calme. Appelé aussi à chaque fermeture de l'aide : une
+   *  confirmation laissée ouverte accueillerait Robin la fois suivante. */
+  function fermerConfirmationRestart() {
+    if (restartUi.timer) { clearInterval(restartUi.timer); restartUi.timer = 0; }
+    if (!restartUi.confirme) return;
+    hide(restartUi.confirme);
+    show(restartUi.calme);
+  }
+
   /** -> true si l'écran s'est VRAIMENT affiché. game3d s'en sert pour savoir
    *  s'il doit poser `state.screen = 'help'` ou jouer son repli en boîte de
    *  dialogue : si `buildHelpOverlay()` a échoué, `ui.helpOverlay` est absent
@@ -3768,6 +3887,7 @@
    *  H sortaient — sans jamais voir les commandes. */
   function openHelp() {
     if (!ui.helpOverlay) return false;
+    fermerConfirmationRestart();   // on rouvre toujours sur le panneau calme
     show(ui.helpOverlay);
     replayAnim(ui.helpOverlay, 'overlay');
     showCompass(false);
@@ -3776,6 +3896,7 @@
 
   function closeHelp() {
     if (!ui.helpOverlay) return;
+    fermerConfirmationRestart();
     hide(ui.helpOverlay);
     showCompass(true);
   }
