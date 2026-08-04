@@ -77,6 +77,12 @@
       areneType: 'plante',
       badge: { id: 'feuille', name: 'Badge Feuille', icon: '🍃', color: '#38b764' },
       conteur: 'sage',                   // id du PNJ de regions3d qui raconte
+      // POURQUOI ces deux champs : les PNJ disaient tous « va voir les anciens
+      // de {ville} ». Personne, dans le jeu, ne s'appelle « les anciens » —
+      // Robin a cherché longtemps sans trouver. On nomme donc la personne ET
+      // l'endroit. À garder synchronisé avec les PNJ de regions3d.js (§ PNJ).
+      conteurNom: 'le Vieux Sage Mathis',
+      conteurOu: 'au nord-ouest de Bourg-Émeraude',
       condition: 'badge',
 
       legende: [
@@ -117,6 +123,9 @@
       areneType: 'foudre',
       badge: { id: 'eclair', name: 'Badge Éclair', icon: '⚡', color: '#f1c40f' },
       conteur: 'chamane',
+      // Elle n'est PAS en ville : c'est le seul conteur du jeu à vivre dehors.
+      conteurNom: 'la Chamane Yara',
+      conteurOu: 'au Marais des Ombres, au sud-ouest de la jungle — pas en ville',
       condition: 'badge',
 
       legende: [
@@ -155,6 +164,8 @@
       areneType: 'eau',
       badge: { id: 'vague', name: 'Badge Vague', icon: '🌊', color: '#41a6f6' },
       conteur: 'phare',
+      conteurNom: 'le Gardien du Phare Igor',
+      conteurOu: 'au pied du phare, au sud de Port-Saphir',
       condition: 'badge',
 
       legende: [
@@ -193,6 +204,8 @@
       areneType: 'glace',
       badge: { id: 'flocon', name: 'Badge Flocon', icon: '❄️', color: '#a8e6ff' },
       conteur: 'maire',
+      conteurNom: 'le Maire Torvald',
+      conteurOu: 'au sud de Cimefroide',
       condition: 'badge',
 
       legende: [
@@ -231,6 +244,8 @@
       areneType: 'feu',
       badge: { id: 'flamme', name: 'Badge Flamme', icon: '🔥', color: '#ff6b3d' },
       conteur: 'forgeronne',
+      conteurNom: 'la Forgeronne Sarah',
+      conteurOu: 'à la forge, au sud de Fournaise',
       condition: 'badge',
 
       legende: [
@@ -269,6 +284,8 @@
       areneType: 'lumiere',
       badge: { id: 'etoile', name: 'Badge Étoile', icon: '✨', color: '#ffe066' },
       conteur: 'astronome',
+      conteurNom: "l'Astronome Elian",
+      conteurOu: "à l'observatoire, au nord d'Aurore-Cité",
       condition: 'badge',
 
       legende: [
@@ -362,6 +379,10 @@
       .replace(/\{sanctuaire\}/g, q.sanctuaire.name)
       .replace(/\{lieu\}/g, q.sanctuaire.lieu)
       .replace(/\{chef\}/g, nameOf(q.legendaires[0]))
+      // Le conteur de la légende, nommé et situé : sans ça, « va voir les
+      // anciens » envoie chercher quelqu'un qui n'existe pas.
+      .replace(/\{ancien\}/g, q.conteurNom || ('quelqu\'un, à ' + q.ville))
+      .replace(/\{ouAncien\}/g, q.conteurOu || ('à ' + q.ville))
       .replace(/\{titre\}/g, q.titre);
   }
 
@@ -560,7 +581,12 @@
       return s.caught.length > 0 ? q.indices[2] : q.indices[1];
     }
     if (s.heard) return q.indices[0];
-    return "Quelqu'un, à " + q.ville + ", connaît une vieille histoire. Va lui parler.";
+    // On NOMME la personne et on dit où elle est : c'est la toute première
+    // consigne de la région, et Robin n'a aucun autre moyen de la deviner.
+    // Court exprès : cette phrase s'affiche aussi sous la boussole, dans un
+    // cadre étroit. Le journal (touche J) montre exactement la même.
+    return 'Va voir ' + (q.conteurNom || 'quelqu\'un, à ' + q.ville)
+      + ' : ' + (q.conteurOu || 'à ' + q.ville) + '.';
   }
 
   // ===========================================================================
@@ -653,9 +679,9 @@
     savant: {
       inconnue: [
         ["Tu as vu le vieux panneau, près de {lieu} ? Personne ne sait plus qui l'a planté là.",
-         "Va donc écouter les anciens de {ville}. Eux, ils savent."],
+         "Va donc écouter {ancien} : c'est {ouAncien}."],
         ["Il y a quelque chose d'endormi dans cette région, j'en suis sûre.",
-         "Demande à {ville} : les vieilles histoires y sont mieux gardées que dans mes livres."]
+         "Va voir {ancien} : {ouAncien}. Les vieilles histoires sont mieux gardées là-bas que dans mes livres."]
       ],
       entendue: [
         ["Alors on t'a raconté ? Bien. Maintenant, prouve que tu mérites d'entrer.",
@@ -677,9 +703,9 @@
     guide: {
       inconnue: [
         ["Fais attention en t'éloignant des chemins, il y a des coins étranges par ici.",
-         "Si tu veux comprendre pourquoi, va parler aux anciens de {ville}."],
+         "Si tu veux comprendre pourquoi, va voir {ancien} : {ouAncien}."],
         ["Cette région garde un secret, et moi je ne fais qu'indiquer la route.",
-         "Le secret, c'est à {ville} qu'on le raconte."]
+         "Le secret, c'est {ancien} qui le raconte, {ouAncien}."]
       ],
       entendue: [
         ["Le chemin du {lieu} ? Il est là, mais il ne s'ouvrira pas pour toi.",
@@ -725,7 +751,7 @@
     marchand: {
       inconnue: [
         ["Des Balls ? J'en ai. Des potions ? J'en ai aussi.",
-         "Et des histoires, à {ville}, on en a plus que de marchandises."]
+         "Les histoires, par contre, c'est {ancien} qui les a — {ouAncien}."]
       ],
       entendue: [
         ["Tu pars chercher la légende ? Alors achète des Balls. Beaucoup.",
@@ -765,7 +791,7 @@
     champion: {
       inconnue: [
         ["Beaucoup de dresseurs passent ici sans savoir ce qui dort dehors.",
-         "Écoute les anciens de {ville} avant de me défier."]
+         "Écoute {ancien} avant de me défier : c'est {ouAncien}."]
       ],
       entendue: [
         ["Tu veux le {badge} ? Bien. Sache qu'il n'ouvre pas qu'une porte d'arène.",
@@ -783,7 +809,7 @@
     infirmiere: {
       inconnue: [
         ["Tes créatures sont comme neuves ! Bonne route.",
-         "Et méfie-toi des vieilles histoires de {ville}… elles sont souvent vraies."]
+         "Et méfie-toi des vieilles histoires que raconte {ancien}… elles sont souvent vraies."]
       ],
       entendue: [
         ["Repose-les bien avant d'aller à l'arène.",
@@ -801,7 +827,7 @@
     villageois: {
       inconnue: [
         ["Bonjour ! Belle journée {dans}, non ?",
-         "On raconte des choses, ici. Va voir les anciens de {ville}."]
+         "On raconte des choses, ici. Va voir {ancien}, {ouAncien}."]
       ],
       entendue: [
         ["Tout le monde parle de cette légende depuis que tu es arrivé.",

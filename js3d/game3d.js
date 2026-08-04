@@ -890,7 +890,19 @@
       dir: state.player.dir,
       biome: state.lastBiome,
       visible: state.screen === 'world',
+      // L'objectif du moment, écrit noir sur blanc sous la boussole. La phrase
+      // existait depuis toujours (`quest3d.hint()`) mais dormait dans le
+      // journal : Robin cherchait « les anciens » sans savoir où aller.
+      quest: questHint(),
     }]);
+  }
+
+  /** La phrase « ce que je dois faire maintenant », ou '' si indisponible. */
+  function questHint() {
+    const quest = mod('quest');
+    if (!quest || !quest.hint) return '';
+    const texte = safeCall('quest.hint', function () { return quest.hint(state.regionId); });
+    return (typeof texte === 'string') ? texte : '';
   }
 
   // ===========================================================================
@@ -2562,7 +2574,11 @@
 
     const dex = mod('dex');
     const sp = species || ((dex && dex.get) ? dex.get(speciesId) : null);
-    if (sp && sp.legendary) sfx('rare'); else sfx('encounter');
+    // `rare` est le jingle d'une nouvelle espèce ; `legendary` est le grondement
+    // grave puis la fanfare écrits pour CE moment-là (sfx3d.js). Il ne servait
+    // qu'à l'apparition sur la carte : le combat, lui, démarrait au même son
+    // qu'une rencontre ordinaire.
+    if (sp && sp.legendary) sfx('legendary'); else sfx('encounter');
     markSeen(speciesId);
 
     const list = playerTeamList();
@@ -2589,8 +2605,29 @@
       legendary: !!(sp && sp.legendary),
       legendAltarId: legendAltarId || null,
     };
-    enterBattle(b, 'Un ' + (foeMon.nick || speciesId) + ' sauvage apparaît !' +
+    if (b.legendary) enterBattle(b, texteEntreeLegendaire(foeMon, sp));
+    else enterBattle(b, 'Un ' + (foeMon.nick || speciesId) + ' sauvage apparaît !' +
       (sp && sp.description ? '\n' + sp.description : ''));
+  }
+
+  /**
+   * L'entrée en scène d'un légendaire.
+   * Elle disait exactement la même chose que pour un Feuillou croisé dans les
+   * hautes herbes — « Un Sylvaros sauvage apparaît ! » — alors que c'est le
+   * moment le plus rare du jeu : six créatures par région, trente-six en tout.
+   * On annonce donc ce qui arrive, on rappelle la légende, et on dit comment
+   * s'y prendre : depuis que les légendaires résistent aux Balls (team3d,
+   * `LEGEND_MAX`), un enfant qui ne sait pas qu'il faut les affaiblir gaspille
+   * tout son sac sans comprendre.
+   */
+  function texteEntreeLegendaire(foeMon, sp) {
+    const nom = (sp && sp.name) || foeMon.nick || foeMon.id;
+    // Le titre (« le Cerf Dormant ») dit en trois mots ce qu'est la créature.
+    const titre = (sp && sp.title) ? ', ' + sp.title : '';
+    return '⚠️ ✦ LÉGENDAIRE ✦ ⚠️\n'
+      + nom.toUpperCase() + titre + ' surgit devant toi !\n'
+      + ((sp && sp.description) ? sp.description + '\n' : '')
+      + 'Une Ball seule ne suffira pas : affaiblis-le d\'abord au combat.';
   }
 
   /** Combat contre l'un des dresseurs de la région. */
@@ -2661,7 +2698,16 @@
     call('hud', 'setItems', [state.items]);
     call('hud', 'showBattleUI', [b]);
     refreshTeraButton();
-    showMessage(introText, function () { setBattlePhase('choose'); });
+
+    // LE SILENCE, devant un légendaire. La petite musique de balade continuait
+    // par-dessus l'apparition et écrasait le grondement de `sfx('legendary')` :
+    // on la coupe le temps que Robin lise l'annonce, et elle revient dès qu'il
+    // ferme le message — quelques secondes de silence, pas tout le combat.
+    if (b.legendary) call('music', 'stop', []);
+    showMessage(introText, function () {
+      if (b.legendary) playBiomeMusic(b.biome || state.lastBiome);
+      setBattlePhase('choose');
+    });
   }
 
   function endBattle() {
@@ -3097,8 +3143,27 @@
     }
     sfx('escape');
     setBattlePhase('animating');
-    showMessage('Oh non… ' + (b.foe.mon.nick || 'la créature') + ' s\'est libérée !',
+    showMessage('Oh non… ' + (b.foe.mon.nick || 'la créature') + ' s\'est libérée !'
+      + conseilCapture(b.foe.mon),
       function () { foeTurn(); });
+  }
+
+  /**
+   * Le mot qui manquait quand une Ball rate sur un légendaire.
+   * Ils sont volontairement très durs à capturer ; sans explication, un enfant
+   * croit simplement que le jeu est cassé. On lui dit donc ce qu'il faut faire :
+   * l'affaiblir d'abord, puis insister.
+   */
+  function conseilCapture(mon) {
+    if (!mon) return '';
+    const dex = mod('dex');
+    const sp = (dex && dex.get) ? dex.get(mon.id) : null;
+    if (!(mon.legendary || (sp && sp.legendary))) return '';
+    const maxHp = Math.max(1, mon.maxHp || 1);
+    const part = Math.max(0, Math.min(1, (mon.hp || 0) / maxHp));
+    if (part > 0.5) return '\nUn légendaire à pleine forme ne se laisse pas attraper…\nAffaiblis-le au combat d\'abord !';
+    if (part > 0.15) return '\nIl faiblit ! Encore un peu, et la Ball tiendra.';
+    return '\nIl est à bout de forces — relance une Ball, ça va finir par marcher !';
   }
 
   /** Capture pendant un combat : le Mon adverse rejoint l'équipe TEL QUEL
