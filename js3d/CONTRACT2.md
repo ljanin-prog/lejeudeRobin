@@ -622,13 +622,31 @@ par espèce, l'oubli premier-entré-premier-sorti le supprimait en premier. Vaut
 > revenir à un test numérique unique sur `heal`** — c'est silencieux et invisible en jeu.
 
 **`gainXp` rend en plus `pendingLearn: [{moveId, level}]`** (extension hors contrat) : les
-capacités qu'une créature à 4 emplacements n'a PAS pu apprendre. Rien ne les apprend jamais —
-il n'existe aucun écran de remplacement, ni même de point d'écriture officiel sur `mon.moves`
-(chantier ouvert). Tant que c'est le cas, **les messages ne doivent rien promettre** : ils
-disent que la créature garde ses 4 capacités, jamais « ce sera pour plus tard ». Tout
-consommateur doit citer TOUTE la liste, pas seulement `pendingLearn[0]` — deux paliers au même
-niveau en perdaient une en silence. Attention à la forme : `evolve3d.evolve()` rend le même
-renseignement sous le nom `pending`, et en **chaînes** au lieu d'objets.
+capacités qu'une créature à 4 emplacements n'a PAS pu apprendre. Tout consommateur doit citer
+TOUTE la liste, pas seulement `pendingLearn[0]` — deux paliers au même niveau en perdaient une
+en silence. Attention à la forme : `evolve3d.evolve()` rend le même renseignement sous le nom
+`pending`, et en **chaînes** au lieu d'objets.
+
+Ces capacités ne sont plus perdues (demande de Robin, « on ne peut pas faire apprendre les
+nouvelles attaques ») :
+
+- **`team3d.learnMove(mon, moveId, index)`** est le point d'écriture officiel de `mon.moves` —
+  il n'en existait aucun. `index` (0..3) remplace un emplacement ; sans lui la capacité
+  s'ajoute s'il reste de la place, et **jamais** un remplacement d'office. -> `{ ok, forgot }`.
+- **`hud3d.showLearnMove({monName, moveId, moves, onChoose})`** pose la question. `onChoose(i)`
+  est appelée UNE fois : `0..3` = la capacité à oublier, `-1` = ne rien oublier.
+- **`game3d`** empile les demandes (`queueLearn`) pendant les montées de niveau et les
+  évolutions, et les pose une par une à la fin (`runLearnQueue`), jamais en plein tour de
+  combat. Tout chemin qui donne de l'XP doit finir par un `runLearnQueue()`, sinon la question
+  ressort à un moment incompréhensible — ou jamais.
+
+> ⚠️ **Un écran modal ne doit JAMAIS geler le clavier au-delà de son animation.**
+> `runEvolutions` levait `evolving` pour protéger les 2,5 s de l'évolution, puis affichait
+> « X apprend Y ! » — un message qui ne s'avance qu'à l'Espace, alors que le gestionnaire
+> clavier avalait tout tant qu'`evolving` était vrai. Le jeu se bloquait **définitivement** à
+> chaque évolution, sans la moindre erreur. Le drapeau retombe désormais dès la fin de
+> l'animation, et le garde-fou clavier laisse toujours passer une boîte de dialogue en attente.
+> Le harnais `.claude/verif_evolution.js` rejoue la chaîne entière et monte la garde.
 Enfin, la valeur de retour de `gainXp` **s'utilise partout**, y compris pour l'XP partagée aux
 équipiers et le bonus de badge : sans cela une créature monte de plusieurs niveaux en silence.
 
@@ -640,6 +658,18 @@ if (ballBonus >= 99) chance = 1                  // Ball Maîtresse : JAMAIS de 
 chance = clamp(base * soin * ballBonus, 0.03, 0.97)
 ```
 `ballBonus` : Pokéball 1.0, Super Ball 1.5, Hyper Ball 2.2, Ball Maîtresse 99.
+
+**Les légendaires ont leur propre échelle**, ancrée sur un cas énoncé par Robin plutôt que
+déduite d'un `catchRate` d'espèce (0,05 à 0,09 : un écart imperceptible en jeu, qui rendait
+tout réglage impossible à énoncer) :
+```
+soin = 1 + (1 - hp/maxHp) * 3.0                  // les PV comptent presque 2× plus
+ball = 1 + (ballBonus - 1) * 0.5                 // l'avantage d'une Ball compte moitié
+chance = clamp(0.40 * ball * (soin / 2.5), 0.05, 0.90)
+```
+Soit, à mi-PV : **Pokéball 40 %, Super Ball 50 %**, Hyper Ball 64 %. À PV pleins : 16 / 20 / 26 %
+— il faut toujours combattre d'abord. `LEGEND_ANCRE` (team3d.js) est la seule molette à toucher
+si Robin redemande « plus facile » ou « plus dur ».
 
 ⚠️ **AMENDEMENT (correction 2.4) — la Ball Maîtresse rend exactement `1`, pas `0.97`.**
 La borne haute de 0,97 s'appliquait à TOUTES les Balls, Ball Maîtresse comprise. Or

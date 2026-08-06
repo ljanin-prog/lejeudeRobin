@@ -668,7 +668,14 @@
 
     // L'ÉVOLUTION NE S'INTERROMPT PAS (§11.3) : c'est LE moment de gloire, il
     // dure moins de trois secondes, on le laisse jouer. Aucune touche ne passe.
-    if (evolving) { e.preventDefault(); return; }
+    //
+    // ⚠️ SAUF quand une boîte de dialogue attend une validation. C'est le bug
+    // que Robin a rapporté : « chaque fois que ça évolue le jeu bloque ». Une
+    // fois l'animation finie, `runEvolutions` affiche « X apprend Y ! » —
+    // un message qui ne s'avance qu'à l'Espace, et cette ligne avalait
+    // justement l'Espace. Plus rien ne répondait, définitivement, puisque
+    // `evolving` ne retombait qu'après ce message qu'on ne pouvait pas passer.
+    if (evolving && !state.messages.length) { e.preventDefault(); return; }
 
     // --- Menu du dirigeable : il se pilote AUSSI au clavier ------------------
     // Sans ça, on pouvait rester bloqué dedans (aucune touche ne répondait,
@@ -3208,7 +3215,10 @@
       (where === 'box' ? '\nTon équipe est pleine : il rejoint la Boîte.' : '\nIl rejoint ton équipe !')]
       .concat(gains)
       .concat(questTextsForCatch(mon.id));
-    showMessages(suite, function () { endBattle(); });
+    // L'XP d'une capture fait monter de niveau : la question « quelle capacité
+    // oublier ? » doit être posée ICI aussi, sinon elle attendrait la fin du
+    // combat SUIVANT et tomberait à un moment incompréhensible.
+    showMessages(suite, function () { runLearnQueue(function () { endBattle(); }); });
   }
 
   // ===========================================================================
@@ -3221,8 +3231,110 @@
   /** Termine un combat : les textes, puis les évolutions, puis la sortie. */
   function finishBattle(textes) {
     showMessages(textes, function () {
-      runEvolutions(function () { endBattle(); });
+      runEvolutions(function () { runLearnQueue(function () { endBattle(); }); });
     });
+  }
+
+  // ===========================================================================
+  //  9 ter. « QUELLE CAPACITÉ OUBLIER ? »  (demande de Robin)
+  //
+  //  Une créature qui connaît déjà quatre capacités n'apprenait plus JAMAIS
+  //  rien : `team.gainXp()` et `evolve3d` mettaient la nouvelle capacité « en
+  //  attente », le jeu disait « pas de place », et c'était fini. L'écran qui
+  //  devait poser la question n'avait jamais été écrit (il était annoncé dans
+  //  trois commentaires, ce qui ne fait pas un écran).
+  //
+  //  On empile donc les demandes pendant les montées de niveau et les
+  //  évolutions, et on les pose UNE PAR UNE à la fin, quand plus rien d'autre
+  //  ne bouge à l'écran — jamais en plein tour de combat.
+  // ===========================================================================
+
+  /** [{ mon, moveId }] — les questions en attente. */
+  let _learnQueue = [];
+
+  /** Empile les capacités qu'une créature n'a pas pu apprendre faute de place.
+   *  `pending` accepte les deux formes du projet : des chaînes (`evolve3d`) ou
+   *  des objets `{ moveId, level }` (`team.gainXp`). */
+  function queueLearn(mon, pending) {
+    if (!mon || !Array.isArray(pending)) return;
+    for (let i = 0; i < pending.length; i++) {
+      const e = pending[i];
+      const id = (typeof e === 'string') ? e : (e && e.moveId);
+      if (!id) continue;
+      // Deux paliers peuvent proposer la MÊME capacité : on ne la demande
+      // qu'une fois, sinon Robin répond deux fois à la même question.
+      let deja = false;
+      for (let k = 0; k < _learnQueue.length; k++) {
+        if (_learnQueue[k].mon === mon && _learnQueue[k].moveId === id) { deja = true; break; }
+      }
+      if (!deja) _learnQueue.push({ mon: mon, moveId: id });
+    }
+  }
+
+  /**
+   * Pose les questions en attente, une par une, puis appelle `onDone`.
+   * Sans le HUD, on retombe sur l'ancien comportement — on le DIT, et rien
+   * n'est appris : mieux vaut une capacité manquée qu'une capacité choisie par
+   * le jeu à la place de Robin.
+   */
+  function runLearnQueue(onDone) {
+    const file = _learnQueue;
+    _learnQueue = [];
+    const team = teamApi();
+    const hud = mod('hud');
+
+    let i = 0;
+    function suivante() {
+      if (i >= file.length) { if (onDone) onDone(); return; }
+      const q = file[i++];
+      const mon = q.mon;
+      const nom = (mon && (mon.nick || mon.id)) || 'Ta créature';
+      const nouvelle = moveOf(q.moveId).name || q.moveId;
+
+      // La créature a pu perdre une capacité entre-temps (question précédente)
+      // ou connaître déjà celle-ci : dans ce cas on l'apprend sans rien demander.
+      if (team && team.learnMove && mon && Array.isArray(mon.moves) && mon.moves.length < 4) {
+        const r = safeCall('team.learnMove.libre', function () { return team.learnMove(mon, q.moveId); });
+        if (r && r.ok) {
+          saveGame();
+          showMessage(nom + ' apprend ' + nouvelle + ' ! ✨', suivante);
+          return;
+        }
+      }
+
+      if (!hud || !hud.showLearnMove || !team || !team.learnMove) {
+        showMessage(pendingLearnLine(nom, [q.moveId]).replace(/^\n/, ''), suivante);
+        return;
+      }
+
+      const ok = safeCall('hud.showLearnMove', function () {
+        hud.showLearnMove({
+          monName: nom,
+          moveId: q.moveId,
+          moves: mon.moves,
+          onChoose: function (index) {
+            if (index < 0) {
+              showMessage(nom + ' garde ses quatre capacités.\n'
+                + nouvelle + ' n\'est pas appris.', suivante);
+              return;
+            }
+            const r = safeCall('team.learnMove', function () {
+              return team.learnMove(mon, q.moveId, index);
+            });
+            if (!r || !r.ok) { suivante(); return; }
+            saveGame();
+            refreshHudCounters();
+            const oubliee = r.forgot ? (moveOf(r.forgot).name || r.forgot) : null;
+            showMessage(nom + (oubliee ? ' oublie ' + oubliee + '\net' : '') +
+              ' apprend ' + nouvelle + ' ! ✨', suivante);
+          },
+        });
+        return true;
+      });
+      if (!ok) { showMessage(pendingLearnLine(nom, [q.moveId]).replace(/^\n/, ''), suivante); }
+    }
+
+    suivante();
   }
 
   function runEvolutions(onDone) {
@@ -3261,18 +3373,21 @@
       state.collection[r.to] = state.collection[r.to] || 1;
 
       const apres = function () {
+        // L'ANIMATION EST FINIE : on rend le clavier tout de suite. Les lignes
+        // ci-dessous s'avancent à l'Espace, et `evolving` avalait justement
+        // l'Espace — c'est le blocage rapporté par Robin. `faireEvoluer` le
+        // relèvera pour l'évolution suivante s'il y en a une.
+        evolving = false;
         // `r.pending` : des capacités que la nouvelle forme aurait apprises,
         // mais les 4 emplacements sont pleins. Exactement comme `pendingLearn`
-        // d'une montée de niveau : on le DIT, on ne remplace rien tout seul.
-        // Même phrase que `pendingLearnLine`, pour ne pas déplacer le mensonge
-        // d'un écran à l'autre (`r.pending` contient des CHAÎNES, `pendingLearn`
-        // des objets : `moveNames` avale les deux).
+        // d'une montée de niveau — et depuis la demande de Robin, on ne se
+        // contente plus de le DIRE : on lui demandera laquelle oublier, une
+        // fois toutes les évolutions jouées (`runLearnQueue`).
         const lignes = [];
         const nom = mon.nick || mon.id;
         const appris = moveNames(r.learned);
         if (appris.length) lignes.push(nom + ' apprend ' + appris.join(', ') + ' !');
-        const attente = pendingLearnLine(nom, r.pending);
-        if (attente) lignes.push(attente.replace(/^\n/, ''));
+        queueLearn(mon, r.pending);
         refreshHudCounters();
         saveGame();
         showMessages(lignes, function () {
@@ -3335,12 +3450,11 @@
   /**
    * Ce qu'on dit quand une créature ne peut PAS apprendre une capacité.
    *
-   * L'ancien texte promettait « Ce sera pour plus tard ! ». C'était faux :
-   * aucun écran de remplacement n'existe, `mon.moves` n'a même pas de point
-   * d'écriture officiel, et une créature à 4 capacités n'apprend plus jamais
-   * rien. On ne fait pas de promesse qu'on ne tient pas à un enfant de 10 ans :
-   * on dit ce qui se passe, sans en faire un drame — elle garde des capacités
-   * qui sont très bien. (L'écran de remplacement reste à écrire : chantier 3.4.)
+   * REPLI UNIQUEMENT, depuis que l'écran de remplacement existe : on ne passe
+   * plus ici que si hud3d ou team3d manquent à l'appel. Le chemin normal, c'est
+   * `runLearnQueue()`, qui demande à Robin laquelle oublier. Le texte reste
+   * honnête pour ce cas-là — on ne promet pas « ce sera pour plus tard », ce
+   * qui était faux du temps où aucun écran n'existait.
    *
    * Toutes les capacités en attente sont citées, pas seulement la première :
    * deux paliers au même niveau en perdaient une en silence.
@@ -3365,7 +3479,9 @@
     // d'un coup, et la boîte de dialogue n'a pas de hauteur maximale.
     let out = '\n' + nom + ' passe au niveau ' + res.level +
       (appris.length ? ' et apprend ' + appris.join(', ') : '') + ' ! 🎉';
-    out += pendingLearnLine(nom, res.pendingLearn);
+    // Les capacités qui n'ont pas trouvé de place ne sont plus perdues : on
+    // demandera à Robin laquelle oublier, à la fin, une par une.
+    queueLearn(mon, res.pendingLearn);
     return out;
   }
 
@@ -4065,7 +4181,7 @@
       // Une pierre peut faire évoluer sur-le-champ : on enchaîne l'écran de
       // gloire, exactement comme après un gain de niveau. `runEvolutions`
       // balaie l'équipe et ne fait rien si personne n'est prêt.
-      runEvolutions(function () { saveGame(); });
+      runEvolutions(function () { runLearnQueue(function () { saveGame(); }); });
     }
     return r;
   }
@@ -4939,7 +5055,7 @@
     help: openHelpScreen,
     buddy: toggleBuddy,
     ball: cycleBall,
-    evolutions: runEvolutions,
+    evolutions: function (cb) { runEvolutions(function () { runLearnQueue(cb); }); },
     center: healAtCenter,
   };
   window.GAME3D = GAME3D;

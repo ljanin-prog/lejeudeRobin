@@ -538,6 +538,42 @@
     return m.hp - before;
   }
 
+  /**
+   * APPRENDRE UNE CAPACITÉ — le point d'écriture officiel de `mon.moves`.
+   *
+   * Il n'en existait aucun : `gainXp` et `evolve3d` savaient AJOUTER une
+   * capacité quand il restait de la place, mais quand les quatre emplacements
+   * étaient pleins ils se contentaient de la mettre « en attente », et rien,
+   * nulle part, ne pouvait la faire apprendre. Une créature à 4 capacités
+   * n'apprenait donc plus jamais rien de toute la partie.
+   *
+   * @param {object} m       la créature
+   * @param {string} moveId  la capacité à apprendre
+   * @param {number} [index] l'emplacement (0..3) à REMPLACER. Absent ou hors
+   *   bornes : la capacité s'ajoute s'il reste de la place, sinon rien.
+   * -> { ok, forgot } — `forgot` est l'id de la capacité oubliée, ou null.
+   */
+  function learnMove(m, moveId, index) {
+    const rien = { ok: false, forgot: null };
+    if (!m || !moveId) return rien;
+    if (!Array.isArray(m.moves)) m.moves = [];
+    // Déjà connue : on ne la met surtout pas deux fois, et on ne fait oublier
+    // personne pour rien.
+    if (knowsMove(m, moveId)) return rien;
+
+    const i = Math.round(num(index, -1));
+    if (i >= 0 && i < m.moves.length) {
+      const oubliee = m.moves[i] ? m.moves[i].id : null;
+      m.moves[i] = makeMoveSlot(moveId);
+      return { ok: true, forgot: oubliee };
+    }
+    if (m.moves.length < 4) {
+      m.moves.push(makeMoveSlot(moveId));
+      return { ok: true, forgot: null };
+    }
+    return rien;
+  }
+
   /** Rend tous les PP d'une créature. */
   function restorePP(m) {
     if (!m || !Array.isArray(m.moves)) return false;
@@ -1026,6 +1062,7 @@
     rename: rename,
     restorePP: restorePP,
     spendPP: spendPP,
+    learnMove: learnMove,
     partySummary: partySummary,
     importFromV2: importFromV2,
     speciesOf: speciesOf,
