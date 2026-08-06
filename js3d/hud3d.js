@@ -510,6 +510,7 @@
     buildJournalOverlay();
     buildAcademyOverlay();
     buildEvolutionOverlay();
+    buildLearnOverlay();
     buildCompass();
     buildToastLayer();
     buildQualityPicker();
@@ -3502,6 +3503,177 @@
   function evolutionBusy() { return evoBusy; }
 
   // ===========================================================================
+  //  APPRENDRE UNE CAPACITÉ QUAND LES QUATRE PLACES SONT PRISES
+  //  (demande de Robin : « on ne peut pas faire apprendre les nouvelles
+  //   attaques »)
+  //
+  //  Jusqu'ici le jeu se contentait de dire « pas de place pour Lame Feuille »
+  //  et la capacité était perdue pour toujours. C'est l'écran qui manquait —
+  //  `team3d.gainXp()` et `evolve3d` mettaient déjà les capacités « en attente »
+  //  en précisant dans leurs commentaires que hud3d poserait la question.
+  //
+  //  Deux précautions pour un enfant de 10 ans : choisir NE VALIDE PAS (il faut
+  //  ensuite appuyer sur le bouton du bas, qui écrit en toutes lettres ce qui
+  //  va se passer), et « Ne rien oublier » est toujours à portée, y compris
+  //  avec Échap.
+  // ===========================================================================
+
+  const learnState = { open: false, cursor: 0, moves: [], onChoose: null, newId: null };
+
+  function buildLearnOverlay() {
+    const ov = el('div', 'overlay hidden', hudRoot);
+    ov.id = 'learn-overlay';
+    const frame = el('div', 'learn-frame', ov);
+    ui.learnTitle = el('h2', 'learn-title', frame, '');
+    ui.learnNew = el('div', 'learn-new', frame);
+    ui.learnQuestion = el('p', 'learn-question', frame, '');
+    ui.learnGrid = el('div', 'learn-grid', frame);
+    ui.learnKeep = el('button', 'learn-keep', frame, '🚫 Ne rien oublier');
+    ui.learnKeep.type = 'button';
+    ui.learnKeep.addEventListener('click', function () { setLearnCursor(4); });
+    ui.learnGo = el('button', 'learn-go', frame, '');
+    ui.learnGo.type = 'button';
+    ui.learnGo.addEventListener('click', function () { validerLearn(); });
+    el('p', 'hint', frame, '↑ ↓ ← → choisir  ·  Espace valider  ·  Échap ne rien oublier');
+    ui.learnOverlay = ov;
+    ui.learnCells = [];
+  }
+
+  /**
+   * @param {object} o { monName, moveId, moves:[{id,pp,ppMax}], onChoose }
+   *   `onChoose(index)` : 0..3 = la capacité à oublier, -1 = ne rien oublier.
+   *   Appelée UNE seule fois, quoi qu'il arrive.
+   */
+  function showLearnMove(o) {
+    o = o || {};
+    const rendre = function (i) {
+      const cb = learnState.onChoose;
+      learnState.onChoose = null;
+      if (typeof cb === 'function') {
+        try { cb(i); } catch (e) { console.warn('[hud3d] choix de capacité :', e); }
+      }
+    };
+    if (!ui.learnOverlay) { rendre(-1); return; }
+    // Deux capacités d'affilée : on n'oublie jamais de rendre la main sur la
+    // précédente, sinon game3d attendrait un `onChoose` qui ne viendrait pas.
+    if (learnState.onChoose) rendre(-1);
+
+    const nom = o.monName || 'Ta créature';
+    const nouvelle = moveInfo(o.moveId);
+    learnState.moves = (Array.isArray(o.moves) ? o.moves : []).slice(0, 4);
+    learnState.onChoose = (typeof o.onChoose === 'function') ? o.onChoose : null;
+    learnState.newId = o.moveId;
+    learnState.open = true;
+
+    ui.learnTitle.textContent = '✨ ' + nom + ' peut apprendre ' + (nouvelle.name || o.moveId) + ' !';
+    ui.learnNew.innerHTML = '';
+    ui.learnNew.appendChild(carteCapacite(o.moveId, null, 'learn-card neuve'));
+    ui.learnQuestion.textContent =
+      'Mais il connaît déjà quatre capacités. Laquelle doit-il oublier ?';
+
+    ui.learnGrid.innerHTML = '';
+    ui.learnCells = [];
+    learnState.moves.forEach(function (slot, i) {
+      const cell = carteCapacite((slot && slot.id) || slot, slot, 'learn-card');
+      cell.addEventListener('mouseenter', function () { setLearnCursor(i); });
+      cell.addEventListener('click', function () { setLearnCursor(i); });
+      ui.learnGrid.appendChild(cell);
+      ui.learnCells.push(cell);
+    });
+
+    setLearnCursor(0);
+    show(ui.learnOverlay);
+    replayAnim(ui.learnOverlay, 'overlay');
+    showCompass(false);
+  }
+
+  /** Une carte de capacité, réutilisée pour la nouvelle et pour les quatre
+   *  anciennes. `slot` porte les PP quand on les connaît. */
+  function carteCapacite(moveId, slot, cls) {
+    const move = moveInfo(moveId);
+    const card = el('button', cls || 'learn-card', null);
+    card.type = 'button';
+    card.style.setProperty('--type-color', typeInfo(move.type).color);
+    const tete = el('span', 'mv-head', card);
+    el('span', 'mv-name', tete, move.name || moveId);
+    tete.appendChild(typeBadge(move.type, true));
+    el('span', 'mv-info', card, moveShortDesc(move));
+    const pp = (slot && slot.pp !== undefined) ? slot.pp : move.pp;
+    const ppMax = (slot && slot.ppMax !== undefined) ? slot.ppMax : move.pp;
+    el('span', 'mv-pp', card, 'PP ' + pp + '/' + ppMax);
+    return card;
+  }
+
+  /** 0..3 : une capacité à oublier. 4 : ne rien oublier. */
+  function setLearnCursor(i) {
+    learnState.cursor = clamp(i, 0, 4);
+    for (let k = 0; k < ui.learnCells.length; k++) {
+      ui.learnCells[k].classList.toggle('selected', k === learnState.cursor);
+    }
+    if (ui.learnKeep) ui.learnKeep.classList.toggle('selected', learnState.cursor === 4);
+    // Le bouton du bas DIT ce qui va se passer : c'est lui qui valide, jamais
+    // le simple fait de cliquer une carte.
+    if (!ui.learnGo) return;
+    const nouvelle = moveInfo(learnState.newId);
+    if (learnState.cursor === 4) {
+      ui.learnGo.textContent = '✔️ Ne pas apprendre ' + (nouvelle.name || '');
+      ui.learnGo.classList.remove('danger');
+    } else {
+      const slot = learnState.moves[learnState.cursor];
+      const vieille = moveInfo((slot && slot.id) || slot);
+      ui.learnGo.textContent = '✔️ Oublier ' + (vieille.name || '?')
+        + ' et apprendre ' + (nouvelle.name || '?');
+      ui.learnGo.classList.add('danger');
+    }
+  }
+
+  function validerLearn() {
+    if (!learnState.open) return;
+    const i = (learnState.cursor === 4) ? -1 : learnState.cursor;
+    closeLearnMove();
+    const cb = learnState.onChoose;
+    learnState.onChoose = null;
+    if (typeof cb === 'function') {
+      try { cb(i); } catch (e) { console.warn('[hud3d] choix de capacité :', e); }
+    }
+  }
+
+  function closeLearnMove() {
+    learnState.open = false;
+    if (ui.learnOverlay) hide(ui.learnOverlay);
+    showCompass(true);
+  }
+
+  function learnBusy() { return !!learnState.open; }
+
+  /** Les touches de l'écran. -> true si la touche a été consommée. */
+  function onLearnKey(ev) {
+    if (!learnState.open) return false;
+    const k = ev.key;
+    const n = ui.learnCells.length;      // 0..n-1 les capacités, n… le refus
+    if (k === 'Escape') { setLearnCursor(4); validerLearn(); return true; }
+    if (k === ' ' || k === 'Enter') { validerLearn(); return true; }
+    if (k === 'ArrowUp' || k === 'w' || k === 'W' || k === 'z' || k === 'Z') {
+      setLearnCursor(learnState.cursor >= 4 ? Math.max(0, n - 1) : Math.max(0, learnState.cursor - 2));
+      return true;
+    }
+    if (k === 'ArrowDown' || k === 's' || k === 'S') {
+      setLearnCursor(learnState.cursor + 2 >= n ? 4 : learnState.cursor + 2);
+      return true;
+    }
+    if (k === 'ArrowLeft' || k === 'a' || k === 'A' || k === 'q' || k === 'Q') {
+      setLearnCursor(Math.max(0, learnState.cursor - 1));
+      return true;
+    }
+    if (k === 'ArrowRight' || k === 'd' || k === 'D') {
+      setLearnCursor(Math.min(4, learnState.cursor + 1));
+      return true;
+    }
+    if (k >= '1' && k <= '4') { setLearnCursor(parseInt(k, 10) - 1); return true; }
+    return false;
+  }
+
+  // ===========================================================================
   //  ACADÉMIE — choix du type Téra (CONTRAT3 §7, demande n°10)
   // ---------------------------------------------------------------------------
   //  Les types sont TOUJOURS itérés depuis la table vivante (o.types, sinon
@@ -3994,6 +4166,16 @@
     // L'évolution est un moment de gloire : rien ne l'interrompt, pas même Échap.
     if (evoBusy) { ev.preventDefault(); ev.stopPropagation(); return; }
 
+    // L'écran « quelle capacité oublier ? » prend TOUT le clavier tant qu'il
+    // est ouvert : Robin doit répondre avant de reprendre sa partie, et aucune
+    // autre touche ne doit le faire marcher derrière l'écran.
+    if (learnState.open) {
+      onLearnKey(ev);
+      ev.preventDefault();
+      ev.stopPropagation();
+      return;
+    }
+
     // --- la touche X : changer de Ball (CONTRAT3 §11.2) ---------------------
     // Le HUD la consomme entièrement (stopPropagation) pour qu'aucun autre
     // module ne fasse tourner la sélection une deuxième fois dans la foulée.
@@ -4183,6 +4365,11 @@
 
     showEvolution: showEvolution,
     evolutionBusy: evolutionBusy,
+
+    // « Quelle capacité oublier ? » — appelé par game3d après une montée de
+    // niveau ou une évolution, quand les quatre emplacements sont pris.
+    showLearnMove: showLearnMove,
+    learnBusy: learnBusy,
 
     openAcademy: openAcademy,
     closeAcademy: closeAcademy,
