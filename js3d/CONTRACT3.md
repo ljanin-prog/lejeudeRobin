@@ -806,6 +806,81 @@ qu'on franchissait une porte de biais.
 maintenant cadencé par la DISTANCE (`FPS_PAS`) — on entend donc ses pas s'accélérer ; et
 `moveProgress` est tenu à jour, ce qui anime le modèle du joueur pendant la bascule de vue.
 
+### 17 ter. Second passage, 2026-08-08 — la CAMÉRA, seule vraie cause
+
+Après essai en jeu, Robin a maintenu son verdict : « la gestion du déplacement en vue FPS
+n'est pas fluide du tout ». Le §17 bis avait porté le déplacement de Clélia ; il n'avait
+pas porté sa **caméra**. Or c'est la caméra qu'on voit.
+
+**a. `lookAt` faisait tanguer la vue en permanence.** `S.cam.lookAt(_aim)` calcule
+l'orientation à partir de la ligne qui va de la position RÉELLE de la caméra au point visé.
+Mais `_aim` est calculé sur la position IDÉALE du joueur, tandis que la caméra, elle, est
+lissée (`F_SMOOTH`) : les deux ne coïncident jamais. Chaque accélération, chaque freinage,
+chaque virage change l'écart — **et fait pivoter le regard tout seul**. Invisible sur une
+capture fixe, insupportable en mouvement.
+
+En vue subjective pleine (`mix >= 1 && modeIndex === 2`), l'orientation est désormais
+**absolue**, comme chez Clélia :
+
+```js
+S.cam.rotation.set(0, S.fpsYaw + Math.PI, 0);   // au lieu de S.cam.lookAt(_aim)
+```
+
+Le demi-tour : une caméra Three regarde vers −z, le joueur vers +z. Conséquences directes :
+pitch et roulis **rigoureusement nuls par construction**, horizon parfaitement horizontal,
+le regard ne bouge QUE quand on tourne la tête. `lookAt` reste utilisé pendant la bascule
+de vue, où il interpole proprement entre le repère de dos et celui des yeux — et `outAim`
+est pour cela devenu horizontal, pour que la bascule finisse là où l'orientation absolue
+commence.
+
+**b. Le balancement de marche donnait le mal de mer.** 4,5 cm en hauteur ET 3,5 cm en
+LATÉRAL, à 7,2 rad/s. Clélia : 1,2 cm, verticalement, rien d'autre. On reprend son réglage
+et le balancement latéral disparaît.
+
+**c. La borne anti-relief sursautait.** La « seconde passe » (§ suivant) est une
+affectation SÈCHE, pas un lissage ; sur un terrain vallonné la hauteur du sol change à
+chaque pas, donc les yeux du joueur sautaient image après image. Elle est désactivée en vue
+subjective — où elle ne sert à rien : la caméra est à 1,52 au-dessus d'un joueur toujours
+posé sur le sol, et la première passe borne déjà le cas de la falaise.
+
+**d. Le lacet n'est plus amorti du tout** en vue subjective (`F_YAW_SMOOTH` ne sert plus que
+pendant la bascule). La rotation est déjà progressive côté `game3d` à 2,6 rad/s ; l'amortir
+une seconde fois n'ajoutait que du retard — et c'est du retard qu'on ressent comme « pas
+fluide ».
+
+### 17 quater. Troisième passage — ON N'ARRIVAIT PAS DANS LA VUE
+
+Robin, après essai : « le mode FPS fait des rotations de 90°, aucune fluidité ». Mesuré en
+jeu juste après : en vue `fps`, un appui bref de 90 ms tourne de **15°**, sans le moindre
+cran. Le rendu n'était pas en cause — **la vue non plus n'était pas la bonne**.
+
+`toggleView()` faisait le TOUR DES TROIS VUES : `aventure → rpg → fps → aventure`. Un seul
+appui sur `V` menait donc en vue **RPG**, celle où l'on marche de case en case et où le
+personnage pivote par quarts de tour. Robin décrivait très exactement ce qu'il voyait ;
+ce n'était simplement pas la vue qu'il croyait. Deux appuis étaient nécessaires, et rien ne
+le disait — le toast annonçait « Vue RPG — vue de dessus », ce qui ne suffit pas quand on
+cherche « le mode FPS ».
+
+Le jeu de Clélia n'a que **deux vues** et une bascule franche. Désormais, ici aussi :
+
+| geste | effet |
+|---|---|
+| `V` | vue de dos ⇄ **vue à la première personne**, toujours, quelle que soit la vue courante |
+| `MAJ + V` | la vue RPG, pour qui la cherche |
+
+Le bouton 🧭 du HUD envoie `V` : il suit donc la même règle. Les libellés annoncent
+maintenant **où mène** le geste (« V pour passer dans tes yeux ») et non plus seulement où
+l'on se trouve.
+
+**La leçon, plus large que ce bug** : trois modes sur une touche, dont deux visuellement
+proches, et l'utilisateur croit être dans l'un en étant dans l'autre. Une plainte sur une
+fonctionnalité doit d'abord faire vérifier **qu'on l'atteint**.
+
+⚠️ **Ce qu'on ne sait pas mesurer ici** : le framerate réel. Les essais tournent dans un
+Chrome sans carte graphique (SwiftShader), donc les images par seconde n'y veulent rien
+dire. Si la vue subjective reste heurtée après tout ceci, **c'est la piste suivante** :
+touche `P` affiche le compteur (§21).
+
 **Banc d'essai : `.claude/verif_fps.js`.** Il découpe le vrai bloc de `game3d.js` (de
 `const YAW_DIRS` à `function updateWorld(`) et l'exécute sur un plateau 40 × 40 : rampe de
 vitesse, freinage, recul, cap réel contre cap visé sur 5 angles, glissement le long d'un
