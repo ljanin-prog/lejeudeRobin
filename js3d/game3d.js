@@ -745,6 +745,24 @@
       return;
     }
 
+    // MAJ + V : la vue RPG, celle de dessus. Elle n'est plus dans le cycle de V
+    // (voir `toggleView`) parce qu'elle s'y glissait ENTRE la vue de dos et la
+    // vue subjective, et qu'on croyait être dans la seconde en étant dans
+    // celle-ci. Qui la veut la trouve ici ; personne ne tombe dedans par hasard.
+    if (e.shiftKey && (e.key === 'v' || e.key === 'V')) {
+      e.preventDefault();
+      const cam = mod('camera');
+      if (cam && cam.setMode) {
+        safeCall('camera.setMode', function () { cam.setMode('rpg', false); });
+        state.cameraMode = (cam.mode && cam.mode()) || state.cameraMode;
+        state.player.fpsYaw = DIR_YAW[state.player.dir] || 0;
+        showToast(VIEW_LABEL.rpg, '🧭');
+        call('hud', 'setViewMode', [state.cameraMode]);
+        saveGame();
+      }
+      return;
+    }
+
     switch (e.key) {
       case 'ArrowUp': case 'w': case 'z': case 'W': case 'Z':
         e.preventDefault(); state.input.up = true; break;
@@ -853,16 +871,33 @@
 
   function isFpsView() { return viewMode() === 'fps'; }
 
+  // Le libellé doit dire OÙ L'ON EST et COMMENT ON REVIENT : c'est la seule
+  // indication qu'a un enfant pour savoir dans quelle vue il joue.
   const VIEW_LABEL = {
-    aventure: 'Vue aventure — de dos',
-    rpg: 'Vue RPG — vue de dessus',
-    fps: 'Vue à la première personne — ←/→ pour tourner',
+    aventure: 'Vue de dos — V pour passer dans tes yeux',
+    rpg: 'Vue RPG — de dessus (V pour revenir)',
+    fps: 'Dans tes yeux ! ←/→ tournent la tête, ↑ avance — V pour revenir',
   };
 
+  /**
+   * LA TOUCHE V — bascule entre la vue de dos et la vue à la première personne.
+   *
+   * ⚠️ Elle FAISAIT LE TOUR DES TROIS VUES (aventure → rpg → fps → aventure), et
+   * c'est ce qui a fait dire à Robin que « le mode FPS fait des rotations de 90°,
+   * aucune fluidité » : un seul appui ne l'amenait pas du tout en vue subjective,
+   * mais en vue RPG — celle où l'on marche de case en case et où le personnage
+   * pivote par quarts de tour. Il décrivait très exactement ce qu'il voyait ; ce
+   * n'était simplement pas la vue qu'il croyait.
+   *
+   * Le jeu de Clélia n'a que DEUX vues et une bascule franche entre les deux.
+   * On fait pareil : V mène toujours à la vue subjective, et l'en ramène. La vue
+   * RPG reste accessible à qui la cherche, par MAJ + V.
+   */
   function toggleView() {
     const cam = mod('camera');
-    if (!cam || !cam.toggle) { showToast('Une seule vue disponible.', '🧭'); return; }
-    safeCall('camera.toggle', function () { cam.toggle(); });
+    if (!cam || !cam.setMode) { showToast('Une seule vue disponible.', '🧭'); return; }
+    const vise = (viewMode() === 'fps') ? 'aventure' : 'fps';
+    safeCall('camera.setMode', function () { cam.setMode(vise, false); });
     state.cameraMode = (cam.mode && cam.mode()) || state.cameraMode;
     // En arrivant dans la vue FPS, le regard part de la direction où l'on
     // marchait : sinon la caméra pivoterait toute seule au changement de vue.

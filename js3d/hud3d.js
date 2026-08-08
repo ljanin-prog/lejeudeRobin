@@ -608,7 +608,11 @@
     if (!ui.viewToggle) return;
     const id = VIEW_ICON[mode] ? mode : 'aventure';
     ui.viewToggle.textContent = VIEW_ICON[id];
-    ui.viewToggle.title = VIEW_NAME[id] + ' — changer (V)';
+    // On annonce OÙ MÈNE le bouton, pas seulement où l'on est : « changer de
+    // vue » ne disait pas vers quoi, et V faisait alors le tour de trois vues.
+    const versFps = (id !== 'fps');
+    ui.viewToggle.title = VIEW_NAME[id] + ' — V pour '
+      + (versFps ? 'passer dans tes yeux' : 'revenir en vue de dos');
     ui.viewToggle.setAttribute('aria-label', VIEW_NAME[id]);
   }
 
