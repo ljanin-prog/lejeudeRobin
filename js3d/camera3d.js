@@ -120,7 +120,8 @@
 
   // --- Vue FPS ---------------------------------------------------------------
   const F_EYE = 1.52;         // hauteur des yeux au-dessus du sol
-  const F_AHEAD = 8;          // à quelle distance on pose le point visé
+  const F_FORWARD = 0.16;     // les yeux, un rien en avant de la tête (Clélia)
+  const F_AHEAD = 8;          // point visé — ne sert plus QUE pendant la bascule
   const F_FOV = 74;           // large : on sent l'espace autour de soi
   // Le lacet ne s'amortit PLUS (ou presque). C'est la leçon du jeu de Clélia,
   // où la caméra subjective prend directement l'angle du joueur : un regard qui
@@ -293,14 +294,22 @@
    * balancement discret rappelle qu'on marche. Aucune occlusion possible.
    */
   function rigFps(p, sway, outPos, outAim) {
-    const bobY = Math.sin(S.fpsBob * 2) * 0.045;
-    const bobX = Math.sin(S.fpsBob) * 0.035;
+    // LE BALANCEMENT DE MARCHE, ramené au réglage de Clélia (2026-08-08).
+    // Il montait à 4,5 cm en hauteur ET 3,5 cm en LATÉRAL, à 7,2 rad/s : de
+    // quoi donner le mal de mer en vue subjective, où le moindre mouvement de
+    // tête se voit en grand. Clélia se contente de 1,2 cm, verticalement, et
+    // rien d'autre. Un balancement doit se sentir sans se remarquer.
+    const bobY = Math.sin(S.fpsBob * 2) * 0.012;
     const s = Math.sin(S.fpsYaw), c = Math.cos(S.fpsYaw);
-    // Les yeux, avancés d'un cinquième de tuile pour ne pas voir sa propre tête.
-    const ex = p.worldX + sway + s * 0.2 + c * bobX;
-    const ez = p.worldZ + c * 0.2 - s * bobX;
+    // Les yeux, avancés d'un sixième de tuile pour ne pas voir sa propre tête.
+    const ex = p.worldX + sway + s * F_FORWARD;
+    const ez = p.worldZ + c * F_FORWARD;
     outPos.set(ex, p.worldY + F_EYE + bobY, ez);
-    outAim.set(ex + s * F_AHEAD, p.worldY + F_EYE - 0.55 + bobY, ez + c * F_AHEAD);
+    // `outAim` ne sert plus QUE pendant la bascule de vue : une fois en vue
+    // subjective, l'orientation est absolue (voir la fin de `update`). On le
+    // garde donc parfaitement horizontal, pour que la bascule finisse là où
+    // l'orientation absolue commencera — sans quoi la vue sursaute en arrivant.
+    outAim.set(ex + s * F_AHEAD, p.worldY + F_EYE + bobY, ez + c * F_AHEAD);
   }
 
   /** Repère idéal d'un mode donné, sans allocation. */
@@ -480,7 +489,14 @@
       const viseYaw = (typeof player.fpsYaw === 'number' && isFinite(player.fpsYaw))
         ? player.fpsYaw
         : dirYaw(player.dir);
-      S.fpsYaw = snap ? viseYaw : angleDamp(S.fpsYaw, viseYaw, F_YAW_SMOOTH, d);
+      // EN VUE SUBJECTIVE PLEINE, le regard EST celui du joueur : aucun
+      // amortissement, comme chez Clélia. La rotation est déjà progressive côté
+      // game3d (2,6 rad/s) ; l'amortir une seconde fois n'ajoutait que du
+      // retard, et c'est du retard qu'on ressent comme « pas fluide ».
+      // On ne garde le lissage que pendant la BASCULE de vue, où l'angle peut
+      // faire un saut brutal en arrivant depuis une vue de dos.
+      const plein = (S.mix >= 1 && S.modeIndex === 2);
+      S.fpsYaw = (snap || plein) ? viseYaw : angleDamp(S.fpsYaw, viseYaw, F_YAW_SMOOTH, d);
       if (player.moving) S.fpsBob += d * 7.2;
       else S.fpsBob = R3.damp(S.fpsBob, Math.round(S.fpsBob / Math.PI) * Math.PI, 0.85, d);
     }
@@ -531,10 +547,45 @@
     // cible, traversait quand même le relief pendant une demi-seconde. On
     // reborne donc la position réellement appliquée — invisible en terrain
     // normal (la borne ne mord que si la caméra est déjà sous le sol).
-    const hReal = ground(S.cam.position.x, S.cam.position.z);
-    if (S.cam.position.y < hReal + marge) S.cam.position.y = hReal + marge;
+    // ⚠️ PAS en vue subjective : cette borne est SÈCHE (une affectation, pas un
+    // lissage), et sur un terrain vallonné la hauteur du sol change à chaque
+    // pas — elle faisait donc sursauter les yeux du joueur, image après image.
+    // Elle n'y sert d'ailleurs à rien : la caméra est à 1,52 au-dessus d'un
+    // joueur toujours posé sur le sol, elle ne peut pas passer dessous, et la
+    // première passe (sur la position visée) borne déjà le cas de la falaise.
+    if (!(S.mix >= 1 && S.modeIndex === 2)) {
+      const hReal = ground(S.cam.position.x, S.cam.position.z);
+      if (S.cam.position.y < hReal + marge) S.cam.position.y = hReal + marge;
+    }
 
-    S.cam.lookAt(_aim);
+    // -------------------------------------------------------------------------
+    //  L'ORIENTATION — et c'est ICI que se jouait toute la fluidité de la vue
+    //  subjective (2026-08-08, second passage).
+    //
+    //  `lookAt` calcule l'orientation à partir de la ligne qui va de la position
+    //  RÉELLE de la caméra au point visé `_aim`. Or `_aim` est calculé sur la
+    //  position IDÉALE du joueur, tandis que la caméra, elle, est lissée : les
+    //  deux ne coïncident jamais tout à fait. Chaque fois qu'on accélère, qu'on
+    //  freine ou qu'on tourne, l'écart change — et la ligne de visée pivote
+    //  toute seule. C'est un tangage permanent, invisible sur une capture fixe,
+    //  insupportable en mouvement. Robin : « ce n'est pas fluide du tout ».
+    //
+    //  Le jeu de Clélia ne s'expose pas à ce problème : en vue subjective, son
+    //  orientation est ABSOLUE (`camera.rotation.set(0, camYaw, 0)`), elle ne
+    //  dépend pas du tout de la position. Le regard ne bouge donc QUE lorsqu'on
+    //  tourne la tête, l'horizon reste rigoureusement horizontal, et le tangage
+    //  disparaît par construction. On reprend exactement ce principe.
+    //
+    //  Le demi-tour : une caméra Three regarde vers −z, le joueur vers +z.
+    //  (Même raison, même correction que `dirToCamYaw` chez Clélia.)
+    //
+    //  Pendant la BASCULE de vue (`mix < 1`), on garde `lookAt` : c'est lui qui
+    //  interpole proprement entre le repère de dos et celui des yeux.
+    if (S.mix >= 1 && S.modeIndex === 2) {
+      S.cam.rotation.set(0, S.fpsYaw + Math.PI, 0);
+    } else {
+      S.cam.lookAt(_aim);
+    }
     applyFov(currentFov());
     S.started = true;
   }
