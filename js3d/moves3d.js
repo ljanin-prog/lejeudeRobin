@@ -162,7 +162,7 @@
   M('souffleDuVolcan', 'Souffle du Volcan','feu', [38, 50], 0.85, 5,  'flame',
     "Le volcan tout entier expire d'un coup : le ciel devient rouge.", { legendary: true });
   M('souffleMagma', 'Souffle du Magma',    'feu', [38, 50], 0.85, 5,  'flame',
-    "Pyrathos ouvre la gueule, et le volcan lui répond.", { legendary: true });
+    "Groudon ouvre la gueule, et le volcan lui répond.", { legendary: true });
   H('coconBraise',  'Cocon de braise',     'feu', { frac: 0.45 }, 10,
     "S'enroule dans des braises douces et récupère des PV.");
 
@@ -189,7 +189,7 @@
     "Le fond de l'océan se soulève : une vague noire recouvre tout le terrain.",
     { legendary: true });
   M('fureurAbysses','Fureur des Abysses','eau', [38, 50], 0.85, 5, 'wave',
-    "Abyssalor appelle l'océan tout entier à la rescousse.", { legendary: true });
+    "Kyogre appelle l'océan tout entier à la rescousse.", { legendary: true });
   H('sourceVive',  'Source vive',     'eau', { frac: 0.45 }, 10,
     "Une source jaillit du sol : quelques gorgées et les forces reviennent.");
   H('sourceClaire','Source claire',   'eau', { frac: 0.45 }, 10,
@@ -220,7 +220,7 @@
     "La toute première forêt du monde repousse d'un coup et referme ses branches.",
     { legendary: true });
   M('reveilForet','Réveil de la Forêt', 'plante', [38, 50], 0.85, 5,  'leaf',
-    "Sylvaros réveille les arbres : la forêt entière attaque.", { legendary: true });
+    "Xerneas réveille les arbres : la forêt entière attaque.", { legendary: true });
   H('roseeGuerisseuse','Rosée guérisseuse','plante', { frac: 0.45 }, 10,
     "Une rosée du matin qui referme toutes les blessures.");
 
@@ -247,7 +247,7 @@
     "Tous les orages du ciel se donnent rendez-vous au même endroit, au même instant.",
     { legendary: true });
   M('eclairPrimordial','Éclair Primordial','foudre', [38, 50], 0.85, 5, 'storm',
-    "Fulguron déchire le ciel d'un seul battement d'ailes.", { legendary: true });
+    "Électhor déchire le ciel d'un seul battement d'ailes.", { legendary: true });
   H('rechargeVive', 'Recharge vive',   'foudre', { frac: 0.45 }, 10,
     "Aspire l'électricité de l'air et se recharge comme une pile toute neuve.");
   H('rechargeOrage','Recharge d\'orage','foudre', { frac: 0.45 }, 10,
@@ -309,7 +309,7 @@
     "Un ouragan grand comme une région se lève et emporte tout jusqu'aux nuages.",
     { legendary: true });
   M('souffleCimes','Souffle des Cimes','air', [38, 50], 0.85, 5,  'wind',
-    "Bourrasca appelle le vent des plus hauts sommets.", { legendary: true });
+    "Fulguris appelle le vent des plus hauts sommets.", { legendary: true });
   H('chant',      'Chant apaisant',    'air', { frac: 0.22 }, 15,
     "Une mélodie douce portée par le vent : rend 22 % des PV maximum.");
   H('brisePaisible','Brise paisible',  'air', { frac: 0.45 }, 10,
@@ -340,7 +340,7 @@
     "Le sol s'ouvre d'un bout à l'autre de la région et avale tout ce qui traîne.",
     { legendary: true });
   M('colereMontagne','Colère de la Montagne','terre', [38, 50], 0.85, 5, 'quake',
-    "Géomastre pose une patte, et la montagne se soulève.", { legendary: true });
+    "Terapagos pose une patte, et la montagne se soulève.", { legendary: true });
   H('terreNourriciere','Terre nourricière','terre', { frac: 0.45 }, 10,
     "S'allonge sur la bonne terre chaude, qui rend tout ce qu'elle a reçu.");
   H('racinesNourricieres','Racines nourricières','terre', { frac: 0.45 }, 10,
@@ -373,7 +373,7 @@
     "Des menhirs gros comme des tours tombent du ciel, l'un après l'autre.",
     { legendary: true });
   M('chuteMenhirs','Pluie de menhirs', 'roche', [38, 50], 0.85, 5,  'rock',
-    "Monolithe fait tomber ses pierres géantes du haut du ciel.", { legendary: true });
+    "Registeel fait tomber ses pierres géantes du haut du ciel.", { legendary: true });
   H('carapaceDePierre','Carapace de pierre','roche', { frac: 0.45 }, 10,
     "Se referme dans une carapace de pierre, le temps que tout se répare.");
   H('carapacePierre','Coquille de granit','roche', { frac: 0.45 }, 10,
@@ -404,7 +404,7 @@
     "Le soleil se penche pour regarder l'adversaire de très, très près.",
     { legendary: true });
   M('couronneAurore','Couronne d\'Aurore','lumiere', [38, 50], 0.85, 5, 'beam',
-    "Auréol déploie son auréole : le jour se lève d'un seul coup.", { legendary: true });
+    "Arceus déploie son cercle d'or : le jour se lève d'un seul coup.", { legendary: true });
   H('soinMagie',  'Soin magique',      'lumiere', { frac: 0.25 }, 15,
     "Un sort tout doux : rend 25 % des PV maximum.");
   H('lueurBienfaisante','Lueur bienfaisante','lumiere', { frac: 0.45 }, 10,
@@ -439,7 +439,7 @@
     "La nuit tombe et refuse de repartir : plus une seule étoile au ciel.",
     { legendary: true });
   M('morsureTenebres','Morsure des Ténèbres','ombre', [38, 50], 0.85, 5, 'void',
-    "Nyxaroth surgit de ta propre ombre et referme les crocs.", { legendary: true });
+    "Zacian surgit de ta propre ombre et referme les crocs.", { legendary: true });
   H('voileReparateur','Voile réparateur','ombre', { frac: 0.45 }, 10,
     "Un voile d'ombre douce recoud tout ce qui est abîmé.");
   H('voileNuit',  'Voile de nuit',     'ombre', { frac: 0.45 }, 10,
@@ -473,7 +473,7 @@
     "L'instant se fend en deux : mille ans passent d'un seul coup.",
     { legendary: true });
   M('fissureTemps','Fissure du Temps', 'temps', [38, 50], 0.85, 5,  'time',
-    "Chronoss fend l'instant : mille ans passent d'un coup.", { legendary: true });
+    "Dialga fend l'instant : mille ans passent d'un coup.", { legendary: true });
   H('remonterLeTemps','Remonter le temps','temps', { frac: 0.50 }, 10,
     "Revient juste avant d'avoir été blessé : rend la moitié des PV.");
   H('remonterTemps','Rembobiner',      'temps', { frac: 0.50 }, 10,
@@ -508,7 +508,7 @@
     "Toutes les étoiles du ciel s'effondrent ensemble en un point minuscule.",
     { legendary: true });
   M('spiraleGalaxie','Spirale de la Galaxie','espace', [38, 50], 0.85, 5, 'star',
-    "Vortexis déroule sa spirale d'étoiles autour de l'adversaire.", { legendary: true });
+    "Palkia déroule sa spirale d'étoiles autour de l'adversaire.", { legendary: true });
   H('nebuleuseReparatrice','Nébuleuse réparatrice','espace', { frac: 0.45 }, 10,
     "Un nuage d'étoiles enveloppe la créature et recolle tous les morceaux.");
   H('berceauEtoiles','Berceau d\'étoiles','espace', { frac: 0.45 }, 10,

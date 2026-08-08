@@ -731,20 +731,26 @@ En vue `fps`, et **seulement** dans cette vue, la marche devient continue :
 ```js
 state.player.freeMove          // true en vue fps : la position continue fait autorité
 state.player.freeX, freeZ      // position en unités monde (1 tuile = 1 unité)
-const FPS_SPEED  = 4.6;        // unités par seconde
-const FPS_RADIUS = 0.34;       // demi-gabarit, pour les collisions
+const FPS_SPEED  = 3.4;        // unités par seconde en vitesse de croisière
+const FPS_ACCEL  = 12.0;       // unités/s² — la croisière est atteinte en ~0,3 s
+const FPS_FREIN  = 18.0;       // décélération : arrêt en ~0,2 s
+const FPS_RECUL  = 0.62;       // on recule à 62 % de la vitesse de marche
+const FPS_RADIUS = 0.34;       // rayon de collision
+const FPS_PAS    = 0.85;       // distance entre deux bruits de pas
 ```
 
-Quatre règles, dans l'ordre où elles comptent :
+Cinq règles, dans l'ordre où elles comptent :
 
 1. **On avance dans l'axe du regard** : `dx = sin(yaw)`, `dz = cos(yaw)` — conforme au §1.4
    de v2 (`'down'` = yaw 0 = +z, `'right'` = yaw +π/2 = +x).
-2. **Les deux axes sont tentés séparément.** C'est ce qui fait qu'on glisse le long d'un mur
-   au lieu de s'y arrêter net. Sans ça, marcher en biais contre une façade bloque
-   complètement — c'était l'autre moitié de la sensation de chaos.
-3. **Le gabarit se teste aux quatre coins** (`placeLibre`), sinon on entre dans les murs par
-   l'angle, ce qui se voit immédiatement en vue subjective.
-4. **`tileX/tileY` suit la position continue**, et `onStepFinished()` est appelé au
+2. **La vitesse est une rampe, jamais un interrupteur** : `libreVitesse` monte à `FPS_ACCEL`
+   et redescend à `FPS_FREIN`. Voir l'amendement 2026-08-08 ci-dessous.
+3. **Les deux axes sont tentés séparément** (`libreAvancer`). C'est ce qui fait qu'on glisse
+   le long d'un mur au lieu de s'y arrêter net. Sans ça, marcher en biais contre une façade
+   bloque complètement — c'était l'autre moitié de la sensation de chaos.
+4. **Chaque axe est testé deux fois** : au point visé, puis une longueur de `FPS_RADIUS` plus
+   loin. Le gabarit CARRÉ des quatre coins, lui, a été abandonné (amendement ci-dessous).
+5. **`tileX/tileY` suit la position continue**, et `onStepFinished()` est appelé au
    changement de tuile. Tout le reste du jeu continue donc de raisonner en tuiles sans
    savoir que la marche a changé.
 
@@ -765,6 +771,50 @@ pas ce qu'on regardait — et le réticule non plus. La règle 1 vaut maintenant
 angle autant qu'une cardinale (détail et pièges dans le §16 de v2). Hors vue subjective,
 rien ne change : le regard y EST cardinal.
 
+### 17 bis. Amendement 2026-08-08 — le système du jeu de Clélia
+
+Le jeu de Clélia (`~/Desktop/Projects/lejeudeclelia`, `game3d.js` § « déplacement libre »)
+a résolu le même problème un mois plus tôt, et **son déplacement est nettement plus
+agréable**. Trois différences, reprises ici à l'identique.
+
+**a. La vitesse est une rampe.** C'est le point principal. On partait à 4,6 unités/s dès la
+première image et on s'arrêtait net au relâchement : chaque appui donnait une secousse, et
+corriger sa trajectoire au millimètre était impossible. Désormais `libreVitesse` est une
+grandeur signée qui monte à `FPS_ACCEL` et redescend à `FPS_FREIN` — croisière en 0,29 s,
+arrêt en 0,19 s, avec un tiers de tuile de glisse. La vitesse de croisière est **plus
+basse** (3,4 au lieu de 4,6) et le déplacement paraît pourtant plus vif : ce n'était pas
+une question de rapidité mais de continuité. Le recul plafonne à `FPS_RECUL` de la marche.
+
+**b. La rotation redevient purement continue** — le double geste du §18.2 est supprimé.
+L'appui bref qui déclenchait un quart de tour « mené à son terme même après relâchement »
+faisait pivoter la vue toute seule, ce qui est pire que le mal qu'il soignait. La cause
+réelle de « ça marche une fois sur deux » n'était d'ailleurs pas le geste mais la **caméra**
+(point c). `FPS_TURN_SPEED` descend de 3,0 à 2,6 rad/s, le réglage de Clélia.
+
+**c. `camera3d.js` n'amortit plus le lacet en vue subjective** : `F_YAW_SMOOTH` passe de
+0,60 (40 % de rattrapage par image, ≈ 80 ms de retard) à **0,10**. Chez Clélia la caméra
+prend directement l'angle du joueur ; on garde ici une trace d'amortissement pour absorber
+les recalages brutaux du yaw sur une cardinale (chargement, `teleport()`) sans les
+transformer en à-coup. C'est ce lissage qui mangeait les appuis brefs de 8°.
+
+**d. La collision passe du carré au cercle.** `placeLibre(x, z)` ne teste plus qu'un point ;
+`libreAvancer(dx, dz)` teste chaque axe au point visé **et** un rayon plus loin. Le gabarit
+carré interdisait d'entrer dans un mur par le coin, mais accrochait aux angles de tuiles dès
+qu'on franchissait une porte de biais.
+
+**e. Deux détails qui manquaient** : le bruit de pas, absent en vue subjective, est
+maintenant cadencé par la DISTANCE (`FPS_PAS`) — on entend donc ses pas s'accélérer ; et
+`moveProgress` est tenu à jour, ce qui anime le modèle du joueur pendant la bascule de vue.
+
+**Banc d'essai : `.claude/verif_fps.js`.** Il découpe le vrai bloc de `game3d.js` (de
+`const YAW_DIRS` à `function updateWorld(`) et l'exécute sur un plateau 40 × 40 : rampe de
+vitesse, freinage, recul, cap réel contre cap visé sur 5 angles, glissement le long d'un
+mur, blocage par un PNJ, synchronisation de la grille, cadence des pas, et rotation
+(sens, absence de rotation fantôme, appui bref, quart de tour, annulation mutuelle, pas
+régulier en virage). 22 épreuves, toutes vertes. **À relancer après toute retouche.**
+⚠️ Il lit le fichier par repères textuels : renommer `updateWorld` ou `YAW_DIRS` le casse
+bruyamment (il le dit et sort en erreur), jamais silencieusement.
+
 ---
 
 ## 18. TROIS CORRECTIONS APRÈS LES TESTS DE ROBIN — 2026-07-31 (3)
@@ -782,8 +832,13 @@ DÉCROÎTRE le yaw**. La première version faisait l'inverse, donc la flèche dr
 
 ### 18.2 Une rotation continue rend les appuis brefs inopérants
 
+> ⚠️ **Ce mécanisme a été RETIRÉ le 2026-08-08** (§17 bis b et c). Le diagnostic était
+> incomplet : les 8° existaient bien, mais c'est le lissage de la caméra qui les rendait
+> invisibles. Une fois la caméra collée au regard, un appui de 64 ms tourne de 9,5° et se
+> voit très bien. La section est conservée pour l'histoire — ne pas la réimplémenter.
+
 À 3 rad/s, un appui de 50 ms ne fait pivoter que de 8° : invisible. D'où « ça fonctionne
-une fois sur deux ». Les deux gestes cohabitent désormais :
+une fois sur deux ». Les deux gestes cohabitaient alors :
 
 | geste | effet |
 |---|---|
@@ -1166,3 +1221,94 @@ Les 45 balises `<script src>` d'`index3d.html` n'étaient gardées que par des c
 - `checkBoot()` **ne bloque jamais** : il nomme ce qui manque et laisse le jeu démarrer.
   La plupart des modules sont facultatifs (§1.4), et un enfant privé de son jeu parce
   qu'un fichier manque serait exactement la punition que ce jeu s'interdit.
+
+---
+
+## 23. LES 36 LÉGENDAIRES PORTENT DE VRAIS NOMS — 2026-08-08
+
+Demande du parent : *« est-ce que tu peux reprendre le nom des Pokémon légendaires du jeu
+de Clélia dans celui de Robin ? »* Le jeu de Clélia utilise les vraies espèces (52, dont
+six légendaires) ; celui de Robin avait 36 gardiens inventés. Six noms pour trente-six
+places : la liste a donc été **complétée avec trente autres légendaires réels**, et les six
+de Clélia — Mewtwo, Rayquaza, Lugia, Ho-Oh, Arceus, Terapagos — y figurent tous.
+
+### 23.1 La règle d'appariement : L'APPARENCE AVANT LE TYPE
+
+Les 36 modèles 3D de `legend3d.pN.js` étaient déjà dessinés, et c'est **le modèle que Robin
+voit**. Chaque nom a donc été choisi sur ce que la créature EST à l'écran, pas sur son type
+maison : le cerf devient **Xerneas**, la panthère noire **Mewtwo**, le long ruban de vent
+**Rayquaza**, la tortue à carapace-plateau **Terapagos**, l'être au cercle d'or **Arceus**.
+Les types `lumiere`, `ombre`, `temps` et `espace` n'existent pas chez Nintendo : chercher
+la concordance de type aurait été impossible, et l'écart ne se voit pas — l'écart
+d'apparence, lui, se verrait immédiatement.
+
+Les quatre **Regi** sont volontairement dispersés (Regirock en `terre`, Regice en `glace`,
+Registeel en `roche`, Regigigas en `plante`) : ils restent une famille reconnaissable dans
+le Pokédex sans qu'aucune région n'en concentre trois.
+
+### 23.2 Ce qui n'a PAS bougé : les ids
+
+`pyrathos` s'appelle Groudon, mais son id reste `pyrathos`. C'est ce qui protège tout le
+reste — la sauvegarde de Robin, `state.collection`, les 36 `registerCreature()` de
+`legend3d.pN.js`, les autels de `regions3d.js`, les quêtes de `quest3d.js`, les capacités
+signature de `moves3d.js`. **Ne jamais renommer un id pour le faire coïncider avec le nom
+affiché** : le jour où on le fera, toutes les créatures capturées disparaîtront.
+
+Les textes qui citaient un nom en dur ont été mis à jour : 7 dialogues de PNJ
+(`regions3d.js`), 4 répliques de champions (`arenas3d.js`), 11 descriptions de capacités
+signature (`moves3d.js`), 2 indices de quête (`quest3d.js`). Partout ailleurs, les noms ne
+vivaient que dans des commentaires.
+
+### 23.3 Les parties commencées avant — `LEGACY_NAMES`
+
+`team3d.create()` **fige le nom dans `nick`** au moment de la capture. Un légendaire
+attrapé avant ce changement s'appellerait donc encore « Pyrathos » dans l'équipe et dans la
+boîte, alors que le Pokédex dirait « Groudon » : deux noms pour la même bête, dans la même
+partie. `dex3d.LEGACY_NAMES` liste les 36 anciens noms, `dex3d.isLegacyName(id, nick)` les
+reconnaît, et `team3d.deserialize()` rebaptise à la relecture.
+
+⚠️ **Un surnom donné à la main par Robin (`rename()`) n'est JAMAIS écrasé.** On ne remplace
+que les surnoms qui sont exactement l'ancien nom d'espèce. Ajouter un nom à `LEGACY_NAMES`
+à chaque futur renommage — la table est cumulative, chaque id porte un tableau.
+
+---
+
+## 24. UN SEUL EXEMPLAIRE DE CHAQUE LÉGENDAIRE — 2026-08-08
+
+Retour de Robin : *« qu'il n'y ait à chaque fois qu'un Pokémon s'il est légendaire, 1 seul
+de chaque et pas le même légendaire partout »*. Trois causes, trois correctifs.
+
+### 24.1 L'autel se rallumait après la capture
+
+`roamers3d` reposait l'autel `LEGEND_COOLDOWN_S` (10 min) après une capture, **puis
+rallumait le même gardien**. Robin pouvait attraper trois Xerneas — et, comme les cooldowns
+ne sont qu'en mémoire, un simple rechargement de la partie suffisait à tout remettre à
+zéro.
+
+`quest3d.isLegendAwake(speciesId)` renvoie désormais `false` si l'espèce figure dans
+`caught` : **l'autel s'éteint pour de bon**, et `caught` est sauvegardé, donc l'extinction
+survit au rechargement. `awakeLegends(regionId)` filtre pareillement.
+
+### 24.2 Un second verrou, indépendant
+
+`roamers3d.dejaAttrape(id)` lit `gameState.collection` et refuse d'animer un autel dont
+l'espèce est déjà possédée. Deux chemins pour une même règle, **et il en faut deux** :
+`quest3d` ne connaît que les 36 légendaires de ses quêtes, un légendaire ajouté plus tard
+n'y figurerait pas, et le repli du §17 de v2 veut que l'absence de `quest3d` ne bloque
+jamais le jeu — sans ce second verrou, ce repli rouvrirait le robinet.
+
+### 24.3 « Pas le même partout » : on réveille le PLUS PROCHE
+
+`updateLegendary()` parcourait `region.altars` et s'arrêtait au **premier** autel éligible
+dans les 42 tuiles de `LEGEND_ACTIVATE_DIST`. Deux autels dans le même rayon, et c'était
+toujours celui écrit en premier dans `regions3d.js` qui se réveillait, quelle que soit la
+direction prise par Robin. La boucle retient maintenant le plus proche.
+
+### 24.4 Banc d'essai — `.claude/verif_legendaires.js`
+
+19 épreuves sur les VRAIS modules (`dex3d`, `quest3d`, `team3d`, `arenas3d`, `regions3d`
+chargés dans un `vm`) : les 36 noms attendus, la présence des six de Clélia, l'absence de
+doublon et d'ancien nom, les 36 modèles 3D et les 36 autels distincts, l'extinction après
+capture et sa survie à une sauvegarde, le fait qu'aucun champion n'aligne deux légendaires,
+et la réparation des surnoms — y compris le refus d'écraser « Croquette ». **À relancer
+après toute retouche des légendaires.**

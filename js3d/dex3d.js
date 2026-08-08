@@ -453,65 +453,105 @@
 
   // ===========================================================================
   //  LE TITRE DE CHAQUE LÉGENDAIRE
-  //  « SYLVAROS, le Cerf Dormant » au lieu de « Sylvaros ». Les noms, eux, ne
-  //  bougent pas : ce sont les ids du contrat, et surtout ils sont écrits dans
-  //  la sauvegarde de Robin (chaque créature capturée garde son `nick`).
-  //  Un titre à part règle donc le problème sans toucher à une seule ligne de
-  //  la table du §4 ni risquer la partie en cours.
-  //  Les mots sont repris des descriptions ci-dessous et des indices de quête
+  //  « XERNEAS, le Cerf de Vie » au lieu de « Xerneas ». Les IDS, eux, ne
+  //  bougent JAMAIS : ce sont ceux du contrat, ils sont écrits dans la
+  //  sauvegarde de Robin, et les 36 modèles 3D de `legend3d.pN.js` s'y
+  //  enregistrent. Un titre à part permet de nommer sans toucher aux ids.
+  //  Les mots restent ceux des descriptions ci-dessous et des indices de quête
   //  de quest3d.js (« une fée-fleur, un colosse de racines, un griffon des
   //  cimes… ») : un enfant qui lit l'indice doit reconnaître la créature.
+  //
+  //  ⚠️ 2026-08-08 — LES NOMS SONT DEVENUS DE VRAIS NOMS DE POKÉMON, comme
+  //  dans le jeu de Clélia. Le nom d'affichage a changé, l'id n'a pas bougé :
+  //  `pyrathos` s'appelle Groudon, `sylvaros` s'appelle Xerneas, etc. Le choix
+  //  de chaque nom suit L'APPARENCE DÉJÀ DESSINÉE en 3D avant le type, parce
+  //  que c'est le modèle que Robin voit : le cerf est Xerneas, la panthère est
+  //  Mewtwo, le long ruban de vent est Rayquaza. La table complète des
+  //  anciens noms vit dans `LEGACY_NAMES` ci-dessous — elle sert à réparer les
+  //  surnoms figés dans une partie commencée avant ce changement.
   // ===========================================================================
   var LEGEND_TITLES = {
     // feu — Caldeira de Braise
-    pyrathos: 'le Dragon de Magma',
-    emberyx: 'le Phénix des Cendres',
-    fournalis: 'le Lion de Lave',
+    pyrathos: 'le Colosse du Magma',
+    emberyx: 'le Phénix Arc-en-ciel',
+    fournalis: 'le Lion de Feu',
     // eau — Côte de Saphir
     abyssalor: 'le Léviathan des Abysses',
-    ondinae: "l'Esprit d'Écume",
-    marea: 'la Reine des Marées',
+    ondinae: 'le Vent du Nord',
+    marea: 'le Gardien des Marées',
     // plante — Val d'Émeraude
-    sylvaros: 'le Cerf Dormant',
-    florabelle: 'la Fée des Pétales',
-    racinor: 'le Colosse de Racines',
+    sylvaros: 'le Cerf de Vie',
+    florabelle: 'la Fleur des Prairies',
+    racinor: 'le Colosse Endormi',
     // foudre
-    fulguron: "l'Oiseau-Tonnerre",
+    fulguron: "l'Oiseau de Foudre",
     voltaris: 'le Félin de Foudre',
-    orageon: "le Nuage d'Orage",
+    orageon: "le Génie de l'Orage",
     // glace — Massif de Givre
-    cryonix: 'le Dragon du Trône de Glace',
-    givrea: 'la Biche de Givre',
-    banquisor: "l'Ours de Banquise",
+    cryonix: 'le Dragon des Glaces',
+    givrea: 'la Monture des Neiges',
+    banquisor: 'le Colosse de Banquise',
     // air
-    bourrasca: 'le Griffon des Cimes',
-    zephyrion: 'le Ruban de Vent',
-    aelune: 'la Raie Céleste',
+    bourrasca: 'le Génie des Cimes',
+    zephyrion: 'le Ruban du Ciel',
+    aelune: 'le Croissant de Lune',
     // terre
-    geomastre: 'la Tortue-Montagne',
-    terracor: 'la Taupe-Titan',
-    limonis: 'le Golem de Glaise',
+    geomastre: 'la Tortue de Cristal',
+    terracor: 'le Titan des Terres',
+    limonis: 'le Golem de Pierre',
     // roche
     monolithe: 'le Gardien des Menhirs',
-    cristallia: 'le Cerf de Cristal',
-    obsidion: "la Panthère d'Obsidienne",
+    cristallia: 'la Princesse de Cristal',
+    obsidion: 'la Panthère la Plus Puissante',
     // lumière — Plateau d'Aurore
-    aureol: "le Griffon de l'Aube",
-    solaria: 'le Phénix de Lumière',
-    prismee: "le Papillon d'Arc-en-ciel",
+    aureol: "le Cercle d'Or",
+    solaria: 'l\'Oiseau de Flamme',
+    prismee: "l'Étoile aux Souhaits",
     // ombre
     nyxaroth: 'le Loup des Ténèbres',
-    penombra: 'le Chat de Brume',
-    eclipsion: "le Corbeau d'Éclipse",
+    penombra: 'le Petit Fantôme',
+    eclipsion: "l'Oiseau d'Éclipse",
     // temps
-    chronoss: "la Tortue-Horloge",
-    eternia: 'le Sphinx du Temps',
-    sablion: 'le Serpent de Sable',
+    chronoss: 'le Maître du Temps',
+    eternia: 'la Voyageuse du Temps',
+    sablion: "le Serpent de l'Autre Monde",
     // espace
-    vortexis: 'la Raie-Galaxie',
-    astralis: 'la Baleine Stellaire',
-    nebulon: 'la Méduse-Nébuleuse',
+    vortexis: "le Maître de l'Espace",
+    astralis: 'le Dragon Infini',
+    nebulon: 'le Voile de Nébuleuse',
   };
+
+  // ===========================================================================
+  //  LES ANCIENS NOMS (avant le 2026-08-08)
+  //  Ils ne servent qu'à UNE chose : `team3d.js` fige le nom de la créature
+  //  dans son `nick` au moment de la capture. Un légendaire attrapé avant ce
+  //  changement s'appellerait donc encore « Pyrathos » dans l'équipe et dans la
+  //  boîte, alors que le Pokédex, lui, dirait « Groudon » — deux noms pour la
+  //  même bête, dans la même partie. `team3d.deserialize()` consulte cette
+  //  table pour rebaptiser SEULEMENT les créatures qui n'ont jamais été
+  //  renommées à la main : un surnom choisi par Robin reste intouchable.
+  // ===========================================================================
+  var LEGACY_NAMES = {
+    pyrathos: ['Pyrathos'], emberyx: ['Emberyx'], fournalis: ['Fournalis'],
+    abyssalor: ['Abyssalor'], ondinae: ['Ondinaë'], marea: ['Maréa'],
+    sylvaros: ['Sylvaros'], florabelle: ['Florabelle'], racinor: ['Racinor'],
+    fulguron: ['Fulguron'], voltaris: ['Voltaris'], orageon: ['Orageon'],
+    cryonix: ['Cryonix'], givrea: ['Givréa'], banquisor: ['Banquisor'],
+    bourrasca: ['Bourrasca'], zephyrion: ['Zéphyrion'], aelune: ['Aélune'],
+    geomastre: ['Géomastre'], terracor: ['Terracor'], limonis: ['Limonis'],
+    monolithe: ['Monolithe'], cristallia: ['Cristallia'], obsidion: ['Obsidion'],
+    aureol: ['Auréol'], solaria: ['Solaria'], prismee: ['Prismée'],
+    nyxaroth: ['Nyxaroth'], penombra: ['Pénombra'], eclipsion: ['Éclipsion'],
+    chronoss: ['Chronoss'], eternia: ['Éternia'], sablion: ['Sablion'],
+    vortexis: ['Vortexis'], astralis: ['Astralis'], nebulon: ['Nébulon'],
+  };
+
+  /** Ce surnom est-il simplement l'ancien nom de cette espèce ? */
+  function isLegacyName(speciesId, nick) {
+    var anciens = LEGACY_NAMES[speciesId];
+    if (!anciens || !nick) return false;
+    return anciens.indexOf(String(nick)) >= 0;
+  }
 
   // Pour chaque type : [attaque forte, soin, signature] + la liste des 3 mid
   // utilisées à tour de rôle par les 3 légendaires (pour qu'ils ne se
@@ -548,125 +588,125 @@
 
   var LEGEND_DATA = [
     // --- feu (Caldeira de Braise) -------------------------------------------
-    L('pyrathos', 'Pyrathos', 'feu', 'braise', ['volcano', 'mountain'], '#c0392b', 0.05,
+    L('pyrathos', 'Groudon', 'feu', 'braise', ['volcano', 'mountain'], '#c0392b', 0.05,
       150, 110, 95, 85, 0,
       "On raconte qu'il dort au cœur du volcan et que chaque éruption n'est qu'un de ses bâillements. Ses ailes de braise éclairent la nuit comme un second soleil."),
-    L('emberyx', 'Emberyx', 'feu', 'braise', ['volcano', 'ash', 'mountain'], '#ff8c42', 0.06,
+    L('emberyx', 'Ho-Oh', 'feu', 'braise', ['volcano', 'ash', 'mountain'], '#ff8c42', 0.06,
       120, 105, 80, 110, 1,
-      "Tous les cent ans, Emberyx brûle entièrement et renaît de ses cendres. Sa traîne de flammes dessine dans le ciel la route des voyageurs perdus."),
-    L('fournalis', 'Fournalis', 'feu', 'braise', ['desert', 'volcano'], '#e25822', 0.07,
+      "Tous les cent ans, Ho-Oh brûle entièrement et renaît de ses cendres. Sa traîne de sept couleurs dessine dans le ciel la route des voyageurs perdus."),
+    L('fournalis', 'Entei', 'feu', 'braise', ['desert', 'volcano'], '#e25822', 0.07,
       135, 108, 90, 88, 2,
       "Son rugissement fait trembler toute la caldeira. Sa crinière de lave ne s'éteint jamais, pas même sous les pluies d'orage."),
     // --- eau (Côte de Saphir) -----------------------------------------------
-    L('abyssalor', 'Abyssalor', 'eau', 'saphir', ['sea', 'coast'], '#123a6b', 0.05,
+    L('abyssalor', 'Kyogre', 'eau', 'saphir', ['sea', 'coast'], '#123a6b', 0.05,
       155, 108, 100, 80, 0,
       "Il vit si profond que personne ne l'a jamais vu en entier. Les marins jurent que les grandes vagues ne sont que ses soupirs."),
-    L('ondinae', 'Ondinaë', 'eau', 'saphir', ['coast', 'beach', 'sea'], '#73eff7', 0.08,
+    L('ondinae', 'Suicune', 'eau', 'saphir', ['coast', 'beach', 'sea'], '#73eff7', 0.08,
       115, 95, 85, 112, 1,
-      "Née de l'écume d'une tempête, elle danse sur les vagues et calme la mer d'un simple regard."),
-    L('marea', 'Maréa', 'eau', 'saphir', ['sea', 'coast'], '#2f7fb8', 0.07,
+      "Né de l'écume d'une tempête, il court sur les vagues et calme la mer d'un simple regard. Là où il passe, l'eau redevient claire."),
+    L('marea', 'Lugia', 'eau', 'saphir', ['sea', 'coast'], '#2f7fb8', 0.07,
       130, 98, 92, 100, 2,
-      "C'est elle qui règne sur les marées : quand elle bat des ailes, l'océan se retire, puis revient sur la pointe des pieds."),
+      "C'est lui qui règne sur les marées : quand il bat des ailes, l'océan se retire, puis revient sur la pointe des pieds."),
     // --- plante (Val d'Émeraude) --------------------------------------------
-    L('sylvaros', 'Sylvaros', 'plante', 'val', ['forest', 'park'], '#1e8449', 0.06,
+    L('sylvaros', 'Xerneas', 'plante', 'val', ['forest', 'park'], '#1e8449', 0.06,
       145, 100, 105, 75, 0,
       "Le plus vieux cerf du monde. On dit que chaque arbre du Val d'Émeraude a poussé dans l'empreinte d'un de ses pas."),
-    L('florabelle', 'Florabelle', 'plante', 'val', ['park', 'forest', 'plain'], '#ff6b9d', 0.09,
+    L('florabelle', 'Shaymin', 'plante', 'val', ['park', 'forest', 'plain'], '#ff6b9d', 0.09,
       110, 92, 82, 108, 1,
       "Là où elle passe, les fleurs s'ouvrent même au cœur de l'hiver. Sa robe de pétales ne se fane jamais."),
-    L('racinor', 'Racinor', 'plante', 'val', ['forest'], '#5c3a1e', 0.06,
+    L('racinor', 'Regigigas', 'plante', 'val', ['forest'], '#5c3a1e', 0.06,
       160, 105, 115, 55, 2,
       "Un colosse de racines tressées qui dort mille ans d'affilée, puis se lève une seule journée pour replanter les forêts brûlées."),
     // --- foudre (Sylve d'Ambre + Côte de Saphir) ----------------------------
-    L('fulguron', 'Fulguron', 'foudre', 'sylve', ['jungle', 'forest'], '#f1c40f', 0.06,
+    L('fulguron', 'Électhor', 'foudre', 'sylve', ['jungle', 'forest'], '#f1c40f', 0.06,
       125, 110, 85, 120, 0,
       "Ses ailes sont deux éclairs arrêtés en plein vol. Un seul battement, et l'orage éclate au-dessus de la jungle."),
-    L('voltaris', 'Voltaris', 'foudre', 'sylve', ['jungle', 'swamp'], '#f1c40f', 0.07,
+    L('voltaris', 'Raikou', 'foudre', 'sylve', ['jungle', 'swamp'], '#f1c40f', 0.07,
       120, 112, 82, 118, 1,
       "Il court plus vite que la foudre — en vérité, c'est la foudre qui essaie de le rattraper."),
-    L('orageon', 'Orageon', 'foudre', 'saphir', ['sea', 'coast'], '#566c86', 0.07,
+    L('orageon', 'Boréas', 'foudre', 'saphir', ['sea', 'coast'], '#566c86', 0.07,
       135, 105, 95, 95, 2,
       "Ce nuage à visage suit les bateaux de pêche et laisse tomber de grosses gouttes tièdes sur les enfants sages."),
     // --- glace (Massif de Givre) --------------------------------------------
-    L('cryonix', 'Cryonix', 'glace', 'givre', ['glacier', 'mountain'], '#a8e6ff', 0.05,
+    L('cryonix', 'Kyurem', 'glace', 'givre', ['glacier', 'mountain'], '#a8e6ff', 0.05,
       150, 112, 100, 85, 0,
       "Son souffle a creusé toutes les grottes de glace du Massif. Ses ailes de cristal chantent quand le vent les traverse."),
-    L('givrea', 'Givréa', 'glace', 'givre', ['glacier'], '#e8f4f8', 0.09,
+    L('givrea', 'Blizzeval', 'glace', 'givre', ['glacier'], '#e8f4f8', 0.09,
       115, 92, 88, 110, 1,
-      "Biche de givre aux bois de cristal : elle laisse derrière elle un sentier de flocons tous parfaitement identiques."),
-    L('banquisor', 'Banquisor', 'glace', 'givre', ['glacier', 'mountain'], '#f4f4f4', 0.06,
+      "Monture de givre aux bois de cristal : elle laisse derrière elle un sentier de flocons tous parfaitement identiques."),
+    L('banquisor', 'Regice', 'glace', 'givre', ['glacier', 'mountain'], '#f4f4f4', 0.06,
       165, 105, 118, 58, 2,
       "Il porte la banquise sur son dos. Quand il se retourne dans son sommeil, les glaciers craquent d'un bout à l'autre du Massif."),
     // --- air (Val, Saphir, Givre) -------------------------------------------
-    L('bourrasca', 'Bourrasca', 'air', 'val', ['mountain', 'plain'], '#bfe3f2', 0.08,
+    L('bourrasca', 'Fulguris', 'air', 'val', ['mountain', 'plain'], '#bfe3f2', 0.08,
       125, 102, 88, 115, 0,
-      "Griffon des cimes, il a bâti son nid dans le vent lui-même. On raconte qu'il n'a jamais posé une seule patte au sol."),
-    L('zephyrion', 'Zéphyrion', 'air', 'saphir', ['coast', 'beach'], '#cfe8f3', 0.08,
+      "Génie des cimes, il a bâti son nid dans le vent lui-même. On raconte qu'il n'a jamais posé une seule patte au sol."),
+    L('zephyrion', 'Rayquaza', 'air', 'saphir', ['coast', 'beach'], '#cfe8f3', 0.08,
       118, 95, 82, 125, 1,
       "Long ruban de vent, il fait le tour de la côte en une nuit pour rapporter les nouvelles aux mouettes."),
-    L('aelune', 'Aélune', 'air', 'givre', ['mountain', 'glacier'], '#e6f1f7', 0.08,
+    L('aelune', 'Cresselia', 'air', 'givre', ['mountain', 'glacier'], '#e6f1f7', 0.08,
       122, 94, 90, 112, 2,
-      "Raie céleste au voile translucide, elle nage dans le ciel des nuits claires comme d'autres nagent dans la mer."),
+      "Croissant de lune au voile translucide, elle nage dans le ciel des nuits claires comme d'autres nagent dans la mer."),
     // --- terre (Sylve, Braise) ----------------------------------------------
-    L('geomastre', 'Géomastre', 'terre', 'sylve', ['swamp', 'jungle'], '#7a5c3a', 0.06,
+    L('geomastre', 'Terapagos', 'terre', 'sylve', ['swamp', 'jungle'], '#7a5c3a', 0.06,
       168, 100, 125, 50, 0,
       "Sa carapace est un plateau où poussent des arbres entiers. Certains villages en ont fait une carte, puis se sont perdus quand il a bougé."),
-    L('terracor', 'Terracor', 'terre', 'braise', ['desert', 'volcano'], '#c08c4a', 0.06,
+    L('terracor', 'Démétéros', 'terre', 'braise', ['desert', 'volcano'], '#c08c4a', 0.06,
       150, 115, 105, 65, 1,
-      "Taupe-titan des terres craquelées : on dit que ses galeries relient secrètement les six régions entre elles."),
-    L('limonis', 'Limonis', 'terre', 'sylve', ['swamp', 'jungle'], '#a97b50', 0.09,
+      "Titan des terres craquelées : on dit que ses galeries relient secrètement les six régions entre elles."),
+    L('limonis', 'Regirock', 'terre', 'sylve', ['swamp', 'jungle'], '#a97b50', 0.09,
       140, 95, 108, 60, 2,
-      "Golem de glaise né d'un marécage très patient. Chaque printemps, il répare les berges que les orages ont emportées."),
+      "Golem de pierre né d'un marécage très patient. Chaque printemps, il répare les berges que les orages ont emportées."),
     // --- roche (Aurore, Givre, Braise) --------------------------------------
-    L('monolithe', 'Monolithe', 'roche', 'aurore', ['celestial', 'mountain'], '#8a9199', 0.05,
+    L('monolithe', 'Registeel', 'roche', 'aurore', ['celestial', 'mountain'], '#8a9199', 0.05,
       160, 108, 130, 48, 0,
       "Douze menhirs tournent autour de lui depuis la nuit des temps. On pense qu'ils comptent les années à sa place."),
-    L('cristallia', 'Cristallia', 'roche', 'givre', ['glacier', 'mountain'], '#d896ff', 0.07,
+    L('cristallia', 'Diancie', 'roche', 'givre', ['glacier', 'mountain'], '#d896ff', 0.07,
       130, 98, 112, 80, 1,
-      "Cerf de cristal du Massif : quand le soleil traverse ses bois, la neige tout entière se couvre d'arcs-en-ciel."),
-    L('obsidion', 'Obsidion', 'roche', 'braise', ['volcano', 'mountain'], '#1a1c2c', 0.06,
+      "Princesse de cristal du Massif : quand le soleil traverse ses bois, la neige tout entière se couvre d'arcs-en-ciel."),
+    L('obsidion', 'Mewtwo', 'roche', 'braise', ['volcano', 'mountain'], '#1a1c2c', 0.06,
       135, 118, 100, 95, 2,
       "Panthère d'obsidienne aux veines de lave. Elle chasse dans le noir complet, et l'on jure que le noir a peur d'elle."),
     // --- lumière (Aurore, Braise, Val) --------------------------------------
-    L('aureol', 'Auréol', 'lumiere', 'aurore', ['celestial', 'mountain'], '#ffe066', 0.05,
+    L('aureol', 'Arceus', 'lumiere', 'aurore', ['celestial', 'mountain'], '#ffe066', 0.05,
       145, 112, 98, 100, 0,
-      "Griffon solaire, gardien du Plateau d'Aurore. Son auréole se lève chaque matin quelques minutes avant le soleil, pour lui montrer le chemin."),
-    L('solaria', 'Solaria', 'lumiere', 'braise', ['volcano', 'desert'], '#fff4d6', 0.06,
+      "Gardien du Plateau d'Aurore. Son cercle d'or se lève chaque matin quelques minutes avant le soleil, pour lui montrer le chemin."),
+    L('solaria', 'Sulfura', 'lumiere', 'braise', ['volcano', 'desert'], '#fff4d6', 0.06,
       130, 115, 90, 105, 1,
-      "Phénix de lumière pure : ses plumes sont de vrais rayons. Là où elle se pose, les ombres s'écartent poliment."),
-    L('prismee', 'Prismée', 'lumiere', 'val', ['forest', 'park', 'plain'], '#f4f4f4', 0.10,
+      "Oiseau de lumière pure : ses plumes sont de vrais rayons. Là où il se pose, les ombres s'écartent poliment."),
+    L('prismee', 'Jirachi', 'lumiere', 'val', ['forest', 'park', 'plain'], '#f4f4f4', 0.10,
       105, 88, 80, 115, 2,
-      "Papillon-prisme du Val d'Émeraude. Chacune de ses ailes contient un arc-en-ciel entier, soigneusement plié en huit."),
+      "Étoile aux souhaits du Val d'Émeraude. Chacune de ses ailes contient un arc-en-ciel entier, soigneusement plié en huit."),
     // --- ombre (Sylve, Val, Givre) ------------------------------------------
-    L('nyxaroth', 'Nyxaroth', 'ombre', 'sylve', ['jungle', 'swamp'], '#2a2438', 0.05,
+    L('nyxaroth', 'Zacian', 'ombre', 'sylve', ['jungle', 'swamp'], '#2a2438', 0.05,
       138, 118, 92, 105, 0,
       "Loup des ténèbres de la Sylve. La fumée à ses pattes efface ses traces avant même qu'il ait fini de les laisser."),
-    L('penombra', 'Pénombra', 'ombre', 'val', ['forest', 'village', 'park'], '#4a3d6b', 0.12,
+    L('penombra', 'Marshadow', 'ombre', 'val', ['forest', 'village', 'park'], '#4a3d6b', 0.12,
       100, 85, 78, 112, 1,
-      "Chat-fantôme du Val d'Émeraude. Il ronronne dans le noir pour rassurer les voyageurs qui se sont perdus en forêt."),
-    L('eclipsion', 'Éclipsion', 'ombre', 'givre', ['mountain', 'glacier'], '#1a1c2c', 0.07,
+      "Petit fantôme du Val d'Émeraude. Il se cache dans les ombres et rassure, sans un bruit, les voyageurs qui se sont perdus en forêt."),
+    L('eclipsion', 'Yveltal', 'ombre', 'givre', ['mountain', 'glacier'], '#1a1c2c', 0.07,
       128, 105, 90, 108, 2,
-      "Corbeau d'éclipse : quand il déploie l'anneau noir de son dos, le jour s'accorde une minute de nuit."),
+      "Oiseau d'éclipse : quand il déploie l'anneau noir de son dos, le jour s'accorde une minute de nuit."),
     // --- temps (Aurore, Sylve) ----------------------------------------------
-    L('chronoss', 'Chronoss', 'temps', 'aurore', ['celestial'], '#d896ff', 0.05,
+    L('chronoss', 'Dialga', 'temps', 'aurore', ['celestial'], '#d896ff', 0.05,
       155, 105, 120, 55, 0,
-      "Tortue-horloge du Plateau. Elle avance d'un pas par heure, et l'heure, patiemment, l'attend."),
-    L('eternia', 'Éternia', 'temps', 'aurore', ['celestial', 'mountain'], '#e3c68d', 0.04,
+      "Maître du temps du Plateau. Il avance d'un pas par heure, et l'heure, patiemment, l'attend."),
+    L('eternia', 'Celebi', 'temps', 'aurore', ['celestial', 'mountain'], '#e3c68d', 0.04,
       148, 112, 105, 90, 1,
-      "Sphinx du temps aux sabliers suspendus. Elle pose une question par siècle, et connaît déjà la réponse depuis le siècle d'avant."),
-    L('sablion', 'Sablion', 'temps', 'sylve', ['swamp', 'jungle'], '#e3c68d', 0.08,
+      "Voyageuse du temps aux sabliers suspendus. Elle pose une question par siècle, et connaît déjà la réponse depuis le siècle d'avant."),
+    L('sablion', 'Giratina', 'temps', 'sylve', ['swamp', 'jungle'], '#e3c68d', 0.08,
       132, 102, 95, 98, 2,
-      "Serpent de sable dont le corps s'écoule sans jamais s'épuiser, exactement comme le temps. On l'aperçoit surtout au crépuscule."),
+      "Serpent de l'autre monde dont le corps s'écoule sans jamais s'épuiser, exactement comme le temps. On l'aperçoit surtout au crépuscule."),
     // --- espace (Aurore, Saphir) --------------------------------------------
-    L('vortexis', 'Vortexis', 'espace', 'aurore', ['celestial'], '#4b62d9', 0.05,
+    L('vortexis', 'Palkia', 'espace', 'aurore', ['celestial'], '#4b62d9', 0.05,
       140, 115, 95, 105, 0,
-      "Raie-galaxie : la spirale d'étoiles sur son dos est une véritable galaxie, en tout petit. À moins que ce ne soit nous qui soyons petits."),
-    L('astralis', 'Astralis', 'espace', 'aurore', ['celestial', 'mountain'], '#29366f', 0.04,
+      "Maître de l'espace : la spirale d'étoiles sur son dos est une véritable galaxie, en tout petit. À moins que ce ne soit nous qui soyons petits."),
+    L('astralis', 'Eternatus', 'espace', 'aurore', ['celestial', 'mountain'], '#29366f', 0.04,
       170, 118, 110, 70, 1,
-      "Baleine stellaire qui traverse lentement le ciel d'Aurore. Les constellations dessinées sur son dos changent toutes les nuits."),
-    L('nebulon', 'Nébulon', 'espace', 'saphir', ['sea', 'coast'], '#7a5cbf', 0.08,
+      "Dragon infini qui traverse lentement le ciel d'Aurore. Les constellations dessinées sur son dos changent toutes les nuits."),
+    L('nebulon', 'Lunala', 'espace', 'saphir', ['sea', 'coast'], '#7a5cbf', 0.08,
       126, 100, 92, 104, 2,
-      "Méduse-nébuleuse dérivant au-dessus de la mer de Saphir : son voile de gaz coloré éclaire les nuits sans lune."),
+      "Voile de nébuleuse dérivant au-dessus de la mer de Saphir : son manteau de gaz coloré éclaire les nuits sans lune."),
   ];
 
   // ===========================================================================
@@ -960,6 +1000,9 @@
     pickWild: pickWild,
     legendOf: legendOf,
     count: ALL.length,
+    // Les légendaires ont changé de nom le 2026-08-08 : `team3d` s'en sert pour
+    // rebaptiser les créatures d'une partie commencée avant.
+    isLegacyName: isLegacyName,
     // Extras utiles au reste du jeu (Pokédex de hud3d.js, minimap…)
     TYPE_IDS: TYPE_IDS,
     REGION_IDS: REGION_IDS,

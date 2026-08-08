@@ -326,7 +326,7 @@
         aceIndex: 4,
         colorMap: { 'j': '2', 'l': 'u' },
         accessory: null,
-        dialogLegendWarn: 'Le lion de lave Fournalis entre dans l\'arène !',
+        dialogLegendWarn: 'Le lion de lave Entei entre dans l\'arène !',
         dialogIntro: [
           "APPROCHE ! N'aie pas peur de la chaleur, elle ne mord que les timides !",
           "Ignis, Forgeur de Flammes. Avant d'être champion, j'ai forgé des épées pendant vingt ans.",
@@ -335,7 +335,7 @@
         ],
         dialogWin: [
           "HA ! HA ! HA ! Ma forge est éteinte ! Par un gamin !",
-          "Tu as encaissé Fournalis. FOURNALIS ! Le lion de lave ! Et tu es encore debout !",
+          "Tu as encaissé Entei. ENTEI ! Le lion de lave ! Et tu es encore debout !",
           "Le Badge Flamme, tiens. Je l'ai forgé moi-même, il est encore un peu tiède.",
           "Il ne t'en reste qu'un. Là-haut, sur le Plateau d'Aurore. Astréa.",
           "Elle est… différente de nous. Tu comprendras.",
@@ -383,7 +383,7 @@
         aceIndex: 4,
         colorMap: { 'j': 'E', 'l': 's' },
         accessory: null,
-        dialogLegendWarn: 'Auréol, le griffon solaire, déploie ses ailes !',
+        dialogLegendWarn: 'Arceus, le gardien au cercle d\'or, déploie ses ailes !',
         dialogIntro: [
           "Chut. Écoute une seconde… Tu entends ? Non. Personne n'entend. C'est ça, le silence d'ici.",
           "Je m'appelle Astréa. Je regarde le ciel depuis l'observatoire, en haut. Toutes les nuits.",
@@ -393,7 +393,7 @@
         ],
         dialogWin: [
           "…Oh. Vraiment ?",
-          "Auréol est tombé. Auréol. Il n'était jamais tombé.",
+          "Arceus est tombé. Arceus. Il n'était jamais tombé.",
           "Tu sais ce que je vois, là, maintenant ? Je vois quelqu'un qui a commencé avec une seule créature dans le Val d'Émeraude.",
           "Le Badge Étoile est à toi. Le sixième. Le dernier.",
           "Le monde est ouvert, maintenant. Va où tu veux — et reviens me raconter ce que tu auras vu.",

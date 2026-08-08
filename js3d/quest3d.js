@@ -290,7 +290,7 @@
 
       legende: [
         "Aurore-Cité est bâtie tout en haut, là où le ciel commence. Les astronomes y guettent la même chose depuis toujours.",
-        "Chaque matin, une auréole se lève quelques minutes avant le soleil, pour lui montrer le chemin. Ce n'est pas une étoile : c'est un griffon.",
+        "Chaque matin, une auréole se lève quelques minutes avant le soleil, pour lui montrer le chemin. Ce n'est pas une étoile : c'est un gardien, et son cercle d'or ne s'éteint jamais.",
         "On l'appelle le gardien du Plateau. Il attend, dit-on, celui qui aura traversé les six régions."
       ],
 
@@ -303,7 +303,7 @@
       sanctuaire: { x: 306, y: 40, name: "Sanctuaire de l'Aube Première", lieu: 'Terrasse du Soleil' },
       legendaires: ['monolithe', 'aureol', 'chronoss', 'eternia', 'vortexis', 'astralis'],
 
-      final: "Le griffon solaire s'est envolé, et l'aube s'est levée en avance rien que pour toi. Six régions, six sanctuaires : le monde entier connaît ton nom, dresseur.",
+      final: "Le gardien au cercle d'or s'est envolé, et l'aube s'est levée en avance rien que pour toi. Six régions, six sanctuaires : le monde entier connaît ton nom, dresseur.",
 
       reward: {
         money: 8000,
@@ -527,15 +527,35 @@
     // Une espèce qui n'est pas dans une quête (créature commune, forme évoluée,
     // légendaire ajouté plus tard) n'a aucune raison d'être bridée par nous.
     if (!regionId) return true;
-    return !!stOf(regionId).open;
+    var s = stOf(regionId);
+    // ⚠️ UN LÉGENDAIRE, UN SEUL EXEMPLAIRE (retour de Robin, 2026-08-08).
+    // Sans cette ligne, l'autel se contentait d'un repos de dix minutes après
+    // la capture, puis rallumait LE MÊME légendaire — Robin pouvait attraper
+    // trois Xerneas et retomber toujours sur celui-là. Une fois capturé, le
+    // gardien a rejoint son dresseur : son autel s'éteint POUR DE BON. Et
+    // comme `caught` est sauvegardé, il reste éteint après un rechargement.
+    if (s.caught && s.caught.indexOf(speciesId) >= 0) return false;
+    return !!s.open;
+  }
+
+  /** A-t-on déjà ce légendaire ? (lecture seule, pour roamers3d et le HUD.) */
+  function isLegendCaught(speciesId) {
+    var regionId = REGION_OF_LEGEND[speciesId];
+    if (!regionId) return false;
+    var s = stOf(regionId);
+    return !!(s.caught && s.caught.indexOf(speciesId) >= 0);
   }
 
   // Liste pratique pour roamers3d : les légendaires éveillés d'une région.
+  // Ceux qui sont DÉJÀ CAPTURÉS n'en font plus partie : ils sont dans la boîte
+  // de Robin, ils n'ont plus rien à faire sur leur autel (voir isLegendAwake).
   function awakeLegends(regionId) {
     var q = BY_REGION[regionId];
     if (!q) return [];
-    if (!stOf(regionId).open) return [];
-    return q.legendaires.slice();
+    var s = stOf(regionId);
+    if (!s.open) return [];
+    var pris = s.caught || [];
+    return q.legendaires.filter(function (id) { return pris.indexOf(id) < 0; });
   }
 
   // ===========================================================================
@@ -976,6 +996,7 @@
     onLegendCaught: onLegendCaught,
     sanctuary: sanctuary,
     isLegendAwake: isLegendAwake,
+    isLegendCaught: isLegendCaught,
     dialogFor: dialogFor,
     journal: journal,
     serialize: serialize,

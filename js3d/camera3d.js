@@ -122,7 +122,14 @@
   const F_EYE = 1.52;         // hauteur des yeux au-dessus du sol
   const F_AHEAD = 8;          // à quelle distance on pose le point visé
   const F_FOV = 74;           // large : on sent l'espace autour de soi
-  const F_YAW_SMOOTH = 0.60;  // lissage du demi-tour (voir angleDamp)
+  // Le lacet ne s'amortit PLUS (ou presque). C'est la leçon du jeu de Clélia,
+  // où la caméra subjective prend directement l'angle du joueur : un regard qui
+  // traîne d'un dixième de seconde derrière la commande, ce n'est pas « doux »,
+  // c'est mou — et les appuis brefs disparaissaient carrément dans le lissage.
+  // On garde une trace d'amortissement (≈ 90 % de rattrapage par image) pour
+  // absorber les recalages brutaux du yaw sur une cardinale (chargement,
+  // téléportation) sans les transformer en à-coup visible.
+  const F_YAW_SMOOTH = 0.10;
   const F_SMOOTH = 0.30;      // suivi serré : les yeux collent au joueur
   const F_MARGIN = 0.45;      // en FPS la caméra peut (et doit) rester basse
 

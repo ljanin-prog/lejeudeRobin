@@ -192,6 +192,28 @@
     try { return !!dex.get(id); } catch (e) { return null; }
   }
 
+  /**
+   * Le surnom à donner à une créature relue d'une sauvegarde.
+   *
+   * Les 36 légendaires ont été rebaptisés le 2026-08-08 (vrais noms de Pokémon,
+   * comme dans le jeu de Clélia) SANS que leur id change — c'est ce qui protège
+   * la partie de Robin. Mais `nick` est figé au moment de la capture : sans
+   * cette réparation, sa boîte afficherait « Pyrathos » à côté d'un Pokédex qui
+   * dit « Groudon ».
+   *
+   * ⚠️ On ne touche QUE les surnoms qui sont exactement l'ancien nom d'espèce.
+   * Un surnom donné à la main par Robin (« Croquette ») est le sien : il ne doit
+   * jamais être écrasé, même s'il ressemble à un nom d'espèce.
+   */
+  function legacyRenamed(id, nick, sp) {
+    const dex = dexModule();
+    if (!dex || typeof dex.isLegacyName !== 'function') return nick;
+    try {
+      if (dex.isLegacyName(id, nick)) return (sp && sp.name) || nick;
+    } catch (e) { /* dex cassé : on garde le surnom tel quel */ }
+    return nick;
+  }
+
   /** Définition d'une capacité, jamais null (repli : 20 PP). */
   function moveDef(id) {
     const mv = movesModule();
@@ -863,7 +885,13 @@
     const m = {
       uid: claimUid(o.uid),
       id: id,
-      nick: str(o.nick, sp.name || id),
+      // Le surnom est FIGÉ à la capture (voir `create()`). Les 36 légendaires
+      // ayant changé de nom le 2026-08-08, une créature attrapée avant
+      // s'appellerait encore « Pyrathos » dans l'équipe alors que le Pokédex
+      // dirait « Groudon » — deux noms pour la même bête, dans la même partie.
+      // On rebaptise donc les surnoms qui ne sont QUE l'ancien nom d'espèce ;
+      // un surnom choisi par Robin (`rename()`) n'est jamais touché.
+      nick: legacyRenamed(id, str(o.nick, sp.name || id), sp),
       level: clamp(Math.round(num(o.level, 5)), 1, MAX_LEVEL),
       xp: Math.max(0, Math.round(num(o.xp, 0))),
       xpNext: 0,

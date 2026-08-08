@@ -531,12 +531,20 @@
     }
 
     var q = questApi();
+    // ON CHOISIT LE PLUS PROCHE, pas le premier de la liste. Deux autels dans
+    // le même rayon de 42 tuiles, et l'ancienne boucle réveillait toujours
+    // celui écrit en premier dans `regions3d.js` : Robin retombait sur le même
+    // gardien alors qu'il s'était déplacé vers un autre (« pas le même
+    // légendaire partout »).
+    var meilleur = null, meilleureDist = Infinity;
     for (var i = 0; i < region.altars.length; i++) {
       var a = region.altars[i];
       var readyAt = _legendCooldowns[a.id] || 0;
       if (t < readyAt) continue;
       // LE VERROU DES LÉGENDAIRES (contrat v3 §5) : tant que le sanctuaire de la
       // région n'est pas ouvert (badge de l'arène gagné), le gardien dort.
+      // C'est aussi lui qui éteint DÉFINITIVEMENT l'autel d'un légendaire déjà
+      // capturé — un seul exemplaire de chacun.
       // REPLI DANS CE SENS ET PAS L'AUTRE : si `quest3d` manque, tout apparaît
       // comme avant. On ne bloque jamais le jeu sur l'absence d'un module.
       if (q && typeof q.isLegendAwake === 'function') {
@@ -545,11 +553,24 @@
         catch (e) { eveille = true; }
         if (!eveille) continue;
       }
+      // Second verrou, indépendant de quest3d : si le Pokédex de la partie
+      // compte déjà cette espèce, elle est attrapée. Deux chemins mènent à la
+      // même règle, et il en faut deux — `quest3d` ne connaît que les 36 de ses
+      // quêtes, et un légendaire ajouté plus tard n'y figurerait pas.
+      if (dejaAttrape(a.id)) continue;
       var dist = Math.hypot(a.x - px, a.y - pz);
       if (dist > LEGEND_ACTIVATE_DIST) continue;
-      activateLegendary(a, t, dexApi());
-      break;
+      if (dist < meilleureDist) { meilleureDist = dist; meilleur = a; }
     }
+    if (meilleur) activateLegendary(meilleur, t, dexApi());
+  }
+
+  /** Cette espèce est-elle déjà dans la collection de Robin ? */
+  function dejaAttrape(speciesId) {
+    var G = (typeof globalThis !== 'undefined') ? globalThis : window;
+    var st = G && G.gameState;
+    if (!st || !st.collection) return false;
+    return (st.collection[speciesId] | 0) > 0;
   }
 
   // ===========================================================================

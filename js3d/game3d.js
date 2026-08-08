@@ -89,8 +89,8 @@
   // tuiles — alors `state.player.dir` devient simplement la direction cardinale
   // la plus proche du regard, et tout le reste du jeu (pas, portes, PNJ,
   // boussole, lancer de Ball) continue de fonctionner sans rien changer.
-  const FPS_TURN_SPEED = 3.0;     // radians par seconde (~172°/s : un quart de
-                                  // tour en 0,5 s, un demi-tour en 1 s)
+  const FPS_TURN_SPEED = 2.6;     // radians par seconde (~149°/s : un quart de
+                                  // tour en 0,6 s, un demi-tour en 1,2 s)
 
   // ... mais tourner librement ne suffisait pas : le corps, lui, continuait à
   // sauter de tuile en tuile. On regardait à 40° et on avançait plein nord ; en
@@ -102,11 +102,18 @@
   // exactement là où il regarde, en coordonnées continues, et les tuiles ne
   // servent plus qu'aux collisions. Les autres vues gardent le pas à la tuile,
   // qui leur va très bien.
-  const FPS_SPEED = 4.6;          // unités par seconde (une tuile = une unité)
-  const FPS_RADIUS = 0.34;        // demi-gabarit du joueur, pour les collisions
-  const FPS_TAP_MS = 220;         // au-delà, la touche est « maintenue » et la
-                                  // rotation devient libre au lieu de s'arrêter
-                                  // au quart de tour
+  // ... et une vitesse en TOUT-OU-RIEN ne suffisait pas non plus. On partait à
+  // pleine vitesse dès l'appui et on s'arrêtait net au relâchement : chaque
+  // touche donnait une secousse, et corriger sa trajectoire au millimètre
+  // devenait impossible. Le jeu de Clélia résout exactement ce problème avec
+  // une rampe — accélération douce, freinage franc — et son déplacement est
+  // nettement plus agréable. On reprend ici son réglage, à l'identique.
+  const FPS_SPEED = 3.4;          // unités par seconde en vitesse de croisière
+  const FPS_ACCEL = 12.0;         // unités/s² — la vitesse est atteinte en ~0,3 s
+  const FPS_FREIN = 18.0;         // décélération : on s'arrête net, sans à-coup
+  const FPS_RECUL = 0.62;         // on recule à 62 % de la vitesse de marche
+  const FPS_RADIUS = 0.34;        // rayon de collision du joueur, en tuiles
+  const FPS_PAS = 0.85;           // distance parcourue entre deux bruits de pas
   const TURN_ORDER = ['up', 'right', 'down', 'left'];   // sens des aiguilles
   const DIR_STEP = {
     up: { dx: 0, dz: -1 }, down: { dx: 0, dz: 1 },
@@ -1205,19 +1212,6 @@
    * c'est ce qui permet à toute la mécanique de grille (le pas, les portes, les
    * PNJ) de rester exactement la même qu'avant.
    */
-  // --- état de la rotation en vue subjective ---------------------------------
-  let fpsTurnCible = null;    // yaw visé par un quart de tour déclenché au tap
-  let fpsTurnTenue = 0;       // depuis combien de ms la touche est maintenue
-  let fpsTurnAvant = 0;       // sens de la touche à l'image précédente (front montant)
-
-  /** Le cran de 90° suivant, dans le sens demandé. */
-  function cranSuivant(a, sens) {
-    // On part du cran le PLUS PROCHE : si l'on est à 80°, un quart de tour à
-    // droite doit mener à 0°, pas à −10°.
-    const cran = Math.round(a / (Math.PI / 2)) * (Math.PI / 2);
-    return cran + sens * (Math.PI / 2);
-  }
-
   function poseYaw(a) {
     state.player.fpsYaw = normalizeYaw(a);
     const nd = dirFromYaw(state.player.fpsYaw);
@@ -1228,95 +1222,90 @@
   }
 
   /**
-   * Rotation de la vue subjective — deux gestes, un seul mécanisme.
+   * Rotation de la vue subjective — LIBRE et CONTINUE tant que la touche est
+   * maintenue, exactement comme dans le jeu de Clélia.
    *
    * SENS : `TURN_ORDER` est déclaré « sens des aiguilles » et vaut
    * up → right → down → left, soit les angles π → π/2 → 0 → −π/2. Tourner à
    * DROITE fait donc DÉCROÎTRE le yaw. Le contraire (ce que faisait la première
    * version) inverse les commandes : la flèche droite tournait à gauche.
    *
-   * GESTE : une rotation purement continue ne bouge que tant qu'on maintient la
-   * touche — un appui bref de 50 ms ne fait pivoter que de 8°, invisible, d'où
-   * l'impression qu'« une fois sur deux ça ne marche pas ». On garde donc les
-   * deux : un APPUI BREF donne un quart de tour net (animé, mené à son terme
-   * même si la touche est relâchée), un APPUI MAINTENU passe en rotation libre.
+   * Une version précédente ajoutait un quart de tour net à l'appui bref, parce
+   * qu'à l'époque un appui de 50 ms ne faisait pivoter que de 8° — invisible,
+   * d'où « une fois sur deux ça ne marche pas ». La cause n'était pas le geste
+   * mais la CAMÉRA, qui amortissait le lacet et mangeait ces quelques degrés.
+   * Elle colle maintenant au regard (camera3d, F_YAW_SMOOTH) : le moindre appui
+   * se voit, et le quart de tour surprise — qui partait tout seul dès qu'on
+   * relâchait un peu vite — n'a plus lieu d'être.
    */
   function updateFpsTurn(dtMs) {
     const l = state.input.left, r = state.input.right;
     // Droite = sens horaire = yaw décroissant.
     const sens = (l === r) ? 0 : (r ? -1 : 1);
-    const pas = FPS_TURN_SPEED * (dtMs / 1000);
-
-    // Front montant : nouvel appui -> on vise le cran suivant.
-    if (sens !== 0 && sens !== fpsTurnAvant) {
-      fpsTurnCible = cranSuivant(fpsYaw(), sens);
-      fpsTurnTenue = 0;
-    }
-    if (sens === 0) fpsTurnTenue = 0;
-    else fpsTurnTenue += dtMs;
-    fpsTurnAvant = sens;
-
-    // Touche maintenue : on abandonne le cran et on tourne librement.
-    if (sens !== 0 && fpsTurnTenue >= FPS_TAP_MS) {
-      fpsTurnCible = null;
-      poseYaw(fpsYaw() + sens * pas);
-      return;
-    }
-
-    // Un quart de tour est en cours : on le termine, même touche relâchée.
-    if (fpsTurnCible !== null) {
-      const a = fpsYaw();
-      let d = fpsTurnCible - a;
-      while (d > Math.PI) d -= Math.PI * 2;
-      while (d < -Math.PI) d += Math.PI * 2;
-      if (Math.abs(d) <= pas) { poseYaw(fpsTurnCible); fpsTurnCible = null; }
-      else poseYaw(a + Math.sign(d) * pas);
-    }
+    if (!sens) return;
+    poseYaw(fpsYaw() + sens * FPS_TURN_SPEED * (dtMs / 1000));
   }
 
-  /** Une position continue est-elle praticable, gabarit du joueur compris ? */
+  /** Une position continue est-elle praticable pour le joueur ? */
   function placeLibre(x, z) {
-    const r = FPS_RADIUS;
-    // On teste les quatre coins du gabarit : sans ça on entre dans les murs par
-    // le coin, ce qui se voit tout de suite en vue subjective.
-    const coins = [[x - r, z - r], [x + r, z - r], [x - r, z + r], [x + r, z + r]];
-    for (let i = 0; i < coins.length; i++) {
-      const tx = Math.round(coins[i][0]), ty = Math.round(coins[i][1]);
-      if (!isWalkable(tx, ty)) return false;
-      if (npcAt(tx, ty)) return false;
-    }
-    return true;
+    const tx = Math.round(x), ty = Math.round(z);
+    if (!isWalkable(tx, ty)) return false;
+    return !npcAt(tx, ty);
   }
 
   /**
-   * Déplacement LIBRE de la vue subjective : on va exactement là où on regarde.
+   * Un pas de (dx, dz), chaque axe tenté SÉPARÉMENT : c'est ce qui fait qu'on
+   * GLISSE le long d'un mur au lieu de s'y coller net. Sans ce glissement,
+   * longer une falaise en biais arrête le joueur complètement — c'était la
+   * moitié de la sensation de blocage.
    *
-   * Les deux axes sont tentés SÉPARÉMENT : c'est ce qui fait qu'on glisse le
-   * long d'un mur au lieu de s'y coller net. Sans ça, marcher en biais contre
-   * une façade arrête le joueur complètement, et c'est précisément ce qui
-   * donnait une impression de blocage permanent.
+   * Chaque axe est testé deux fois : au point visé, et une longueur de rayon
+   * plus loin. C'est la méthode du jeu de Clélia : elle empêche d'entrer dans
+   * un mur par le coin sans avoir la raideur d'un gabarit carré, qui accrochait
+   * aux angles de tuiles dès qu'on passait une porte de biais.
+   */
+  function libreAvancer(dx, dz) {
+    const p = state.player;
+    const r = FPS_RADIUS;
+    const okX = placeLibre(p.freeX + dx + Math.sign(dx) * r, p.freeZ)
+      && placeLibre(p.freeX + dx, p.freeZ);
+    const okZ = placeLibre(p.freeX, p.freeZ + dz + Math.sign(dz) * r)
+      && placeLibre(p.freeX, p.freeZ + dz);
+    if (okX) p.freeX += dx;
+    if (okZ) p.freeZ += dz;
+    return okX || okZ;
+  }
+
+  // --- état de la marche libre -----------------------------------------------
+  let libreVitesse = 0;       // unités/s, signée (négative = on recule)
+  let libreDist = 0;          // distance parcourue, pour cadencer les bruits de pas
+
+  /**
+   * Déplacement LIBRE de la vue subjective : on va exactement là où on regarde,
+   * avec une vitesse qui monte et redescend au lieu de basculer d'un coup.
    */
   function updateFpsMove(dtMs) {
     const p = state.player;
-    let av = 0;
-    if (state.input.up) av += 1;
-    if (state.input.down) av -= 1;
+    const dts = Math.min(0.05, dtMs / 1000);   // borné : une image longue ne téléporte personne
 
-    if (!av) { p.moving = false; return; }
+    // --- Avancer / reculer, avec accélération et freinage -------------------
+    let veut = 0;
+    if (state.input.up) veut += 1;
+    if (state.input.down) veut -= FPS_RECUL;   // on recule moins vite qu'on avance
+    const cible = veut * FPS_SPEED;
+    const taux = (Math.abs(cible) > Math.abs(libreVitesse)) ? FPS_ACCEL : FPS_FREIN;
+    const ecart = cible - libreVitesse;
+    const pas = taux * dts;
+    libreVitesse += (Math.abs(ecart) <= pas) ? ecart : Math.sign(ecart) * pas;
 
-    const a = fpsYaw();
-    const d = FPS_SPEED * av * (dtMs / 1000);
-    // Convention du contrat §1.4 : 'down' (yaw 0) = +z, 'right' (yaw +π/2) = +x.
-    const vx = Math.sin(a) * d;
-    const vz = Math.cos(a) * d;
-
-    const avantX = p.freeX, avantZ = p.freeZ;
-    if (placeLibre(p.freeX + vx, p.freeZ)) p.freeX += vx;
-    if (placeLibre(p.freeX, p.freeZ + vz)) p.freeZ += vz;
-
-    const bouge = (p.freeX !== avantX || p.freeZ !== avantZ);
-    p.moving = bouge;              // sert au balancement de marche de la caméra
-    if (!bouge) return;
+    if (Math.abs(libreVitesse) > 0.0005) {
+      const a = fpsYaw();
+      const avance = libreVitesse * dts;
+      // Convention du contrat §1.4 : 'down' (yaw 0) = +z, 'right' (yaw +π/2) = +x.
+      const bouge = libreAvancer(Math.sin(a) * avance, Math.cos(a) * avance);
+      if (!bouge) libreVitesse = 0;            // face au mur, on ne vibre pas
+      else libreDist += Math.abs(avance);
+    }
 
     // La tuile courante suit la position continue. Tout le reste du jeu
     // (portes, biomes, quêtes, sauvegarde, roamers) continue de raisonner en
@@ -1328,6 +1317,16 @@
       p.moveToX = ntx; p.moveToY = nty;
       onStepFinished();
     }
+
+    // Le bruit de pas suit la DISTANCE, pas une minuterie : on entend donc ses
+    // pas s'accélérer en prenant de la vitesse. La marche à la tuile, elle, en
+    // joue un par case (voir plus bas) — en libre il n'y a plus de « case ».
+    if (libreDist > FPS_PAS) { libreDist -= FPS_PAS; sfx('footstep'); }
+
+    // `moving` et `moveProgress` servent au balancement de la caméra et à
+    // l'animation du modèle, visible pendant la bascule de vue.
+    p.moving = Math.abs(libreVitesse) > 0.15;
+    p.moveProgress = libreDist / FPS_PAS;
   }
 
   /** Passe la marche à la tuile <-> marche libre, selon la vue active. */
@@ -1338,9 +1337,9 @@
       p.freeX = p.tileX;
       p.freeZ = p.tileY;
       p.moving = false;
-      // Aucune rotation en attente en arrivant : sinon un quart de tour resté
-      // en cours ferait pivoter la vue toute seule au changement de vue.
-      fpsTurnCible = null; fpsTurnTenue = 0; fpsTurnAvant = 0;
+      // On entre à l'arrêt : sinon un élan resté de la dernière visite ferait
+      // partir le joueur tout seul à la seconde où la vue bascule.
+      libreVitesse = 0; libreDist = 0;
     } else if (!fps && p.freeMove) {
       // En sortant de la vue subjective, on se recale sur la tuile la plus
       // proche : les autres vues n'attendent que des positions entières.
