@@ -1825,6 +1825,22 @@
         cam.update(dt, {
           worldX: p.worldX, worldY: p.worldY, worldZ: p.worldZ,
           dir: p.dir, moving: p.moving, sway: sway,
+          // ⚠️ `fpsYaw` EST INDISPENSABLE, et il manquait ici depuis le jour où
+          // la rotation subjective est devenue libre (2026-07-31).
+          //
+          // `camera3d` fait : `player.fpsYaw` s'il est fourni, SINON repli sur
+          // `dirYaw(player.dir)` — c'est-à-dire les quatre cardinales. Comme cet
+          // objet ne portait pas l'angle, le repli s'appliquait à chaque image :
+          // le joueur tournait bien en continu, mais LA CAMÉRA ne voyait que la
+          // direction cardinale la plus proche et basculait d'un coup tous les
+          // 90°. Robin l'a dit trois fois — « ça tourne de 90° d'un coup » — et
+          // il décrivait exactement ce que faisait ce repli.
+          //
+          // Le piège : un repli silencieux sur une propriété ABSENTE. Rien ne
+          // plante, rien ne s'affiche en console, et tout le travail fait dans
+          // `camera3d` reste sans effet puisqu'il porte sur un angle en escalier.
+          // `.claude/verif_fps.js` §8 monte désormais la garde sur cette ligne.
+          fpsYaw: p.fpsYaw,
         }, groundHeight);
         return true;
       });

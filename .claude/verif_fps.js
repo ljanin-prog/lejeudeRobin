@@ -308,6 +308,55 @@ verifie('en tournant tout en marchant, le pas reste régulier',
   maxi - mini < 0.004, 'segments de ' + arrondi(mini, 3) + ' à ' + arrondi(maxi, 3) + ' unité');
 
 // ===========================================================================
+//  8. LA CAMÉRA REÇOIT-ELLE VRAIMENT L'ANGLE ?
+//
+//  LE TEST QUI MANQUAIT, ET QUI A COÛTÉ TROIS SESSIONS. Tout ce qui précède
+//  vérifie `state.player.fpsYaw`, qui était parfaitement continu — pendant que
+//  la CAMÉRA, elle, ne le recevait pas. `game3d` construisait pour elle un
+//  objet joueur sans `fpsYaw` ; `camera3d` appliquait donc son repli
+//  `dirYaw(player.dir)`, les quatre cardinales, et sautait de 90° en 90°.
+//  Robin l'a signalé trois fois. Aucun test ne pouvait le voir, parce
+//  qu'aucun ne regardait le POINT DE PASSAGE entre les deux modules.
+// ===========================================================================
+console.log('\n=== 8. Le contrat entre game3d et camera3d ===');
+
+// L'appel réel, découpé dans le fichier : on lit ce que game3d transmet.
+const appel = (function () {
+  const a = src.indexOf('cam.update(dt, {');
+  if (a < 0) return null;
+  const b = src.indexOf('}, groundHeight)', a);
+  return (b < 0) ? null : src.slice(a, b);
+})();
+verifie('l\'appel à camera.update() est bien là où on le croit', !!appel,
+  appel ? 'trouvé' : 'INTROUVABLE — game3d.js a été réorganisé');
+
+if (appel) {
+  verifie('game3d transmet `fpsYaw` à la caméra', /\bfpsYaw\s*:/.test(appel),
+    'sans lui, camera3d retombe sur les 4 cardinales et la vue saute de 90°');
+  ['worldX', 'worldY', 'worldZ', 'dir', 'moving'].forEach(function (champ) {
+    verifie('… et toujours `' + champ + '`', new RegExp('\\b' + champ + '\\s*:').test(appel));
+  });
+}
+
+// L'autre moitié du contrat : le repli de camera3d doit rester une SÉCURITÉ,
+// pas le chemin normal. On vérifie qu'il existe toujours et qu'il est bien
+// conditionné à l'absence de l'angle.
+const cam = fs.readFileSync(path.join(ROOT, 'js3d/camera3d.js'), 'utf8');
+verifie('camera3d garde son repli sur les cardinales (module utilisable seul)',
+  /typeof player\.fpsYaw === 'number'/.test(cam));
+verifie('camera3d n\'amortit plus le lacet en vue subjective pleine',
+  /S\.fpsYaw = \(snap \|\| plein\)/.test(cam));
+verifie('camera3d oriente la vue subjective en ABSOLU (pas de lookAt)',
+  /S\.cam\.rotation\.set\(0, S\.fpsYaw \+ Math\.PI, 0\)/.test(cam),
+  'un lookAt sur une position lissée fait tanguer la vue en permanence');
+
+// La touche V doit mener EN UNE FOIS dans la vue subjective : elle faisait le
+// tour de trois vues, et Robin croyait être en FPS alors qu'il était en RPG.
+verifie('la touche V bascule directement vers la vue subjective',
+  /const vise = \(viewMode\(\) === 'fps'\) \? 'aventure' : 'fps';/.test(src),
+  'trois vues sur une touche : on croit être dans l\'une en étant dans l\'autre');
+
+// ===========================================================================
 console.log('\n' + (echecs === 0
   ? '✅ Tout est conforme : la marche subjective se comporte comme prévu.'
   : '❌ ' + echecs + ' épreuve(s) en échec.'));

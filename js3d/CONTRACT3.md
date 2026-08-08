@@ -876,6 +876,40 @@ l'on se trouve.
 proches, et l'utilisateur croit être dans l'un en étant dans l'autre. Une plainte sur une
 fonctionnalité doit d'abord faire vérifier **qu'on l'atteint**.
 
+### 17 quinquies. LA CAUSE RÉELLE — `fpsYaw` n'était jamais transmis à la caméra
+
+Quatrième signalement de Robin, le même depuis le début : « je veux tourner de façon
+progressive et pas 90° d'un coup, ce qui est toujours le cas ».
+
+`game3d.updateCamera()` construit un objet joueur pour `camera3d`. **Il n'y mettait pas
+`fpsYaw`** :
+
+```js
+cam.update(dt, { worldX, worldY, worldZ, dir, moving, sway }, groundHeight);
+//                                        ↑ et rien d'autre
+```
+
+Côté `camera3d`, la règle du §17 de v2 est : `player.fpsYaw` s'il est fourni, **sinon**
+repli sur `dirYaw(player.dir)`. L'angle n'étant jamais fourni, le repli s'appliquait à
+chaque image : le joueur tournait bien en continu (2,6 rad/s, vérifié), mais **la caméra ne
+voyait que la cardinale la plus proche** et basculait d'un coup tous les 90°.
+
+Le bug date du jour où la rotation subjective est devenue libre (2026-07-31, §18.1) : le
+contrat annonçait « `camera3d` suit `player.fpsYaw` s'il est fourni » — il ne l'a jamais
+été. Mesuré après correction : la caméra reçoit l'angle à **chaque** image, il progresse de
+2,5° par image, plus grand saut 7,4°.
+
+**Pourquoi trois sessions n'ont pas suffi.** Tous les tests vérifiaient
+`state.player.fpsYaw`, qui était parfaitement continu — jamais **le point de passage entre
+les deux modules**. Un repli silencieux sur une propriété ABSENTE ne plante pas, n'écrit
+rien en console, et rend sans effet tout le travail fait en aval. Les corrections des §17
+bis, ter et quater restent valides et utiles : elles portaient simplement sur un angle en
+escalier.
+
+**`.claude/verif_fps.js` §8 monte désormais la garde** : il découpe l'appel réel à
+`cam.update()` dans `game3d.js` et refuse qu'un champ du contrat en disparaisse. Éprouvé en
+retirant `fpsYaw` : le test échoue bruyamment.
+
 ⚠️ **Ce qu'on ne sait pas mesurer ici** : le framerate réel. Les essais tournent dans un
 Chrome sans carte graphique (SwiftShader), donc les images par seconde n'y veulent rien
 dire. Si la vue subjective reste heurtée après tout ceci, **c'est la piste suivante** :
