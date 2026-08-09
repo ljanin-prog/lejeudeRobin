@@ -4,60 +4,50 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Le jeu de Robin</title>
-  <link rel="stylesheet" href="style.css">
+
+  <!-- ==========================================================================
+       LA PORTE D'ENTRÉE DU JEU
+       ==========================================================================
+       Ouvrir ce fichier, c'est jouer. Il n'y a rien d'autre à savoir.
+
+       Avant le 9 août 2026, `index.html` lançait la version 2D des débuts, et il
+       fallait repérer un petit lien en bas de page pour atteindre la 3D — celle
+       qui a les six régions, les arènes, les 137 créatures et les légendaires.
+       Autrement dit : le fichier principal n'ouvrait pas le jeu principal.
+
+       Il redirige donc vers `index3d.html`. La version 2D n'a pas disparu pour
+       autant : elle est devenue `index2d.html`, et l'écran-titre de la 3D y
+       renvoie toujours.
+       ====================================================================== -->
+  <meta http-equiv="refresh" content="0; url=index3d.html">
+  <link rel="canonical" href="index3d.html">
+
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.8rem;
+      background: #10131f;
+      color: #ffe066;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      text-align: center;
+    }
+    .etoile { font-size: 3rem; }
+    h1 { font-size: 1.8rem; margin: 0; }
+    p { color: #bfc7de; margin: 0; }
+    a { color: #ffe066; }
+  </style>
 </head>
 <body>
-  <h1 class="game-title">Le jeu de Robin</h1>
-
-  <div id="game-container">
-    <canvas id="game" width="256" height="192"></canvas>
-
-    <button id="mute-btn" class="mute-btn" style="display: none;" aria-label="Couper le son" title="Couper le son (M)">♪</button>
-
-    <div id="title-overlay" class="overlay">
-      <div class="title-art">✨</div>
-      <h2>Capture les animaux magiques !</h2>
-      <label for="name-input">Comment t'appelles-tu ?</label>
-      <input id="name-input" type="text" maxlength="12" placeholder="Robin" autocomplete="off">
-      <button id="start-btn">Commencer l'aventure !</button>
-    </div>
-
-    <div id="message-box" class="message-box hidden">
-      <p id="message-text"></p>
-      <p class="continue-hint">▼ Espace</p>
-    </div>
-
-    <div id="starter-overlay" class="overlay hidden">
-      <h2>Choisis ton compagnon de départ !</h2>
-      <div id="starter-grid"></div>
-      <p class="hint"><strong>← →</strong> pour choisir &nbsp;·&nbsp; <strong>Espace</strong> pour confirmer</p>
-    </div>
-
-    <div id="collection-overlay" class="overlay hidden">
-      <h2>Ma collection</h2>
-      <div id="collection-grid"></div>
-      <button id="close-collection">Fermer (C)</button>
-    </div>
-  </div>
-
-  <p class="hint">
-    <a href="index3d.html">✨ Jouer à la version 3D ✨</a>
-  </p>
-
-  <p class="hint">
-    <strong>Flèches</strong> : se déplacer &nbsp; · &nbsp;
-    <strong>Espace</strong> : action / parler &nbsp; · &nbsp;
-    <strong>C</strong> : collection &nbsp; · &nbsp;
-    <strong>N</strong> : carte &nbsp; · &nbsp;
-    <strong>M</strong> : son
-  </p>
-
-  <script src="js/palette.js"></script>
-  <script src="js/sprites.js"></script>
-  <script src="js/audio.js"></script>
-  <script src="js/world.js"></script>
-  <script src="js/npcs.js"></script>
-  <script src="js/creatures.js"></script>
-  <script src="js/game.js"></script>
+  <!-- Ce qui s'affiche pendant la fraction de seconde de la redirection — et
+       tout ce qui reste si jamais elle ne se déclenchait pas. -->
+  <div class="etoile">✨</div>
+  <h1>Le jeu de Robin</h1>
+  <p>Le jeu s'ouvre…</p>
+  <p><a href="index3d.html">Si rien ne se passe, clique ici</a></p>
 </body>
 </html>
