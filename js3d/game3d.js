@@ -2027,16 +2027,33 @@
    * matérialise dans le dos de Robin, à deux pas, ferait sursauter sans rien
    * raconter. Là, Robin le DÉCOUVRE en arrivant.
    */
-  function caseLibrePres(R, regionId) {
+  function caseLibrePres(R, regionId, ecart, deja) {
     if (!R || !R.spawnOf || !R.isWalkable) return null;
     const sp = safeCall('regions.spawnOf', function () { return R.spawnOf(regionId); });
     if (!sp) return null;
-    for (let r = 3; r <= 14; r++) {
+    // `ecart` éloigne le second méchant du premier : ils sont deux au même
+    // endroit à l'acte 4, et deux PNJ sur la même case n'en font qu'un de
+    // visible — l'autre devient impossible à trouver et à faire parler.
+    //
+    // `deja` est la liste en cours de construction, PAS `npcEntries` : celui-ci
+    // vient d'être vidé par `rebuildNPCs` et ne contient encore personne. Le
+    // consulter reviendrait à ne rien vérifier du tout.
+    const pris = function (x, y) {
+      if (!deja) return false;
+      for (let i = 0; i < deja.length; i++) {
+        if (deja[i] && deja[i].x === x && deja[i].y === y) return true;
+      }
+      return false;
+    };
+    const debut = 3 + (ecart | 0);
+    for (let r = debut; r <= debut + 12; r++) {
       for (let k = 0; k < 12; k++) {
         const a = (k / 12) * Math.PI * 2;
         const x = Math.round(sp.x + Math.cos(a) * r);
         const y = Math.round(sp.y + Math.sin(a) * r);
-        if (R.isWalkable(x, y)) return { x: x, y: y };
+        if (!R.isWalkable(x, y)) continue;
+        if (pris(x, y)) continue;
+        return { x: x, y: y };
       }
     }
     return null;
@@ -2065,13 +2082,19 @@
     // à chaque fois que Robin entre dans une région, ce qui est exactement le
     // rythme auquel l'histoire doit avancer.
     const mech = mod('mechants');
-    if (mech && mech.pnjDeLaRegion) {
-      const vil = safeCall('mechants.pnjDeLaRegion', function () {
-        return mech.pnjDeLaRegion(id, nombreDeBadges());
-      });
-      if (vil) {
-        const p = caseLibrePres(R, vil.region);
-        if (p) { vil.x = p.x; vil.y = p.y; list.push(vil); }
+    if (mech && mech.pnjsDeLaRegion) {
+      const vils = safeCall('mechants.pnjsDeLaRegion', function () {
+        return mech.pnjsDeLaRegion(id, nombreDeBadges());
+      }) || [];
+      // Ils peuvent être DEUX dans la même région (l'alliance se scelle sur le
+      // Plateau d'Aurore) : on décale le second, sinon ils se rentreraient
+      // l'un dans l'autre et Robin ne pourrait parler qu'à celui de dessus.
+      for (let v = 0; v < vils.length; v++) {
+        const vil = vils[v];
+        const p = caseLibrePres(R, vil.region, v * 4, list);
+        if (!p) continue;
+        vil.x = p.x; vil.y = p.y;
+        list.push(vil);
       }
     }
 
