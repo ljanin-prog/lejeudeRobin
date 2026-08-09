@@ -193,12 +193,23 @@
         'Alors on va arranger ça. Regarde-moi bien, petit dresseur.',
         'REGARDE-MOI.',
       ],
+      // Acte 6, version « il a déjà perdu contre Robin » : il est vexé, il
+      // lâche l'affaire, et il envoie Robin régler le problème à sa place.
       6: [
         'Il ne m\'écoute plus, tu sais. Veccus.',
         'Je voulais un monde endormi. Lui veut un monde vide. Ce n\'est PAS ' +
         'la même chose. Dans un monde vide, il n\'y a plus personne à endormir.',
         '…Je ne dis pas que je suis de ton côté. Je dis que je suis très vexé.',
         'Va le voir. Moi, je vais aller me reposer un peu.',
+      ],
+      // Acte 6, version « Robin ne l'a jamais affronté » : aucune raison d'être
+      // conciliant. Il n'a pas encore eu ce qu'il voulait, et il le réclame.
+      '6_intact': [
+        'Tiens donc. Tu m\'as évité pendant tout ce temps.',
+        'Veccus est en train de tout effacer, là-haut, et toi tu comptes tes badges.',
+        'Moi, je n\'ai toujours pas eu ce que je voulais.',
+        'Tu ne passeras pas là-haut avant de t\'être endormi une fois. UNE fois.',
+        'REGARDE-MOI.',
       ],
       vaincu: [
         'Oh. Tu ne t\'es pas endormi.',
@@ -297,34 +308,63 @@
   // ==========================================================================
   //  5. LES MÉCHANTS SUR LA CARTE
   //
-  //  Un seul est présent à la fois, dans UNE région, et il change de place
-  //  d'un acte à l'autre : Spinel suit Robin de région en région (il le suit
-  //  vraiment, c'est le propos), Veccus reste au Plateau d'Aurore, là où le
-  //  ciel s'est ouvert.
+  //  Spinel suit Robin de région en région — il le suit vraiment, c'est le
+  //  propos. Veccus, lui, reste au Plateau d'Aurore, là où le ciel s'est ouvert.
+  //
+  //  ⚠️ ILS PEUVENT ÊTRE DEUX EN MÊME TEMPS, et c'est la correction du 9 août
+  //  2026 (bug trouvé en relisant le code pour répondre à Robin : « où est
+  //  Spinel ? »). La première version ne posait QU'UN méchant par acte, celui
+  //  désigné par `acte.qui`. Conséquence : deux dialogues de Spinel sur cinq
+  //  étaient écrits, chargés en mémoire… et INJOUABLES.
+  //    · à l'acte 4, il raconte l'alliance avec Veccus — mais l'acte 4
+  //      appartenait à Veccus, donc Spinel n'était nulle part ;
+  //    · à l'acte 6, il explique que Veccus l'a lâché et qu'il est très vexé —
+  //      même problème, l'acte 6 appartenait à Veccus.
+  //  Or ce sont justement les deux moments où l'alliance se noue et se défait :
+  //  toute l'histoire que Robin a demandée passait à la trappe.
+  //
+  //  On regarde donc les DEUX tables à chaque fois, et une région peut très
+  //  bien accueillir les deux : à l'acte 4, ils sont côte à côte sur le
+  //  Plateau d'Aurore — c'est exactement là que l'alliance se scelle.
   // ==========================================================================
 
   var OU = {
-    spinel: { 2: 'sylve', 3: 'saphir', 5: 'braise', 6: 'givre' },
+    spinel: { 2: 'sylve', 3: 'saphir', 4: 'aurore', 5: 'braise', 6: 'givre' },
     veccus: { 4: 'aurore', 6: 'aurore' },
   };
 
   /**
-   * Le PNJ méchant à poser dans cette région, ou null.
-   * Format `regions3d` : game3d l'ajoute simplement à la liste des PNJ.
+   * Les méchants à poser dans cette région : 0, 1 ou 2.
+   * Format `regions3d` : game3d les ajoute à la liste des PNJ.
    */
-  function pnjDeLaRegion(regionId, badges) {
+  function pnjsDeLaRegion(regionId, badges) {
     var a = acteDe(badges);
-    if (!a.qui) return null;
-    var m = (a.qui === 'spinel') ? SPINEL : VECCUS;
-    if (_vaincus[m.id] && a.n < 6) return null;      // battu : il se fait discret
-    var attendu = (OU[m.id] || {})[a.n];
-    if (attendu !== regionId) return null;
+    var out = [];
+    var tous = [SPINEL, VECCUS];
+    for (var i = 0; i < tous.length; i++) {
+      var m = tous[i];
+      var attendu = (OU[m.id] || {})[a.n];
+      if (attendu !== regionId) continue;
+      // Battu, il se fait discret — SAUF au dernier acte, où il revient dire
+      // son mot. C'est le seul endroit du jeu où un adversaire vaincu reparle.
+      if (_vaincus[m.id] && a.n < 6) continue;
+      out.push(fabriquer(m, a, regionId));
+    }
+    return out;
+  }
 
+  /** Compatibilité : le premier méchant de la région, ou null. */
+  function pnjDeLaRegion(regionId, badges) {
+    var l = pnjsDeLaRegion(regionId, badges);
+    return l.length ? l[0] : null;
+  }
+
+  function fabriquer(m, a, regionId) {
     var combat = (a.n >= 5 && !!m.equipes[a.n] && !_vaincus[m.id]);
     return {
       id: m.id,
       name: m.nom,
-      x: null, y: null,               // posé par game3d près du joueur
+      x: null, y: null,               // posé par game3d près du point d'arrivée
       dir: 'down',
       colorMap: m.colorMap,
       accessory: m.accessory,
@@ -332,7 +372,7 @@
       isVillain: true,
       villainId: m.id,
       acte: a.n,
-      dialog: dialogueDe(m.id, a.n),
+      dialog: dialogueDe(m.id, a.n, _vaincus[m.id]),
       // À partir de l'acte 5, lui parler DÉCLENCHE le combat : on réutilise le
       // mécanisme des dresseurs, que game3d sait déjà mener de bout en bout.
       isTrainer: combat,
@@ -343,9 +383,22 @@
     };
   }
 
-  function dialogueDe(who, acte) {
+  /**
+   * Ce qu'il dit à cet acte.
+   *
+   * `dejaBattu` départage les deux versions de l'acte 6 pour Spinel. Sa réplique
+   * « Veccus ne m'écoute plus, je suis très vexé » n'a de sens que s'il a DÉJÀ
+   * perdu contre Robin ; s'il ne l'a jamais affronté (Robin a filé sans le
+   * chercher à l'acte 5), il n'a aucune raison d'être conciliant — il attaque.
+   * Sans cette distinction, un Spinel intact aurait tenu un discours de vaincu
+   * juste avant de sauter à la gorge de Robin.
+   */
+  function dialogueDe(who, acte, dejaBattu) {
     var d = DIALOGUES[who];
     if (!d) return ['…'];
+    if (who === 'spinel' && acte >= 6 && !dejaBattu && d['6_intact']) {
+      return d['6_intact'].slice();
+    }
     // On redescend jusqu'au dernier acte où il avait quelque chose à dire.
     for (var n = acte; n >= 0; n--) if (d[n]) return d[n].slice();
     return ['…'];
@@ -408,6 +461,7 @@
     DIALOGUES: DIALOGUES,
     acteDe: acteDe,
     majActe: majActe,
+    pnjsDeLaRegion: pnjsDeLaRegion,
     pnjDeLaRegion: pnjDeLaRegion,
     dialogueDe: dialogueDe,
     equipeDe: equipeDe,

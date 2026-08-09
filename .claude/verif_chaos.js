@@ -265,14 +265,57 @@ verifie('chaque acte s\'annonce par un vrai texte', sansTexte.length === 0,
 let vuSpinel = false, vuVeccus = false, combatS = false, combatV = false;
 for (let b = 0; b <= 6; b++) {
   for (const rid of RID) {
-    const p = mech.pnjDeLaRegion(rid, b);
-    if (!p) continue;
-    if (p.villainId === 'spinel') { vuSpinel = true; if (p.isTrainer) combatS = true; }
-    if (p.villainId === 'veccus') { vuVeccus = true; if (p.isTrainer) combatV = true; }
+    for (const p of mech.pnjsDeLaRegion(rid, b)) {
+      if (p.villainId === 'spinel') { vuSpinel = true; if (p.isTrainer) combatS = true; }
+      if (p.villainId === 'veccus') { vuVeccus = true; if (p.isTrainer) combatV = true; }
+    }
   }
 }
 verifie('Spinel se montre puis se bat', vuSpinel && combatS);
 verifie('Veccus arrive puis se bat', vuVeccus && combatV);
+
+// ---------------------------------------------------------------------------
+//  LE TEST QUI MANQUAIT — trouvé le 9 août 2026 en répondant à Robin, qui
+//  demandait simplement « où est Spinel ? ».
+//
+//  Deux de ses cinq dialogues étaient écrits, chargés en mémoire, et
+//  INJOUABLES : aux actes 4 et 6, la carte n'accueillait que Veccus, donc
+//  Spinel n'était nulle part et ses répliques ne se déclenchaient jamais. Or
+//  ce sont exactement les deux moments où l'alliance se noue puis se défait.
+//
+//  On vérifie donc que CHAQUE texte écrit est atteignable quelque part, à un
+//  acte donné, dans une région donnée. Un dialogue qu'on ne peut pas lire n'a
+//  aucune raison d'exister.
+// ---------------------------------------------------------------------------
+const jamaisLus = [];
+for (const who of ['spinel', 'veccus']) {
+  for (const cle in mech.DIALOGUES[who]) {
+    if (cle === 'vaincu') continue;                    // lu à la fin d'un combat
+    const acte = parseInt(cle, 10);
+    if (!isFinite(acte)) continue;
+    // Ce méchant est-il posé quelque part à cet acte ?
+    let present = false;
+    for (const rid of RID) {
+      if (mech.pnjsDeLaRegion(rid, acte).some(p => p.villainId === who)) present = true;
+    }
+    if (!present) jamaisLus.push(who + ' acte ' + cle);
+  }
+}
+verifie('aucun dialogue écrit n\'est injouable', jamaisLus.length === 0,
+  jamaisLus.join(', ') || 'Spinel et Veccus sont présents à chacun de leurs actes');
+
+// Et la variante de l'acte 6 de Spinel doit vraiment dépendre du combat passé.
+const intact = mech.dialogueDe('spinel', 6, false);
+const battu = mech.dialogueDe('spinel', 6, true);
+verifie('Spinel ne tient pas un discours de vaincu s\'il n\'a jamais perdu',
+  intact[0] !== battu[0],
+  'intact : « ' + intact[0].slice(0, 42) + '… »  ·  battu : « ' + battu[0].slice(0, 42) + '… »');
+
+// Les deux ensemble sur le Plateau d'Aurore à l'acte 4 : c'est là que
+// l'alliance se scelle, ils doivent y être tous les deux.
+const aurore4 = mech.pnjsDeLaRegion('aurore', 4).map(p => p.name);
+verifie('à l\'acte 4, ils sont côte à côte au Plateau d\'Aurore',
+  aurore4.length === 2, aurore4.join(' + ') || 'personne');
 
 // Leurs équipes doivent exister pour de vrai dans le Pokédex.
 const equipesCassees = [];
