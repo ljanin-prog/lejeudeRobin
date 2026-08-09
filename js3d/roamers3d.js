@@ -575,6 +575,18 @@
     var conflit = LG.conflitOf ? LG.conflitOf(gardien.speciesId) : null;
     toast(gardien._nom + ' ⚡ ' + ro._nom + ' — ils se déchirent !' +
       (conflit ? ' ' + conflit.cri : ''), '⚔️');
+
+    // ET LE MONDE ENCAISSE. « quand les Pokémon légendaires se battent, tout se
+    // dérègle » (Robin) : deux colosses qui s'affrontent devant Robin, ça ne
+    // peut pas être silencieux. Le type du gardien décide de ce qui se dérègle
+    // — la terre tremble pour Groudon, l'eau monte pour Kyogre, l'heure saute
+    // pour Dialga. Le duel se voit donc AUSSI dans le paysage, pas seulement
+    // dans un bandeau de texte.
+    var CT = (R3 && R3.get) ? R3.get('cataclysme') : null;
+    if (CT && CT.deregler) {
+      try { CT.deregler(gardien.speciesId, gardien.tileX, gardien.tileY); }
+      catch (e) { warn('dérèglement du duel', e); }
+    }
   }
 
   /** Une des huit cases autour, marchable et libre. -> {x,y} ou null. */

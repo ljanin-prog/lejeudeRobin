@@ -586,9 +586,64 @@
     } else {
       S.cam.lookAt(_aim);
     }
+
+    // LA SECOUSSE (cataclysme3d.js) — appliquée en TOUT DERNIER, après le
+    // lissage, après les bornes et après l'orientation. C'est la seule place
+    // possible : posée plus tôt, le lissage l'avalerait (`R3.damp` ramène
+    // doucement la caméra vers sa cible, donc une secousse d'une image serait
+    // effacée à la suivante), et la borne anti-sol la rattraperait vers le bas.
+    // On ne touche donc pas au système de caméra : on ajoute un décalage par
+    // -dessus, qui n'existe que pendant le tremblement de terre.
+    majSecousse(d);
+    if (_secousse.reste > 0) {
+      S.cam.position.x += _secousse.dx;
+      S.cam.position.y += _secousse.dy;
+      S.cam.position.z += _secousse.dz;
+    }
+
     applyFov(currentFov());
     S.started = true;
   }
+
+  // ---------------------------------------------------------------------------
+  //  SECOUSSE — « je veux des séismes, des tsunamis » (Robin, 9 août 2026)
+  //
+  //  Un décalage aléatoire de la caméra, qui s'éteint tout seul. L'amplitude
+  //  décroît sur la durée : un séisme finit en vibration, il ne s'arrête pas
+  //  net. `force` est en unités de monde (0,35 = très violent, 0,08 = frisson).
+  // ---------------------------------------------------------------------------
+  var _secousse = { reste: 0, duree: 1, force: 0, dx: 0, dy: 0, dz: 0 };
+
+  function shake(force, duree) {
+    var f = Math.max(0, Math.min(0.6, Number(force) || 0));
+    var t = Math.max(0.1, Math.min(20, Number(duree) || 0.6));
+    // Une secousse plus forte remplace la précédente ; une plus faible ne vient
+    // pas écraser un séisme en cours (sinon la moindre réplique le calmerait).
+    if (f >= _secousse.force || _secousse.reste <= 0) {
+      _secousse.force = f;
+      _secousse.duree = t;
+      _secousse.reste = t;
+    } else {
+      _secousse.reste = Math.max(_secousse.reste, t * 0.5);
+    }
+  }
+
+  function majSecousse(dt) {
+    if (_secousse.reste <= 0) return;
+    _secousse.reste -= (dt || 0);
+    if (_secousse.reste <= 0) {
+      _secousse.reste = 0; _secousse.force = 0;
+      _secousse.dx = _secousse.dy = _secousse.dz = 0;
+      return;
+    }
+    var k = _secousse.reste / _secousse.duree;      // 1 -> 0
+    var a = _secousse.force * k * k;                // décroissance douce
+    _secousse.dx = (Math.random() * 2 - 1) * a;
+    _secousse.dy = (Math.random() * 2 - 1) * a * 0.6;
+    _secousse.dz = (Math.random() * 2 - 1) * a;
+  }
+
+  function secousseEnCours() { return _secousse.reste > 0; }
 
   /**
    * Repère courant, pour sky3d, le culling et les commandes du joueur.
@@ -677,5 +732,8 @@
     suspend: suspend,
     resume: resume,
     isSuspended: isSuspended,
+    // La secousse des cataclysmes (cataclysme3d.js).
+    shake: shake,
+    shaking: secousseEnCours,
   });
 })();

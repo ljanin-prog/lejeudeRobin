@@ -1556,6 +1556,63 @@
 
   function onLoad(fn) { if (typeof fn === 'function') loadListeners.push(fn); }
 
+  // ==========================================================================
+  //  ABÎMER LA CARTE EN PLEIN JEU  —  « je veux des séismes, des tsunamis…
+  //  et que ça détruise des choses sur la carte » (Robin, 9 août 2026)
+  //
+  //  Jusqu'ici une région était figée une fois pour toutes : `setTile()` ne
+  //  servait qu'à la génération. `abimer()` ouvre la porte à la modification
+  //  en cours de partie, avec DEUX garde-fous qui ne se négocient pas.
+  //
+  //  1. ON NE POSE QUE DES TUILES MARCHABLES. Un séisme peut coucher un arbre
+  //     (TREE, infranchissable) sur de la terre craquelée (marchable) : le
+  //     passage s'ouvre. L'inverse est interdit — sinon un tremblement de terre
+  //     pourrait murer Robin dans un cul-de-sac, ou refermer l'accès d'une
+  //     arène. On vient précisément de corriger ce genre de blocage.
+  //
+  //  2. ON NE TOUCHE JAMAIS À CE QUI OUVRE OU DÉCLENCHE QUELQUE CHOSE : portes
+  //     d'arène, de soins, de boutique, académie, portails entre régions,
+  //     ponton du dirigeable, autels des légendaires. Un cataclysme qui efface
+  //     un portail couperait une région du reste du monde pour toujours.
+  //
+  //  La modification est PROVISOIRE au sens du disque : elle vit dans la grille
+  //  en mémoire, et la région se régénère à l'identique au prochain chargement.
+  //  Une catastrophe marque donc la partie en cours, pas le monde pour l'éternité
+  //  — c'est ce qu'on veut pour un enfant de dix ans qui doit pouvoir souffler.
+  // ==========================================================================
+
+  var INTOUCHABLE = {
+    ARENA_DOOR: 1, HEAL_DOOR: 1, SHOP_DOOR: 1, ACADEMY_DOOR: 1,
+    PORTAL: 1, GATE_ARCH: 1, CASTLE_GATE: 1,
+    AIRSHIP_DOCK: 1, AIRSHIP_MAST: 1, AIRSHIP_PLATFORM: 1,
+    LEGEND_ALTAR: 1, SIGN: 1, VOID: 1,
+  };
+
+  /**
+   * Remplace la tuile (x, y) par `nom`, si les deux règles ci-dessus le
+   * permettent. -> true si la carte a vraiment changé.
+   */
+  function abimer(x, y, nom) {
+    if (!activeGrid) return false;
+    if (x < BORDER || y < BORDER || x >= W - BORDER || y >= H - BORDER) return false;
+    var i = y * W + x;
+    var actuel = NAMES[activeGrid[i]];
+    if (!actuel || INTOUCHABLE[actuel]) return false;
+    if (actuel === nom) return false;
+    // `idx()` INVENTE un index quand le nom lui est inconnu : l'appeler à
+    // l'aveugle ajouterait une tuile fantôme au catalogue à la première faute
+    // de frappe. On exige donc un nom déjà connu.
+    var nouveau = INDEX[nom];
+    if (nouveau === undefined) return false;
+    // Règle n°1 : jamais de tuile infranchissable posée par un cataclysme.
+    if (WALKI[nouveau] !== 1) return false;
+    activeGrid[i] = nouveau;
+    return true;
+  }
+
+  /** Le nom de la tuile active en (x, y) — sans passer par la région chargée. */
+  function nomTuile(x, y) { return tileAt(x, y); }
+
   function minimap(id, canvas) {
     if (typeof document === 'undefined' || !canvas || typeof canvas.getContext !== 'function') return;
     var entry = ensureGenerated(id);
@@ -1617,6 +1674,9 @@
     npcsOf: npcsOf,
     spawnOf: spawnOf,
     onLoad: onLoad,
+    // Abîmer la carte en pleine partie (cataclysme3d.js).
+    abimer: abimer,
+    nomTuile: nomTuile,
     minimap: minimap,
   };
   Object.defineProperty(API, 'W', { get: function () { return W; }, enumerable: true });

@@ -2000,6 +2000,36 @@
   }
 
   // ---------------------------------------------------------------------------
+  /**
+   * REDESSINER UNE ZONE DE LA CARTE — pour les cataclysmes (cataclysme3d.js).
+   *
+   * Le décor est découpé en chunks de 32×32 tuiles, construits une fois et
+   * gardés tels quels : changer une tuile dans la grille de `regions3d` ne se
+   * voit donc PAS à l'écran, l'arbre abattu reste debout. Il faut jeter les
+   * chunks concernés — la boucle `update()` les reconstruira d'elle-même à la
+   * frame suivante, à partir de la carte modifiée, sans qu'on ait à dupliquer
+   * une seule ligne de la construction.
+   *
+   * C'est volontairement grossier (on jette 32×32 tuiles pour en changer trois)
+   * : un séisme est un événement rare et bruyant, une reconstruction de deux ou
+   * trois chunks passe inaperçue au milieu de la secousse. Reconstruire à la
+   * tuile près demanderait de démonter tout le système d'instanciation des
+   * décors — beaucoup de risque pour un gain qu'on ne verrait pas.
+   */
+  function refreshArea(x0, y0, x1, y1) {
+    if (!CH) return 0;
+    const ax = Math.max(0, Math.min(x0, x1)), bx = Math.min(W - 1, Math.max(x0, x1));
+    const ay = Math.max(0, Math.min(y0, y1)), by = Math.min(H - 1, Math.max(y0, y1));
+    let n = 0;
+    for (let cy = Math.floor(ay / CHUNK); cy <= Math.floor(by / CHUNK); cy++) {
+      for (let cx = Math.floor(ax / CHUNK); cx <= Math.floor(bx / CHUNK); cx++) {
+        const key = cx + '_' + cy;
+        if (chunkMap.has(key)) { disposeChunk(key); n++; }
+      }
+    }
+    return n;
+  }
+
   R3.register('world', {
     build: build,
     setRegion: setRegion,
@@ -2007,5 +2037,6 @@
     update: update,
     root: root,
     stats: stats,
+    refreshArea: refreshArea,
   });
 })();

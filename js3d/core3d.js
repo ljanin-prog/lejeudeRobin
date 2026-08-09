@@ -396,6 +396,19 @@ const R3 = (function () {
     mountain: { sky: '#b6dcf2', fog: '#d5e6ef', sun: '#f4f8ff', ground: '#8a9199', ambient: 0.52, particles: 'snow' },
     village:  { sky: '#95d4f2', fog: '#c9e4ee', sun: '#ffeec4', ground: '#63b846', ambient: 0.58, particles: 'pollen' },
     city2:    { sky: '#a0cfe8', fog: '#ccdae4', sun: '#fff2dc', ground: '#a5aab0', ambient: 0.60, particles: null },
+
+    // --- LE CIEL DÉRÉGLÉ (cataclysme3d.js) -----------------------------------
+    //  « quand les Pokémon légendaires se battent, tout se dérègle » — Robin.
+    //  Ce ne sont pas des lieux : ce sont des ÉTATS passagers du ciel, posés
+    //  par-dessus le biome réel pendant quelques secondes. `sky3d` ne connaît
+    //  que des noms d'ambiance, il les affiche donc sans rien avoir à
+    //  apprendre — et la transition douce qu'il fait déjà entre deux biomes
+    //  devient gratuitement la bascule du dérèglement.
+    chaos_nuit:   { sky: '#0d1030', fog: '#151a3a', sun: '#5560a0', ground: '#2a2f4a', ambient: 0.22, particles: 'sparkle' },
+    chaos_jour:   { sky: '#fff8d0', fog: '#fff4d8', sun: '#ffffff', ground: '#cfc79a', ambient: 0.95, particles: 'sparkle' },
+    chaos_orage:  { sky: '#39405a', fog: '#4a5068', sun: '#c8d0e8', ground: '#5a6070', ambient: 0.35, particles: 'spray' },
+    chaos_espace: { sky: '#1a1050', fog: '#2a1c66', sun: '#b0a0ff', ground: '#3a2f6a', ambient: 0.40, particles: 'sparkle' },
+    chaos_temps:  { sky: '#7fd8e8', fog: '#a8e6ee', sun: '#e8fbff', ground: '#5a8a9a', ambient: 0.70, particles: 'sparkle' },
   };
   function biomeMood(b) { return BIOME_MOOD[b] || BIOME_MOOD.plain; }
 
