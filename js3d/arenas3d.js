@@ -740,7 +740,14 @@
     if (!cities || typeof cities.get !== 'function') return null;
     try {
       var c = cities.get(regionId);
-      if (c && c.arena && typeof c.arena.x === 'number') return { x: c.arena.x, y: c.arena.y };
+      if (c && c.arena && typeof c.arena.x === 'number') {
+        return {
+          x: c.arena.x, y: c.arena.y,
+          // Le parvis, quand la ville le connaît : c'est LÀ que doit se tenir le
+          // champion. Voir le commentaire de `championNpc()` ci-dessous.
+          front: (c.arena.front && typeof c.arena.front.x === 'number') ? c.arena.front : null,
+        };
+      }
     } catch (e) { /* ville indisponible : on laissera regions3d placer le PNJ */ }
     return null;
   }
@@ -750,13 +757,29 @@
     if (!a) return null;
     var ch = a.champion;
     var door = arenaDoorOf(regionId);
+
+    // OÙ SE TIENT LE CHAMPION — et pourquoi ce n'est pas « une case plus bas ».
+    //
+    // Le champion doit se tenir sur le PARVIS, la case libre devant la porte,
+    // pour tourner le dos au bâtiment et faire face au joueur qui arrive de la
+    // place. On écrivait `door.y + 1`, ce qui n'est le parvis que si la façade
+    // est au SUD. À Ambrelune et à Cimefroide elle est au NORD : cette case
+    // tombait DANS le mur de l'arène, et `regions3d.nearestWalkable()` —  qui
+    // ne connaît que « marchable » — recasait alors le champion sur la seule
+    // case libre du voisinage : LA PORTE ELLE-MÊME. Comme `game3d.placeLibre()`
+    // refuse toute case occupée par un PNJ, Orana murait sa propre arène :
+    // l'arène de type Foudre était devenue impossible à ouvrir.
+    //
+    // `cities3d` connaît le vrai parvis (`arena.front`) : on le lui demande.
+    // Le repli `y + 1` ne sert plus qu'aux villes de secours, dont la façade
+    // est au sud par construction.
+    var pos = (door && door.front) ? door.front : (door ? { x: door.x, y: door.y + 1 } : null);
+
     return {
       id: ch.id,
       name: ch.name,
-      // Une tuile SOUS la porte : le champion tourne le dos au bâtiment et
-      // fait face au joueur qui arrive de la place.
-      x: door ? door.x : null,
-      y: door ? door.y + 1 : null,
+      x: pos ? pos.x : null,
+      y: pos ? pos.y : null,
       dir: 'down',
       colorMap: ch.colorMap,
       accessory: ch.accessory || null,

@@ -79,6 +79,13 @@
   const LEGEND_SCALE_MULT = 1.18;
   const LEGEND_PLACEHOLDER_BOOST = 2.6;
   const LEGEND_PLAT_MULT = 1.32;   // plateforme plus large (X/Z seulement)
+  // La hauteur commune des titans en combat, en unités de modèle (voir
+  // `rebuildSide`). Trouvée À L'ÉCRAN, par essais successifs sur les deux cas
+  // extrêmes : Eternatus (4,41 unités au naturel, le plus grand) et Dialga
+  // (2,10, le plus petit des titans). À 6,5 les deux sont décapités ; à 3,6
+  // Eternatus paraît plus petit que le compagnon du joueur. À 4,0, chacun
+  // domine franchement l'écran sans en sortir.
+  const TITAN_HAUTEUR = 4.0;
 
   const BALL_R = 0.19;
 
@@ -113,6 +120,20 @@
     celestial: { top: '#9a8ce0', mid: '#dcd2f7', ground: '#6a5fa8', plat: 'stone', backdrop: 'celestial'},
     coast:     { top: '#8fd4f4', mid: '#ffe6bd', ground: '#e0c489', plat: 'sand',  backdrop: 'dunes'    },
     citadel:   { top: '#a8d4ea', mid: '#dfe7ec', ground: '#b6b0a4', plat: 'stone', backdrop: 'city'     },
+
+    // --- LES SIX DIMENSIONS (legends3d.js) -----------------------------------
+    //  « je voudrais que quelques légendaires aient des dimensions » — Robin.
+    //  Ce ne sont pas des régions où l'on marche : ce sont des DÉCORS DE
+    //  COMBAT. Quand Palkia aspire le joueur, le combat s'ouvre ici — même
+    //  moteur, même caméra, mais plus rien du monde d'avant à l'écran.
+    //  Toutes partagent l'arrière-plan `rift` (îles brisées et anneaux) et ne
+    //  portent aucun nuage : il n'y a pas de ciel dans une faille.
+    dim_espace:   { top: '#241a5c', mid: '#8f7ae8', ground: '#3b2f7a', plat: 'stone', backdrop: 'rift' },
+    dim_temps:    { top: '#12303f', mid: '#7fd8e8', ground: '#2c5a6b', plat: 'stone', backdrop: 'rift' },
+    dim_renverse: { top: '#3a1030', mid: '#c46ab0', ground: '#4a1840', plat: 'stone', backdrop: 'rift' },
+    dim_vide:     { top: '#08080f', mid: '#3a2f52', ground: '#171320', plat: 'stone', backdrop: 'rift' },
+    dim_nuit:     { top: '#0b0f38', mid: '#4a5ac0', ground: '#1b2060', plat: 'stone', backdrop: 'rift' },
+    dim_origine:  { top: '#e8d492', mid: '#fff6d8', ground: '#c8a848', plat: 'stone', backdrop: 'rift' },
   };
   function arena(b) { return ARENA[b] || ARENA.plain; }
 
@@ -533,11 +554,57 @@
         cap.castShadow = false;
         g.add(cap);
       });
+    } else if (a.backdrop === 'rift') {
+      // LA DIMENSION. Pas d'horizon, pas de végétation, pas de sol au loin :
+      // des morceaux de monde arrachés qui flottent dans le vide, et de grands
+      // anneaux penchés qui tournent autour de l'arène. Tout est teinté par
+      // `a.mid`, la couleur propre à chaque dimension — c'est elle qui fait la
+      // différence entre le Couloir du Temps et le Vide Éternel, et elle seule.
+      ring(11, 8, 19, function (x, z, r, ang) {
+        const s = 1.0 + r * 2.6;
+        const y = 1.2 + r * 7.5;
+        // Un éclat de terre : large dessus, pointu dessous — comme arraché.
+        const dalle = R3.cyl(s * 0.9, s * 0.75, 0.5, a.ground, x, y, z, { seg: 6, flat: true, rough: 0.9 });
+        dalle.rotation.y = ang;
+        dalle.rotation.z = (r - 0.5) * 0.5;
+        dalle.castShadow = false;
+        g.add(dalle);
+        const pointe = R3.cone(s * 0.72, 1.4 + r * 2.2, a.ground, x, y - 0.9 - r, z, { seg: 6, flat: true });
+        pointe.rotation.x = Math.PI;          // la pointe vers le bas
+        pointe.rotation.z = (r - 0.5) * 0.5;
+        pointe.castShadow = false;
+        g.add(pointe);
+        // Une lueur sur la tranche : sans elle, les îles disparaissent dans le
+        // noir des dimensions sombres (le Vide, la Nuit sans Fin).
+        if (r > 0.35) {
+          const bord = R3.cyl(s * 0.94, s * 0.94, 0.08, a.mid, x, y + 0.28, z,
+            { seg: 6, flat: true, emissive: a.mid, emissiveIntensity: 0.9, rough: 0.4 });
+          bord.rotation.y = ang;
+          bord.rotation.z = (r - 0.5) * 0.5;
+          bord.castShadow = false;
+          g.add(bord);
+        }
+      });
+      // Trois anneaux penchés, très larges : ce sont eux qui disent « tu n'es
+      // plus dans ton monde » dès la première image.
+      for (let k = 0; k < 3; k++) {
+        const R = 13 + k * 4.5;
+        const anneau = R3.torus(R, 0.16 + k * 0.05, a.mid, 0, 5 + k * 3.5, 0,
+          { seg: 30, emissive: a.mid, emissiveIntensity: 0.75, rough: 0.35 });
+        anneau.rotation.x = Math.PI / 2 + (k - 1) * 0.42;
+        anneau.rotation.z = k * 0.6;
+        anneau.castShadow = false;
+        g.add(anneau);
+      }
     }
 
-    // Nuages très lointains, qui dérivent lentement
+    // Nuages très lointains, qui dérivent lentement.
+    // AUCUN dans une dimension : il n'y a pas de ciel dans une faille, et un
+    // petit nuage blanc au-dessus du Vide Éternel ruinerait tout. Le groupe
+    // existe quand même, vide : `updateBackdrop()` l'anime sans se poser de
+    // question, et rien ne casse.
     cloudRing = new THREE.Group();
-    const cn = R3.quality.particles ? 7 : 4;
+    const cn = (a.backdrop === 'rift') ? 0 : (R3.quality.particles ? 7 : 4);
     for (let i = 0; i < cn; i++) {
       const ang = (i / cn) * Math.PI * 2 + rnd();
       const r = 20 + rnd() * 12;
@@ -2521,6 +2588,32 @@
     // renvoie une silhouette de repli minuscule pour ceux qui manquent : on la
     // gonfle nettement pour que « ça en impose » quand même (voir §4 du contrat).
     if (info.legendary && model.userData.placeholder) scaleMult *= LEGEND_PLACEHOLDER_BOOST;
+    // LES TITANS — « je voudrais que quelques légendaires soient énormes »
+    // (Robin). `legends3d` en désigne neuf : les six seigneurs de dimension
+    // (×2,6) et les trois colosses du monde (×2,0). Ils débordent volontairement
+    // de leur plateforme : c'est tout l'effet recherché.
+    // LES TITANS EN COMBAT — on vise une HAUTEUR, on ne multiplie pas.
+    //
+    // Mesuré modèle par modèle : les légendaires ne font pas du tout la même
+    // taille au départ. Eternatus fait 4,41 unités de haut, Arceus 3,76,
+    // Dialga 2,10 — du simple au double. Un multiplicateur commun, quel qu'il
+    // soit, donne donc toujours tort à quelqu'un : réglé pour qu'Arceus tienne
+    // dans l'écran, il envoie la tête d'Eternatus hors cadre ; réglé pour
+    // Eternatus, il laisse Dialga tout petit. (Eternatus dépassait d'ailleurs
+    // DÉJÀ avant qu'on touche à quoi que ce soit.)
+    //
+    // On mesure donc le modèle et on l'amène à une hauteur commune. Tous les
+    // titans font alors la même taille imposante — nettement au-dessus des
+    // légendaires ordinaires, qui sortent entre 2,5 et 3,3 — et tous tiennent
+    // dans le cadre. Sur la CARTE, en revanche, on garde bien le multiplicateur
+    // de legends3d : on y recule pour les voir, et c'est là qu'ils doivent
+    // écraser le paysage.
+    const LG = R3.get('legends');
+    if (info.legendary && LG && LG.estTitan && LG.estTitan((mon && mon.id) || '')) {
+      const boite = new THREE.Box3().setFromObject(model);
+      const haut = boite.max.y - boite.min.y;
+      if (haut > 0.2) scaleMult = TITAN_HAUTEUR / haut;
+    }
     attachModel(s, model, baseScale * scaleMult, 0.42 * baseScale * scaleMult);
 
     const plat = sideKey === 'foe' ? foePlat : plrPlat;

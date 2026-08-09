@@ -965,7 +965,10 @@
 
     // Arène (le stade des dresseurs), au sud-ouest.
     const ar = building(C, 9, 24, 9, 7, 'ARENA_WALL', { door: 'ARENA_DOOR', side: 'N' });
-    def.arena = { x: ar.x, y: ar.y };
+    // `front` = le parvis, la case DEVANT la porte. Sans elle, arenas3d devinait
+    // « une case sous la porte », ce qui tombe dans le mur quand la façade est
+    // au nord — et le champion finissait recasé SUR sa propre porte (§12).
+    def.arena = { x: ar.x, y: ar.y, front: { x: ar.fx, y: ar.fy } };
 
     // Centre Pokémon : plein sud de la grande place, façade tournée vers elle.
     pokeCenter(C, def, 25, 27, 6, 4, 'N');
@@ -1054,7 +1057,10 @@
     def.church = { x: 11, y: 16 };
 
     const ar = building(C, 30, 20, 9, 7, 'ARENA_WALL', { door: 'ARENA_DOOR', side: 'N' });
-    def.arena = { x: ar.x, y: ar.y };
+    // `front` = le parvis, la case DEVANT la porte. Sans elle, arenas3d devinait
+    // « une case sous la porte », ce qui tombe dans le mur quand la façade est
+    // au nord — et le champion finissait recasé SUR sa propre porte (§12).
+    def.arena = { x: ar.x, y: ar.y, front: { x: ar.fx, y: ar.fy } };
     // Centre Pokémon : au bord est du grand ponton, porte tournée vers la place.
     pokeCenter(C, def, 27, 15, 6, 4, 'W');
     const sh = building(C, 29, 12, 3, 3, 'SHOP', { door: 'SHOP_DOOR', side: 'S' });
@@ -1151,7 +1157,10 @@
     def.church = { x: 24, y: 10 };
 
     const ar = building(C, 38, 12, 9, 8, 'ARENA_WALL', { door: 'ARENA_DOOR', side: 'W' });
-    def.arena = { x: ar.x, y: ar.y };
+    // `front` = le parvis, la case DEVANT la porte. Sans elle, arenas3d devinait
+    // « une case sous la porte », ce qui tombe dans le mur quand la façade est
+    // au nord — et le champion finissait recasé SUR sa propre porte (§12).
+    def.arena = { x: ar.x, y: ar.y, front: { x: ar.fx, y: ar.fy } };
     // Centre Pokémon : l'îlot nord-est de la place, sur la grande rue.
     pokeCenter(C, def, 31, 7, 5, 4, 'S');
     const sh = building(C, 34, 22, 3, 3, 'SHOP', { door: 'SHOP_DOOR', side: 'N' });
@@ -1217,7 +1226,10 @@
     def.church = { x: 9, y: 23 };
 
     const ar = building(C, 31, 24, 9, 7, 'ARENA_WALL', { door: 'ARENA_DOOR', side: 'N' });
-    def.arena = { x: ar.x, y: ar.y };
+    // `front` = le parvis, la case DEVANT la porte. Sans elle, arenas3d devinait
+    // « une case sous la porte », ce qui tombe dans le mur quand la façade est
+    // au nord — et le champion finissait recasé SUR sa propre porte (§12).
+    def.arena = { x: ar.x, y: ar.y, front: { x: ar.fx, y: ar.fy } };
     // Centre Pokémon : flanc est de la place d'armes — le premier toit rouge
     // qu'on voit en entrant par la Porte de l'Arête.
     pokeCenter(C, def, 30, 15, 6, 4, 'W');
@@ -1321,7 +1333,10 @@
     def.church = { x: 13, y: 9 };
 
     const ar = building(C, 6, 22, 9, 7, 'ARENA_WALL', { door: 'ARENA_DOOR', side: 'N' });
-    def.arena = { x: ar.x, y: ar.y };
+    // `front` = le parvis, la case DEVANT la porte. Sans elle, arenas3d devinait
+    // « une case sous la porte », ce qui tombe dans le mur quand la façade est
+    // au nord — et le champion finissait recasé SUR sa propre porte (§12).
+    def.arena = { x: ar.x, y: ar.y, front: { x: ar.fx, y: ar.fy } };
     // Centre Pokémon : au nord de la place annulaire, bien à l'écart des coulées.
     pokeCenter(C, def, 26, 6, 6, 4, 'S');
     const sh = building(C, 17, 6, 3, 3, 'SHOP', { door: 'SHOP_DOOR', side: 'S' });
@@ -1430,7 +1445,10 @@
     def.landmarks.push({ kind: 'church', x: cx, y: 43, label: 'Cathédrale de la Lumière' });
 
     const ar = building(C, 10, 33, 11, 8, 'ARENA_WALL', { door: 'ARENA_DOOR', side: 'N' });
-    def.arena = { x: ar.x, y: ar.y };
+    // `front` = le parvis, la case DEVANT la porte. Sans elle, arenas3d devinait
+    // « une case sous la porte », ce qui tombe dans le mur quand la façade est
+    // au nord — et le champion finissait recasé SUR sa propre porte (§12).
+    def.arena = { x: ar.x, y: ar.y, front: { x: ar.fx, y: ar.fy } };
     // Centre Pokémon : à l'est de la place d'apparat, sur l'avenue est-ouest.
     pokeCenter(C, def, 42, 29, 7, 5, 'W');
     const sh = building(C, 12, 20, 4, 4, 'SHOP', { door: 'SHOP_DOOR', side: 'E' });
@@ -1677,7 +1695,13 @@
     const abs = (p) => (p ? { x: p.x + spec.x, y: p.y + spec.y } : null);
     def.gates = def.gates.map((g) => ({ x: g.x + spec.x, y: g.y + spec.y, dir: g.dir, label: g.label }));
     if (def.plaza) def.plaza = { x: def.plaza.x + spec.x, y: def.plaza.y + spec.y, w: def.plaza.w, h: def.plaza.h };
-    def.castle = abs(def.castle); def.church = abs(def.church); def.arena = abs(def.arena);
+    // `arena` porte en plus son parvis : même précaution que `center` ci-dessous,
+    // sinon la porte serait absolue et le parvis resté en local.
+    const absFront = (p) => (p ? {
+      x: p.x + spec.x, y: p.y + spec.y,
+      front: p.front ? { x: p.front.x + spec.x, y: p.front.y + spec.y } : null,
+    } : null);
+    def.castle = abs(def.castle); def.church = abs(def.church); def.arena = absFront(def.arena);
     def.heal = abs(def.heal); def.shop = abs(def.shop); def.fountain = abs(def.fountain);
     // `center` porte en plus la case du parvis : on la convertit aussi, sinon
     // le lot Intégration recevrait un mélange de local et d'absolu.

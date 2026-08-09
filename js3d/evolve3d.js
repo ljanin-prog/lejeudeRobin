@@ -687,6 +687,36 @@
     return CHAIN_BY_ID[speciesId] || null;
   }
 
+  /**
+   * Déclare une évolution venue d'ailleurs — `dexk3d.js` s'en sert pour les
+   * chaînes des Pokémon repris du jeu de Clélia (Salamèche → Reptincel →
+   * Dracaufeu…).
+   *
+   * Nos chaînes maison fabriquent l'id d'arrivée par concaténation stricte
+   * (`feuillou` + `on`) ; celles-ci ont des noms propres, sans rapport avec
+   * leur forme de base. On accepte donc un `to` explicite. Le reste ne change
+   * pas d'un iota : c'est le MÊME objet `step` que produit `buildAll()`, rangé
+   * dans le MÊME index — donc `nextOf`, `canEvolve`, `evolve` et l'écran
+   * Équipe le traitent sans savoir d'où il vient.
+   *
+   * L'espèce d'arrivée doit déjà exister dans dex3d : appeler ce module APRÈS
+   * `dex.add()`, sinon `previewName()` n'aurait qu'un id à afficher.
+   */
+  function addStep(d) {
+    if (!d || !d.from || !d.to) return false;
+    var step = {
+      from: d.from,
+      to: d.to,
+      level: d.level || 20,
+      stone: d.stone || null,
+      message: d.message || (d.from + ' évolue !'),
+    };
+    step.stones = step.stone ? [step.stone] : [];
+    step.stoneLevel = step.level;
+    STEP_FROM[d.from] = step;
+    return true;
+  }
+
   /** L'étape suivante de cette espèce (quel que soit son déclencheur), ou null. */
   function nextOf(speciesId) {
     if (!speciesId || isLegendary(speciesId)) return null;
@@ -1029,6 +1059,7 @@
     CHAINS: CHAINS,
     chainOf: function (id) { ensure(); return chainOf(id); },
     nextOf: function (id) { ensure(); return nextOf(id); },
+    addStep: addStep,                 // évolutions apportées par dexk3d.js
     canEvolve: function (m) { ensure(); return canEvolve(m); },
     evolve: evolve,
     stoneFor: stoneFor,

@@ -989,10 +989,71 @@
     return pickIn(list);
   }
 
+  // ===========================================================================
+  //  ACCUEILLIR DE NOUVELLES ESPÈCES  —  `dex.add()`
+  //
+  //  « je voudrais que tu prennes les Pokémon du jeu de Clélia » — Robin.
+  //  `dexk3d.js` apporte 52 espèces de plus. Plutôt que de les recopier ici, on
+  //  ouvre une porte : elles arrivent au même format que les nôtres et entrent
+  //  dans LES MÊMES tableaux. Tout le jeu (rencontres, Pokédex du HUD, équipes
+  //  adverses, minimap) les voit donc apparaître sans qu'une seule ligne
+  //  n'ait besoin de changer ailleurs.
+  //
+  //  Deux garde-fous : on ne remplace JAMAIS une espèce existante (les
+  //  sauvegardes de Robin en dépendent), et une espèce sans capacité valable
+  //  est refusée plutôt qu'ajoutée à moitié.
+  // ===========================================================================
+  function add(list) {
+    if (!list || !list.length) return 0;
+    var ajoutes = 0;
+    for (var i = 0; i < list.length; i++) {
+      var d = list[i];
+      if (!d || !d.id || BY_ID[d.id]) continue;        // jamais d'écrasement
+      var lr = levelRange(d.regions || ['val']);
+      var sp = {
+        id: d.id,
+        name: d.name || d.id,
+        description: d.description || '',
+        catchRate: (typeof d.catchRate === 'number') ? d.catchRate : 0.5,
+        color: d.color || '#c0c0c0',
+        draw: null,                                    // le modèle 3D fait foi
+        types: (d.types || ['normal']).slice(0, 2),
+        legendary: !!d.legendary,
+        rare: !!d.rare || !!d.legendary,
+        dragon: (d.types || []).indexOf('dragon') >= 0,
+        kawaii: !!d.kawaii,
+        regions: (d.regions || ['val']).slice(),
+        biomes: (d.biomes || ['plain']).slice(),
+        baseHp: d.hp || d.baseHp || 45,
+        atk: d.atk || 35, def: d.def || 35, speed: d.speed || 35,
+        moveIds: (d.moveIds || []).slice(),
+        learnset: (d.learnset || []).map(function (e) {
+          return { level: e.level, moveId: e.moveId };
+        }),
+        minLevel: d.minLevel || lr[0],
+        maxLevel: d.maxLevel || lr[1],
+      };
+      ALL.push(sp);
+      (sp.legendary ? LEGENDS : BASE).push(sp);
+      BY_ID[sp.id] = sp;
+      ajoutes++;
+    }
+    // La même passe que pour nos espèces : capacité inconnue remplacée par une
+    // équivalente, doublons écartés, et surtout un soin garanti à chacun.
+    // Elle est idempotente — repasser sur les anciennes ne leur fait rien.
+    if (ajoutes) {
+      try { resolveMoves(); }
+      catch (e) { console.warn('[dex3d] capacités des nouvelles espèces :', e); }
+    }
+    API.count = ALL.length;
+    return ajoutes;
+  }
+
   var API = {
     ALL: ALL,
     BASE: BASE,
     LEGENDS: LEGENDS,
+    add: add,
     get: get,
     isLegendary: isLegendary,
     byRegion: byRegion,

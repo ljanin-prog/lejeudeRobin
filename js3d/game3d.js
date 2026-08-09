@@ -192,6 +192,7 @@
     money: START_MONEY,
     activeBall: DEFAULT_BALL,        // §11.2 : la Ball choisie vaut PARTOUT
     repelSteps: 0,          // pas restants de Répulsif (objet du Centre)
+    furieux: [],            // légendaires dont on a capturé l'ennemi (legends3d)
     visitedRegions: { val: true },   // `val` est visitée d'office (§17 bis)
     cameraMode: 'aventure',
     // --- éphémère ------------------------------------------------------------
@@ -2479,6 +2480,39 @@
     showMessages(gains);
     // §5 : la quête est prévenue APRÈS CHAQUE capture, monde ouvert compris.
     showMessages(questTextsForCatch(speciesId));
+    // LA VENGEANCE (legends3d.js) : capturer un légendaire met son ennemi juré
+    // en fureur. À partir de maintenant, il peut surgir n'importe où.
+    showMessages(texteVengeance(speciesId, species));
+  }
+
+  /**
+   * L'ennemi juré du légendaire qu'on vient de capturer entre en scène — pas
+   * tout de suite, mais quelque part, plus tard, sans prévenir.
+   *
+   * « je voudrais qu'il y ait des conflits entre les légendaires » — Robin,
+   * 9 août 2026. C'est la moitié différée de la demande : le duel se voit
+   * devant l'autel, la vengeance se paie pendant tout le reste de la partie.
+   */
+  function texteVengeance(speciesId, species) {
+    if (!species || !species.legendary) return [];
+    const furieux = safeCall('roamers.enrager', function () {
+      return call('roamers', 'enrager', [speciesId]);
+    });
+    if (!furieux) return [];
+
+    const LG = mod('legends');
+    const conflit = (LG && LG.conflitOf) ? LG.conflitOf(speciesId) : null;
+    const nomF = (LG && LG.nomDe) ? LG.nomDe(furieux) : furieux;
+
+    // Mémorisé dans la partie : la colère survit à la fermeture du navigateur.
+    state.furieux = state.furieux || [];
+    if (state.furieux.indexOf(furieux) < 0) state.furieux.push(furieux);
+    saveGame();
+
+    return ['💢 Au loin, un rugissement.\n' +
+      nomF.toUpperCase() + ' a senti la capture' +
+      (conflit ? ' — ' + conflit.motif + '.' : '.') + '\n' +
+      'Il ne t\'attendra plus à son autel : il te cherche, maintenant.'];
   }
 
   /**
@@ -2646,10 +2680,16 @@
     markSeen(speciesId);
 
     const list = playerTeamList();
+    // LE DÉCOR DU COMBAT. D'ordinaire c'est celui du sol où l'on se tient. Mais
+    // les six seigneurs de dimension (legends3d.js) aspirent Robin chez eux :
+    // le combat s'ouvre alors dans LEUR décor — îles brisées et grands anneaux
+    // — et le monde d'avant disparaît complètement de l'écran.
+    const LGdim = mod('legends');
+    const dimBiome = (LGdim && LGdim.biomeOf && sp) ? LGdim.biomeOf(sp.id) : null;
     const b = {
       kind: 'wild',
       regionId: state.regionId,
-      biome: biomeAt(state.player.tileX, state.player.tileY) || 'plain',
+      biome: dimBiome || biomeAt(state.player.tileX, state.player.tileY) || 'plain',
       player: { mon: mine, team: list, index: indexOfMon(list, mine) },
       foe: { mon: foeMon, team: [foeMon], index: 0, trainer: null },
       phase: 'intro',
@@ -2688,6 +2728,19 @@
     const nom = (sp && sp.name) || foeMon.nick || foeMon.id;
     // Le titre (« le Cerf Dormant ») dit en trois mots ce qu'est la créature.
     const titre = (sp && sp.title) ? ', ' + sp.title : '';
+
+    // LES SIX SEIGNEURS DE DIMENSION (legends3d.js). Ceux-là ne « surgissent »
+    // pas devant Robin : ils l'emmènent chez eux. Le texte doit dire le voyage
+    // AVANT de nommer la créature — c'est l'ordre dans lequel on le vit.
+    const LG = mod('legends');
+    const dim = (LG && LG.dimensionOf && sp) ? LG.dimensionOf(sp.id) : null;
+    if (dim) {
+      return '✦ ' + dim.nom.toUpperCase() + ' ✦\n'
+        + dim.entree + '\n\n'
+        + nom.toUpperCase() + titre + ' t\'attend ici, chez lui.\n'
+        + 'Tant qu\'il tient debout, tu ne rentres pas.';
+    }
+
     return '⚠️ ✦ LÉGENDAIRE ✦ ⚠️\n'
       + nom.toUpperCase() + titre + ' surgit devant toi !\n'
       + ((sp && sp.description) ? sp.description + '\n' : '')
@@ -3280,7 +3333,19 @@
 
   /** Termine un combat : les textes, puis les évolutions, puis la sortie. */
   function finishBattle(textes) {
-    showMessages(textes, function () {
+    // LE RETOUR DE LA DIMENSION. Si le combat s'est déroulé chez un seigneur de
+    // dimension (legends3d.js), on ne se contente pas de refermer l'écran : on
+    // dit le voyage du retour. Sans cette phrase, Robin se retrouverait
+    // brutalement dans les hautes herbes sans comprendre qu'il en est sorti.
+    // C'est ici, dans le point de sortie COMMUN à la victoire, à la défaite et
+    // à la capture, pour que la porte se referme quoi qu'il arrive.
+    const b0 = state.battle;
+    const LGf = mod('legends');
+    const dimF = (b0 && b0.legendary && LGf && LGf.dimensionOf && b0.foe && b0.foe.mon)
+      ? LGf.dimensionOf(b0.foe.mon.id) : null;
+    const suite = dimF ? (textes || []).concat(['✦ ' + dimF.sortie]) : textes;
+
+    showMessages(suite, function () {
       runEvolutions(function () { runLearnQueue(function () { endBattle(); }); });
     });
   }
@@ -4417,6 +4482,11 @@
         quest: serializeOf('quest'),
         tera: serializeOf('tera'),
         buddy: serializeOf('buddy'),
+
+        // Les légendaires qui en veulent à Robin (legends3d.js). Une rancune
+        // qui s'effacerait à la fermeture du navigateur n'en serait pas une :
+        // elle doit le suivre d'une séance de jeu à l'autre.
+        furieux: (state.furieux || []).slice(),
       };
       // ⚠️ LE FILET DE DERNIÈRE LIGNE. On n'écrase JAMAIS une partie qui a des
       // créatures par une partie qui n'en a AUCUNE. C'est exactement ce que
@@ -4924,6 +4994,12 @@
       ensureActiveBall();
       state.repelSteps = (typeof data.repelSteps === 'number' && isFinite(data.repelSteps))
         ? Math.max(0, Math.round(data.repelSteps)) : 0;
+
+      // Les rancunes de légendaires (legends3d.js). Une sauvegarde d'avant le
+      // 9 août 2026 n'a pas ce champ : personne n'en veut à Robin, et c'est la
+      // bonne valeur par défaut.
+      state.furieux = Array.isArray(data.furieux) ? data.furieux.slice() : [];
+      call('roamers', 'setFurieux', [state.furieux]);
 
       call('quest', 'deserialize', [data.quest || null]);
       // Une sauvegarde v1 n'a AUCUN état de quête, mais elle a des badges. Sans
