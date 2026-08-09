@@ -209,6 +209,12 @@
   <script src="js3d/moves3d.js"></script>
   <script src="js3d/dex3d.js"></script>
   <script src="js3d/evolve3d.js"></script>
+  <!-- Les 52 Pokémon repris du jeu de Clélia. APRÈS evolve3d (il lui déclare
+       leurs chaînes d'évolution) et AVANT team3d (qui relit la sauvegarde). -->
+  <script src="js3d/dexk3d.js"></script>
+  <!-- Les légendaires : puissance, taille de titan, dimensions et rivalités.
+       APRÈS dex3d — c'est lui qui reçoit les statistiques rehaussées. -->
+  <script src="js3d/legends3d.js"></script>
   <script src="js3d/team3d.js"></script>
 
   <!-- Le monde : villes, arènes, boutique, quêtes, les 6 régions.
@@ -237,6 +243,20 @@
   <script src="js3d/legend3d.p1.js"></script>
   <script src="js3d/legend3d.p2.js"></script>
   <script src="js3d/legend3d.p3.js"></script>
+
+  <!-- Les 52 modèles venus du jeu de Clélia. Ils lisent `kclib`, leur propre
+       bibliothèque de primitives : les créatures maison gardent la leur et
+       personne ne change d'allure. -->
+  <script src="js3d/creatures3d.klib.js"></script>
+  <script src="js3d/creatures3d.k1.js"></script>
+  <script src="js3d/creatures3d.k2.js"></script>
+  <script src="js3d/creatures3d.k3.js"></script>
+  <script src="js3d/creatures3d.k4.js"></script>
+  <script src="js3d/creatures3d.k5.js"></script>
+  <script src="js3d/creatures3d.k6.js"></script>
+  <!-- Six légendaires de Robin prennent la vraie allure venue de chez Clélia.
+       APRÈS k1..k6 (les modèles copiés) ET après legend3d (ceux remplacés). -->
+  <script src="js3d/legendk3d.js"></script>
 
   <!-- Repères visibles de loin : portes, port aérien, ville -->
   <script src="js3d/gates3d.js"></script>

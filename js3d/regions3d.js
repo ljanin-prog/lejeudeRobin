@@ -927,19 +927,64 @@
     return WALKI[grid[y * W + x]] === 1;
   }
 
+  // ==========================================================================
+  //  UNE PORTE NE SE BOUCHE PAS  —  les cases interdites aux PNJ
+  //
+  //  LE BUG QUI A MOTIVÉ CE BLOC (rapporté par Robin) : « je n'arrive pas à
+  //  rentrer dans l'arène foudre ». `nearestWalkable()` ne connaît qu'un
+  //  critère, « marchable » : elle avait donc parfaitement le droit de recaser
+  //  la championne Orana sur la tuile ARENA_DOOR d'Ambrelune. Or
+  //  `game3d.placeLibre()` refuse toute case occupée par un PNJ — le champion
+  //  murait son arène, et aucune carte, aussi bien reliée soit-elle, n'y
+  //  pouvait rien.
+  //
+  //  On interdit donc DEUX choses à tous les PNJ, pas seulement aux champions :
+  //    1. se tenir SUR une tuile qui ouvre quelque chose ;
+  //    2. occuper l'UNIQUE case d'approche d'une de ces tuiles.
+  //  La règle vaut pour l'arène comme pour les soins, la boutique, l'académie,
+  //  les portails et le ponton : partout où un PNJ mal posé fermerait un lieu.
+  // ==========================================================================
+
+  var TUILES_PORTE = {
+    ARENA_DOOR: 1, HEAL_DOOR: 1, SHOP_DOOR: 1, ACADEMY_DOOR: 1,
+    PORTAL: 1, GATE_ARCH: 1, CASTLE_GATE: 1, AIRSHIP_DOCK: 1,
+  };
+
+  /** Les cases où un PNJ ne doit jamais finir, sous forme de table « x,y ». */
+  function casesInterdites(grid) {
+    var interdit = {};
+    for (var y = BORDER; y < H - BORDER; y++) {
+      for (var x = BORDER; x < W - BORDER; x++) {
+        if (!TUILES_PORTE[NAMES[grid[y * W + x]]]) continue;
+        interdit[x + ',' + y] = 1;
+        // Les accès à cette porte. S'il n'y en a qu'un, il est vital : on le
+        // garde libre, sinon un badaud suffirait à condamner le lieu.
+        var libres = [];
+        var vs = [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]];
+        for (var m = 0; m < 4; m++) if (walkableRaw(grid, vs[m][0], vs[m][1])) libres.push(vs[m]);
+        if (libres.length === 1) interdit[libres[0][0] + ',' + libres[0][1]] = 1;
+      }
+    }
+    return interdit;
+  }
+
   /** Cherche en spirale la tuile marchable la plus proche — c'est ce qui
    *  garantit qu'un PNJ placé « à l'aveugle » finit toujours sur une case où
-   *  le joueur peut réellement venir lui parler. */
-  function nearestWalkable(grid, x, y, maxR) {
+   *  le joueur peut réellement venir lui parler.
+   *  `refus` (facultatif) : table « x,y » des cases à ne jamais retenir. */
+  function nearestWalkable(grid, x, y, maxR, refus) {
     maxR = maxR || 24;
-    if (walkableRaw(grid, x, y)) return { x: x, y: y };
+    var libre = function (nx, ny) {
+      return walkableRaw(grid, nx, ny) && !(refus && refus[nx + ',' + ny]);
+    };
+    if (libre(x, y)) return { x: x, y: y };
     for (var r = 1; r <= maxR; r++) {
       for (var dy = -r; dy <= r; dy++) {
         for (var dx = -r; dx <= r; dx++) {
           if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
           var nx = x + dx, ny = y + dy;
           if (nx < BORDER || ny < BORDER || nx >= W - BORDER || ny >= H - BORDER) continue;
-          if (walkableRaw(grid, nx, ny)) return { x: nx, y: ny };
+          if (libre(nx, ny)) return { x: nx, y: ny };
         }
       }
     }
@@ -1113,10 +1158,14 @@
   function buildNpcs(spec, grid) {
     var raws = NPC_TEMPLATES[spec.id] || [];
     var out = [];
+    // Les portes du monde, plus les cases déjà prises : deux PNJ empilés, c'est
+    // un PNJ invisible, et un PNJ sur une porte, c'est un lieu fermé.
+    var refus = casesInterdites(grid);
     for (var i = 0; i < raws.length; i++) {
       var t = raws[i];
       var base = anchorPoint(spec, t.anchor);
-      var p = nearestWalkable(grid, base.x + (t.dx || 0), base.y + (t.dy || 0), 26);
+      var p = nearestWalkable(grid, base.x + (t.dx || 0), base.y + (t.dy || 0), 26, refus);
+      refus[p.x + ',' + p.y] = 1;
       var npc = {
         id: spec.id + '_' + t.id, name: t.name, x: p.x, y: p.y, dir: t.dir || 'down',
         colorMap: t.colorMap || {}, accessory: t.accessory || null,
@@ -1136,8 +1185,12 @@
             var b = CITY_BOX[spec.id];
             champ.x = b.x + (b.w >> 1); champ.y = b.y + 3;
           }
-          var pc = nearestWalkable(grid, champ.x, champ.y, 26);
+          // `refus` contient la porte de l'arène et son parvis quand celui-ci
+          // est l'unique passage : le champion se rangera juste à côté plutôt
+          // que de condamner l'entrée qu'il est censé garder.
+          var pc = nearestWalkable(grid, champ.x, champ.y, 26, refus);
           champ.x = pc.x; champ.y = pc.y;
+          refus[pc.x + ',' + pc.y] = 1;
           out.push(champ);
         }
       } catch (e) { warnStep('champion (arenas3d)', spec.id, e); }

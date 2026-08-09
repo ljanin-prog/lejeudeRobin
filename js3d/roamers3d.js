@@ -209,6 +209,19 @@
   var _uidSeq = 1;
   var _legendary = null;         // le roamer légendaire actif, ou null
   var _legendCooldowns = Object.create(null);   // legendId -> t (R3.clock.t) autorisé
+
+  // LES CONFLITS ENTRE LÉGENDAIRES (legends3d.js, demande de Robin du 9 août
+  // 2026). `_rival` est le SECOND légendaire présent : l'ennemi juré venu
+  // défier le gardien de l'autel. Il double délibérément la règle « un seul
+  // légendaire à la fois » du §16 — mais seulement pour un duel, jamais plus
+  // de deux, et les deux partent ensemble (voir `removeInternal`).
+  var _rival = null;
+  var DUEL_CHANCE = 0.5;         // une apparition sur deux tourne au duel
+
+  // La VENGEANCE : les légendaires dont on a capturé l'ennemi. Ceux-là ne
+  // s'installent plus sagement à leur autel — ils cherchent Robin.
+  var _furieux = Object.create(null);   // legendId -> true
+  var _prochaineChasse = 0;             // t avant lequel aucun furieux ne surgit
   var _encounterCbs = [];
   var _spawnClock = 0;
   var _lastPX = 0, _lastPZ = 0;  // dernière position joueur connue (pour throwBall)
@@ -433,10 +446,21 @@
   //  LÉGENDAIRES — un seul à la fois, immobile, aura, fuite après 90 s
   // ===========================================================================
 
-  function activateLegendary(altar, t, DEX) {
-    var species = DEX ? DEX.get(altar.id) : null;
-    var group = buildModel(altar.id, 'du légendaire');
-    if (!group) return;
+  /**
+   * Fabrique et pose UN légendaire, sans rien décider d'autre.
+   *
+   * Extraite d'`activateLegendary()` le 9 août 2026 : depuis que les rivalités
+   * existent (legends3d.js), il faut parfois en poser DEUX — le gardien de
+   * l'autel et l'ennemi venu le défier. Le code de fabrication est le même au
+   * mot près ; seul l'appelant change ce qu'il en fait.
+   *
+   * -> le roamer posé, ou null si le modèle n'a pas pu être construit.
+   */
+  function construireLegendaire(id, tx, ty, t, DEX, altarId) {
+    var altar = { id: id, x: tx, y: ty };
+    var species = DEX ? DEX.get(id) : null;
+    var group = buildModel(id, 'du légendaire');
+    if (!group) return null;
 
     // Le vrai modèle (legend3d.pN.js) fait 1,8 à 2,4 unités de haut ; tant
     // qu'il n'est pas encore modélisé, R3.buildCreature() renvoie un repli à
@@ -444,6 +468,17 @@
     // pas avoir un « légendaire » minuscule sur son autel (même compensation
     // que battle3d.js, LEGEND_PLACEHOLDER_BOOST).
     if (group.userData && group.userData.placeholder) group.scale.multiplyScalar(2.4);
+
+    // LES TITANS. `legends3d` désigne neuf légendaires qui doivent être
+    // ÉNORMES (demande de Robin, 9 août 2026) : on les grossit ici aussi, pas
+    // seulement en combat — sinon on découvrirait leur taille trop tard, une
+    // fois le combat engagé, alors que c'est justement de loin qu'ils doivent
+    // impressionner. L'aura, ajoutée juste après, suit l'échelle du groupe.
+    var LG = (R3 && R3.get) ? R3.get('legends') : null;
+    if (LG && LG.scaleOf) {
+      var titan = LG.scaleOf(altar.id);
+      if (titan > 1) group.scale.multiplyScalar(titan);
+    }
 
     var LL = llibApi();
     if (LL && typeof LL.aura === 'function') {
@@ -471,15 +506,22 @@
       state: 'idle',
       tileX: altar.x, tileY: altar.y,
       _phase: Math.random() * 6.2832,
-      _spawnT: t, _altarId: altar.id, _ball: false, _encountered: false,
+      _spawnT: t, _altarId: (altarId === undefined ? altar.id : altarId),
+      _ball: false, _encountered: false,
       _warned: false,   // l'avertissement « il s'apprête à repartir » est-il déjà passé ?
       // Nom d'espèce mémorisé une fois pour toutes : `signalLegend()` le passe
       // à actors3d à CHAQUE image, il n'a pas le droit d'interroger le Pokédex
       // 60 fois par seconde.
       _nom: (species && species.name) || altar.id,
     };
-    _legendary = ro;
     _roamers.push(ro);
+    return ro;
+  }
+
+  function activateLegendary(altar, t, DEX) {
+    var ro = construireLegendaire(altar.id, altar.x, altar.y, t, DEX, altar.id);
+    if (!ro) return;
+    _legendary = ro;
 
     // Le cri du légendaire. Ce son n'existait nulle part : le code tentait
     // `legendary || encounter || levelUp || catch_` et retombait toujours sur
@@ -493,6 +535,59 @@
     // invisible — l'enfant traverse la région, arrive à l'autel vide et ne
     // comprend pas. On le prévient à l'apparition, puis 20 s avant la fuite.
     toast(ro._nom + ' est apparu à son autel ! Vite, il ne restera pas longtemps…', '✨');
+
+    // ------------------------------------------------------------------
+    //  LE DUEL  —  « je voudrais qu'il y ait des conflits entre les
+    //  légendaires » (Robin, 9 août 2026)
+    //
+    //  Une fois sur deux, l'ennemi juré du gardien débarque à côté de lui.
+    //  Robin les trouve alors face à face, et c'est LUI qui tranche : il
+    //  affronte celui devant lequel il se plante. L'autre profite du combat
+    //  pour disparaître — d'où l'absence de menu à choix : se placer EST le
+    //  choix, et un enfant de dix ans comprend ça sans qu'on le lui explique.
+    // ------------------------------------------------------------------
+    tenterDuel(ro, t, DEX);
+  }
+
+  /** Le rival du gardien, posé juste à côté de lui — ou rien du tout. */
+  function tenterDuel(gardien, t, DEX) {
+    if (_rival) return;                                   // un duel à la fois
+    var LG = (R3 && R3.get) ? R3.get('legends') : null;
+    if (!LG || !LG.rivalOf) return;
+    var rivalId = LG.rivalOf(gardien.speciesId);
+    if (!rivalId) return;
+    if (dejaAttrape(rivalId)) return;                     // il est déjà chez Robin
+    if (Math.random() > DUEL_CHANCE) return;
+
+    // Une case libre autour du gardien : le rival ne se pose ni dans un mur,
+    // ni sur l'autel, ni sur une case que le joueur ne pourrait pas contourner.
+    var p = caseLibreAutour(gardien.tileX, gardien.tileY);
+    if (!p) return;
+
+    var ro = construireLegendaire(rivalId, p.x, p.y, t, DEX, null);
+    if (!ro) return;
+    _rival = ro;
+    ro._duelContre = gardien.speciesId;
+    // Ils se font face : un duel se voit d'abord à la posture.
+    ro.group.rotation.y = Math.atan2(gardien.x - ro.x, gardien.z - ro.z);
+    gardien.group.rotation.y = Math.atan2(ro.x - gardien.x, ro.z - gardien.z);
+
+    var conflit = LG.conflitOf ? LG.conflitOf(gardien.speciesId) : null;
+    toast(gardien._nom + ' ⚡ ' + ro._nom + ' — ils se déchirent !' +
+      (conflit ? ' ' + conflit.cri : ''), '⚔️');
+  }
+
+  /** Une des huit cases autour, marchable et libre. -> {x,y} ou null. */
+  function caseLibreAutour(tx, ty) {
+    var R = regionsApi();
+    var ordre = [[2, 0], [-2, 0], [0, 2], [0, -2], [2, 2], [-2, -2], [2, -2], [-2, 2]];
+    for (var i = 0; i < ordre.length; i++) {
+      var x = tx + ordre[i][0], y = ty + ordre[i][1];
+      if (R && R.isWalkable && !R.isWalkable(x, y)) continue;
+      if (tileTaken(x, y, null)) continue;
+      return { x: x, y: y };
+    }
+    return null;
   }
 
   /** Le légendaire repart de lui-même : PERSONNE n'est venu le voir.
@@ -530,6 +625,10 @@
       return;   // « un seul à la fois » — §16
     }
 
+    // LA VENGEANCE passe AVANT les autels : un légendaire furieux ne t'attend
+    // pas dans son sanctuaire, il te tombe dessus.
+    if (chasseFurieuse(t, px, pz)) return;
+
     var q = questApi();
     // ON CHOISIT LE PLUS PROCHE, pas le premier de la liste. Deux autels dans
     // le même rayon de 42 tuiles, et l'ancienne boucle réveillait toujours
@@ -565,6 +664,79 @@
     if (meilleur) activateLegendary(meilleur, t, dexApi());
   }
 
+  // ===========================================================================
+  //  LA VENGEANCE  —  « des conflits entre les légendaires » (Robin)
+  //
+  //  Capturer un légendaire met son ennemi juré en fureur : il quitte son autel
+  //  et se met à chercher Robin. Concrètement, il peut surgir N'IMPORTE OÙ, à
+  //  quelques pas de lui, dans n'importe quelle région — pas seulement dans la
+  //  sienne, et sans attendre que le badge de la région soit gagné. C'est la
+  //  seule créature du jeu qui ne respecte aucun de ces deux verrous, et c'est
+  //  exactement ce qui rend la chose inquiétante.
+  //
+  //  Deux garde-fous, parce qu'un boss qui surgit sans arrêt cesse d'être un
+  //  événement : un délai minimum entre deux chasses, et un tirage à chaque
+  //  fois. En moyenne, il faut traverser un bon morceau de carte avant qu'il
+  //  ne vous retrouve.
+  // ===========================================================================
+
+  var CHASSE_DELAI_S = 75;       // jamais deux surgissements coup sur coup
+  var CHASSE_CHANCE = 0.35;      // et même passé le délai, ce n'est pas certain
+
+  /** -> true si un furieux vient d'être posé (l'appelant s'arrête là). */
+  function chasseFurieuse(t, px, pz) {
+    if (t < _prochaineChasse) return false;
+
+    var candidats = [];
+    for (var id in _furieux) {
+      if (!Object.prototype.hasOwnProperty.call(_furieux, id)) continue;
+      if (!_furieux[id]) continue;
+      if (dejaAttrape(id)) continue;          // capturé : il n'a plus de raison d'en vouloir
+      candidats.push(id);
+    }
+    if (!candidats.length) return false;
+
+    // Le délai court même quand le tirage échoue : sinon, une fois le délai
+    // passé, on retenterait soixante fois par seconde et le « hasard » de 35 %
+    // deviendrait une certitude immédiate.
+    _prochaineChasse = t + CHASSE_DELAI_S;
+    if (Math.random() > CHASSE_CHANCE) return false;
+
+    var id2 = candidats[(Math.random() * candidats.length) | 0];
+    var p = caseLibreLoinDe(px, pz);
+    if (!p) return false;
+
+    var ro = construireLegendaire(id2, p.x, p.y, t, dexApi(), null);
+    if (!ro) return false;
+    _legendary = ro;                          // il occupe la place du gardien
+    ro._furieux = true;
+    ro.group.rotation.y = Math.atan2(px - ro.x, pz - ro.z);   // il te fait face
+
+    if (!sfx('legendary')) sfx('encounter');
+    var LG = (R3 && R3.get) ? R3.get('legends') : null;
+    var rival = (LG && LG.rivalOf) ? LG.rivalOf(id2) : null;
+    var nomRival = (rival && LG && LG.nomDe) ? LG.nomDe(rival) : null;
+    toast(ro._nom + ' t\'a retrouvé !' +
+      (nomRival ? ' Il n\'a pas pardonné la capture de ' + nomRival + '.' : ' Il est furieux !'), '💢');
+    return true;
+  }
+
+  /** Une case marchable à 6-10 tuiles du joueur : assez près pour qu'il le
+   *  voie tout de suite, assez loin pour ne pas lui apparaître dans le dos. */
+  function caseLibreLoinDe(px, pz) {
+    var R = regionsApi();
+    for (var essai = 0; essai < 40; essai++) {
+      var ang = Math.random() * Math.PI * 2;
+      var d = 6 + Math.random() * 4;
+      var x = Math.round(px + Math.sin(ang) * d);
+      var y = Math.round(pz + Math.cos(ang) * d);
+      if (R && R.isWalkable && !R.isWalkable(x, y)) continue;
+      if (tileTaken(x, y, null)) continue;
+      return { x: x, y: y };
+    }
+    return null;
+  }
+
   /** Cette espèce est-elle déjà dans la collection de Robin ? */
   function dejaAttrape(speciesId) {
     var G = (typeof globalThis !== 'undefined') ? globalThis : window;
@@ -582,12 +754,28 @@
     var idx = _roamers.indexOf(ro);
     if (idx >= 0) _roamers.splice(idx, 1);
     disposeGroup(ro.group);
+
+    // LE DUEL SE TERMINE AVEC LE PREMIER PARTANT. Dès que l'un des deux
+    // adversaires quitte la scène — combat engagé, capture, fuite — l'autre
+    // n'a plus personne à qui se mesurer : il s'en va aussi. Sans cette règle,
+    // un rival resterait planté là indéfiniment (le compte à rebours des 90
+    // secondes ne surveille que `_legendary`), et Robin trouverait un second
+    // légendaire immobile au milieu de nulle part, sans explication.
+    var duelPartant = (_rival === ro) ? _legendary : ((_legendary === ro) ? _rival : null);
+
+    if (_rival === ro) _rival = null;
     if (_legendary === ro) {
       _legendary = null;
       // Le légendaire n'est plus là : les PNJ n'ont plus de raison de reculer
       // les bras en l'air. Sans cet appel, ils resteraient figés d'étonnement
       // devant un autel vide jusqu'au prochain changement de région.
       calmActors();
+    }
+
+    if (duelPartant) {
+      var nomFuyard = duelPartant._nom;
+      removeInternal(duelPartant);        // `_rival`/`_legendary` déjà remis à null : pas de boucle
+      toast(nomFuyard + ' profite du désordre et disparaît !', '💨');
     }
   }
 
@@ -1148,5 +1336,35 @@
     starsAt: starsAt,
     onEncounter: onEncounter,
     setRepel: setRepel,
+
+    // --- les conflits entre légendaires (legends3d.js) ---------------------
+    /** Met en fureur le rival de ce légendaire, s'il en a un et s'il court
+     *  toujours. -> l'id du furieux, ou null si personne ne lui en veut.
+     *  Appelé par game3d au moment de la capture. */
+    enrager: function (speciesId) {
+      var LG = (R3 && R3.get) ? R3.get('legends') : null;
+      if (!LG || !LG.rivalOf) return null;
+      var rival = LG.rivalOf(speciesId);
+      if (!rival || dejaAttrape(rival)) return null;
+      _furieux[rival] = true;
+      _prochaineChasse = now_() + CHASSE_DELAI_S;   // pas dans la seconde qui suit
+      return rival;
+    },
+    /** Rétablit la liste des furieux au chargement d'une partie. */
+    setFurieux: function (ids) {
+      _furieux = Object.create(null);
+      if (!ids || !ids.length) return;
+      for (var i = 0; i < ids.length; i++) if (ids[i]) _furieux[ids[i]] = true;
+    },
+    /** La liste des furieux, à ranger dans la sauvegarde. */
+    furieux: function () {
+      var out = [];
+      for (var id in _furieux) {
+        if (Object.prototype.hasOwnProperty.call(_furieux, id) && _furieux[id]) out.push(id);
+      }
+      return out;
+    },
+    /** Le second légendaire présent quand un duel a lieu, ou null. */
+    rival: function () { return _rival; },
   });
 })();
