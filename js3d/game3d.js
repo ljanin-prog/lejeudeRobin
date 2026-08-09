@@ -932,6 +932,34 @@
   function showToast(text, icon) { call('hud', 'toast', [text, icon]); }
 
   /**
+   * LE MONDE QUI SE DÉRÈGLE — appelé à chaque image (§ cataclysme3d.js).
+   *
+   * « je veux des séismes, des tsunamis, des tremblements de terre aléatoires
+   * et que ça détruise des choses sur la carte » — Robin, 9 août 2026.
+   *
+   * Tout le travail est fait par `cataclysme3d` ; ici on ne décide que d'une
+   * chose, mais elle est capitale : EST-CE LE MOMENT ? Le monde ne tremble que
+   * si Robin est debout dans le monde ouvert, sans message à l'écran et sans
+   * combat en cours. Sinon la secousse arriverait par-dessus un dialogue ou au
+   * milieu d'un tour de combat, là où il ne peut rien en faire.
+   */
+  function tickCataclysme(dt) {
+    const cata = mod('cataclysme');
+    if (!cata || !cata.update) return;
+    const libre = (state.screen === 'world')
+      && state.messages.length === 0
+      && !state.battle
+      && !evolving;
+    const res = safeCall('cataclysme.update', function () {
+      return cata.update(dt, { x: state.player.tileX, y: state.player.tileY, libre: libre });
+    });
+    if (!res) return;
+    // Un cataclysme se DIT, sinon Robin voit l'écran trembler sans comprendre.
+    sfx('legendary');
+    showMessage(res.texte);
+  }
+
+  /**
    * Rafraîchit la mini-carte permanente du HUD (« où suis-je ? »). On ne
    * l'appelle PAS à chaque image : la position ne change qu'à la fin d'un pas,
    * d'un demi-tour ou d'un changement de région.
@@ -1035,6 +1063,12 @@
     // l'endroit exact où il est sorti de sa Ball.
     call('buddy', 'update', [dt, state.player]);
     signalBuddyLegend();
+
+    // LES CATACLYSMES (cataclysme3d.js). `libre` est la condition de politesse :
+    // la terre ne tremble jamais pendant un combat, ni pendant qu'un message
+    // est affiché, ni pendant qu'on choisit son starter. Un séisme qui coupe
+    // la parole à un champion d'arène ne fait pas peur, il agace.
+    tickCataclysme(dt);
 
     // Soleil de secours : on le garde centré sur le joueur pour que l'ombre suive.
     if (fallbackSun) {
@@ -1895,6 +1929,10 @@
     // et ça garantit qu'il travaille bien sur la bonne région.
     call('world', 'setRegion', [id]);
     call('roamers', 'setRegion', [id]);
+    // Le compteur des cataclysmes repart : on ne fait pas trembler la terre
+    // dans les vingt premières secondes d'une région, le temps que Robin
+    // regarde où il vient d'arriver.
+    call('cataclysme', 'setRegion', [id]);
     // `setRegion` repart d'une population neuve : si un Répulsif est encore
     // actif (sauvegarde reprise, changement de région), il faut le redire aux
     // créatures, sinon il cesserait d'agir sans prévenir.
@@ -1975,6 +2013,35 @@
     return { x: x, y: y };
   }
 
+  /** Combien de badges Robin a-t-il gagnés ? C'est le seul repère de
+   *  progression du jeu, et c'est lui qui fait avancer l'histoire (§ mechants3d). */
+  function nombreDeBadges() {
+    let n = 0;
+    for (const k in state.badges) if (state.badges[k]) n++;
+    return n;
+  }
+
+  /**
+   * Une case marchable près du point d'apparition d'une région, pour y poser un
+   * méchant. On part du spawn plutôt que du joueur : un Spinel qui se
+   * matérialise dans le dos de Robin, à deux pas, ferait sursauter sans rien
+   * raconter. Là, Robin le DÉCOUVRE en arrivant.
+   */
+  function caseLibrePres(R, regionId) {
+    if (!R || !R.spawnOf || !R.isWalkable) return null;
+    const sp = safeCall('regions.spawnOf', function () { return R.spawnOf(regionId); });
+    if (!sp) return null;
+    for (let r = 3; r <= 14; r++) {
+      for (let k = 0; k < 12; k++) {
+        const a = (k / 12) * Math.PI * 2;
+        const x = Math.round(sp.x + Math.cos(a) * r);
+        const y = Math.round(sp.y + Math.sin(a) * r);
+        if (R.isWalkable(x, y)) return { x: x, y: y };
+      }
+    }
+    return null;
+  }
+
   /** Reconstruit les PNJ 3D de la région active (les anciens sont libérés). */
   function rebuildNPCs(id) {
     for (let i = 0; i < npcEntries.length; i++) {
@@ -1989,7 +2056,25 @@
     const actors = mod('actors');
     if (!R || !R.npcsOf || !actors || !actors.buildNPC) return;
 
-    const list = safeCall('regions.npcsOf', function () { return R.npcsOf(id); }) || [];
+    const list = (safeCall('regions.npcsOf', function () { return R.npcsOf(id); }) || []).slice();
+
+    // LE MÉCHANT DE L'ACTE EN COURS (mechants3d.js). Il n'est pas dans la liste
+    // de `regions3d` : celle-ci est figée à la génération de la région, alors
+    // que Spinel change de région à chaque acte et que Veccus n'existe pas
+    // avant le quatrième. On l'ajoute donc ici, à chaque reconstruction — donc
+    // à chaque fois que Robin entre dans une région, ce qui est exactement le
+    // rythme auquel l'histoire doit avancer.
+    const mech = mod('mechants');
+    if (mech && mech.pnjDeLaRegion) {
+      const vil = safeCall('mechants.pnjDeLaRegion', function () {
+        return mech.pnjDeLaRegion(id, nombreDeBadges());
+      });
+      if (vil) {
+        const p = caseLibrePres(R, vil.region);
+        if (p) { vil.x = p.x; vil.y = p.y; list.push(vil); }
+      }
+    }
+
     const ANG = actors.ANGLE_DIR || {};
     safeCall('actors.buildNPC', function () {
       for (let i = 0; i < list.length; i++) {
@@ -3343,7 +3428,24 @@
     const LGf = mod('legends');
     const dimF = (b0 && b0.legendary && LGf && LGf.dimensionOf && b0.foe && b0.foe.mon)
       ? LGf.dimensionOf(b0.foe.mon.id) : null;
-    const suite = dimF ? (textes || []).concat(['✦ ' + dimF.sortie]) : textes;
+    let suite = dimF ? (textes || []).concat(['✦ ' + dimF.sortie]) : (textes || []);
+
+    // LE MONDE SE DÉRÈGLE APRÈS UN COMBAT DE LÉGENDAIRE.
+    //
+    // « quand les Pokémon légendaires se battent, tout se dérègle. Exemple : le
+    // Pokémon du temps dérègle le temps, celui de l'eau, l'eau… » — Robin.
+    //
+    // C'est ICI que ça se joue, et pas à l'entrée en combat : pendant le combat
+    // Robin ne voit pas la carte, un séisme déclenché à ce moment-là se
+    // produirait dans son dos. À la sortie, il rouvre les yeux sur un monde qui
+    // a changé — et le texte nomme le coupable, pour qu'il fasse le lien seul.
+    if (b0 && b0.legendary && b0.foe && b0.foe.mon) {
+      const der = safeCall('cataclysme.deregler', function () {
+        return call('cataclysme', 'deregler',
+          [b0.foe.mon.id, state.player.tileX, state.player.tileY]);
+      });
+      if (der && der.texte) suite = suite.concat([der.texte]);
+    }
 
     showMessages(suite, function () {
       runEvolutions(function () { runLearnQueue(function () { endBattle(); }); });
@@ -3728,11 +3830,49 @@
     } else if (b.npcId) {
       state.defeatedTrainers[b.npcId] = true;
       if (tr.dialogWin && tr.dialogWin.length) texte += '\n\n' + tr.name + ' : « ' + tr.dialogWin[0] + ' »';
+      // Spinel ou Veccus vient de tomber (mechants3d.js) : l'histoire le retient.
+      if (b.npcId === 'spinel' || b.npcId === 'veccus') {
+        call('mechants', 'marquerVaincu', [b.npcId]);
+        textes.push(texteVictoireSurMechant(b.npcId));
+      }
     }
+
+    // L'HISTOIRE AVANCE AVEC LES BADGES (mechants3d.js). C'est ici, juste après
+    // qu'un badge a été inscrit, que le monde bascule dans l'acte suivant : la
+    // terre se met à trembler un peu plus, d'autres habitants s'endorment, et
+    // le méchant du moment change de région.
+    const entree = call('mechants', 'majActe', [nombreDeBadges()]);
+    if (entree) textes.push(entree);
 
     refreshHudCounters();
     saveGame();
     finishBattle([texte].concat(textes));
+  }
+
+  /**
+   * Ce qu'on lit après avoir battu Spinel ou Veccus.
+   *
+   * Un boss d'histoire qui tombe sans un mot, c'est un dresseur ordinaire. On
+   * lui laisse donc le dernier mot — et surtout on DIT au joueur ce que sa
+   * victoire change dans le monde, parce que c'est invisible autrement.
+   */
+  function texteVictoireSurMechant(who) {
+    const mech = mod('mechants');
+    const lignes = (mech && mech.DIALOGUES && mech.DIALOGUES[who])
+      ? (mech.DIALOGUES[who].vaincu || []) : [];
+    const nom = (who === 'spinel') ? 'Spinel' : 'Veccus';
+    let t = '✦ ' + nom.toUpperCase() + ' EST VAINCU !\n';
+    for (let i = 0; i < lignes.length; i++) t += '\n' + nom + ' : « ' + lignes[i] + ' »';
+    if (who === 'spinel') {
+      t += '\n\nPartout, des gens se frottent les yeux comme au réveil.\n' +
+           'Ils ne se souviennent de rien — mais ils te regardent, toi, ' +
+           'pour de vrai.';
+    } else {
+      t += '\n\nLa faille se referme lentement au-dessus du Plateau d\'Aurore.\n' +
+           'La terre arrête de trembler. Le ciel redevient un ciel.\n' +
+           'Le monde tient debout, et c\'est toi qui t\'es mis devant.';
+    }
+    return t;
   }
 
   /** Niveau représentatif de l'équipe adverse : sert au calcul de l'argent
@@ -3783,7 +3923,39 @@
 
   function talkToNPC(npc) {
     sfx('menu');
+
+    // LES MÉCHANTS (mechants3d.js). Ils passent AVANT tout le reste : ni les
+    // quêtes des conteurs ni l'hypnose ne les concernent, et à partir de
+    // l'acte 5 leur adresser la parole déclenche le combat — c'est le mécanisme
+    // des dresseurs, que `startTrainerBattle` sait déjà mener de bout en bout.
+    if (npc.isVillain) {
+      const lignesV = npc.dialog || ['…'];
+      for (let i = 0; i < lignesV.length; i++) showMessage(npc.name + ' : « ' + lignesV[i] + ' »');
+      if (npc.isTrainer && !state.defeatedTrainers[npc.id]) {
+        showMessage('⚔️ ' + npc.name.toUpperCase() + ' t\'attaque !', function () {
+          startTrainerBattle(npc);
+        });
+      }
+      return;
+    }
+
     if (npc.isTrainer && !state.defeatedTrainers[npc.id]) { startTrainerBattle(npc); return; }
+
+    // LES HYPNOTISÉS. Un habitant sous emprise ne raconte plus sa légende : il
+    // répète sa petite phrase, en boucle. C'est ce qui rend l'acte 1 lisible
+    // sans qu'un seul texte n'ait besoin de l'expliquer — Robin le CONSTATE.
+    const mech = mod('mechants');
+    if (mech && mech.estHypnotise) {
+      const dort = safeCall('mechants.estHypnotise', function () {
+        return mech.estHypnotise(npc.id, nombreDeBadges());
+      });
+      if (dort) {
+        showMessage(npc.name + ' : « ' + mech.repliqueHypnotise(npc.id) + ' »');
+        showMessage('😶 ' + npc.name + ' ne te voit pas. Ses yeux sont grands ouverts, ' +
+          'mais il regarde à travers toi.');
+        return;
+      }
+    }
 
     // §5 : les villageois racontent la légende de leur région. `quest3d` connaît
     // les ids de PNJ de regions3d, on lui passe `npc.id` tel quel.
@@ -4487,6 +4659,11 @@
         // qui s'effacerait à la fermeture du navigateur n'en serait pas une :
         // elle doit le suivre d'une séance de jeu à l'autre.
         furieux: (state.furieux || []).slice(),
+
+        // Où en est l'histoire de Spinel et de Veccus (mechants3d.js) : l'acte
+        // déjà raconté, et qui a été battu. Sans ça, chaque réouverture du jeu
+        // rejouerait l'arrivée de Spinel comme une nouveauté.
+        mechants: serializeOf('mechants'),
       };
       // ⚠️ LE FILET DE DERNIÈRE LIGNE. On n'écrase JAMAIS une partie qui a des
       // créatures par une partie qui n'en a AUCUNE. C'est exactement ce que
@@ -5000,6 +5177,12 @@
       // bonne valeur par défaut.
       state.furieux = Array.isArray(data.furieux) ? data.furieux.slice() : [];
       call('roamers', 'setFurieux', [state.furieux]);
+
+      // L'histoire des méchants, puis remise en place immédiate de la tension
+      // du monde : une partie rouverte à l'acte 5 doit retrouver une terre qui
+      // tremble souvent, pas le calme du premier jour.
+      call('mechants', 'deserialize', [data.mechants || null]);
+      call('mechants', 'majActe', [nombreDeBadges()]);
 
       call('quest', 'deserialize', [data.quest || null]);
       // Une sauvegarde v1 n'a AUCUN état de quête, mais elle a des badges. Sans
